@@ -40,7 +40,12 @@ class SimulationService:
         self._settings = settings
         self._repository = repository
         self._states: dict[UUID, SimulationState] = {}
-        self._risk_service = RiskService(settings.minimum_trade_confidence)
+        self._risk_service = RiskService(
+            minimum_confidence=settings.minimum_trade_confidence,
+            minimum_data_quality_score=settings.minimum_data_quality_score,
+            max_target_weight=settings.max_target_weight,
+            max_order_notional=settings.max_order_notional,
+        )
         self._portfolio_service = PortfolioService()
         self._broker = SimBroker()
         self._event_bus = EventBus()

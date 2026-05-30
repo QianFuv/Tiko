@@ -21,7 +21,9 @@ class RiskLimitsResponse(BaseModel):
 
     run_id: UUID
     minimum_confidence: float
+    minimum_data_quality_score: float
     max_target_weight: Decimal
+    max_order_notional: Decimal
     live_trading_allowed: bool
 
 
@@ -53,7 +55,9 @@ def get_risk_limits(
     return RiskLimitsResponse(
         run_id=run_id,
         minimum_confidence=settings.minimum_trade_confidence,
-        max_target_weight=Decimal("1"),
+        minimum_data_quality_score=settings.minimum_data_quality_score,
+        max_target_weight=settings.max_target_weight,
+        max_order_notional=settings.max_order_notional,
         live_trading_allowed=False,
     )
 

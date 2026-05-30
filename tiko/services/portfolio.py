@@ -39,9 +39,15 @@ class PortfolioService:
             Simulated order request or `None` when no order should be created.
         """
 
-        if risk_review.status != "approved":
+        if risk_review.status not in {"approved", "resized"}:
             return None
         target_notional = risk_review.approved_target_weight * account.total_equity
+        if abs(target_notional) > risk_review.max_order_notional:
+            target_notional = (
+                risk_review.max_order_notional
+                if target_notional > Decimal("0")
+                else -risk_review.max_order_notional
+            )
         if target_notional == Decimal("0"):
             return None
         quantity = (abs(target_notional) / reference_price).quantize(
