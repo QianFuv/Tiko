@@ -1,9 +1,11 @@
 """Internal simulated broker and matching behavior."""
 
 from decimal import Decimal
-from uuid import uuid4
 
 from tiko.domain.order import Fill, OrderRequest, SimOrder
+from tiko.simulation.fee import FeeEngine
+from tiko.simulation.matching import MatchingEngine
+from tiko.simulation.slippage import SlippageEngine
 
 
 class SimBroker:
@@ -13,16 +15,22 @@ class SimBroker:
         self,
         fee_bps: Decimal = Decimal("5"),
         slippage_bps: Decimal = Decimal("2"),
+        matching_engine: MatchingEngine | None = None,
     ) -> None:
         """Initialize broker fee and slippage parameters.
 
         Args:
             fee_bps: Simulated taker fee in basis points.
             slippage_bps: Simulated slippage in basis points.
+            matching_engine: Optional matching engine override.
         """
 
         self.fee_bps = fee_bps
         self.slippage_bps = slippage_bps
+        self._matching_engine = matching_engine or MatchingEngine(
+            fee_engine=FeeEngine(fee_bps),
+            slippage_engine=SlippageEngine(slippage_bps),
+        )
 
     def submit_market_order(
         self, order_request: OrderRequest, reference_price: Decimal
@@ -37,39 +45,4 @@ class SimBroker:
             Simulated order and fill records.
         """
 
-        slippage_multiplier = self.slippage_bps / Decimal("10000")
-        price_delta = reference_price * slippage_multiplier
-        fill_price = (
-            reference_price + price_delta
-            if order_request.side == "buy"
-            else reference_price - price_delta
-        )
-        fee = order_request.quantity * fill_price * self.fee_bps / Decimal("10000")
-        order_id = uuid4()
-        order = SimOrder(
-            order_id=order_id,
-            run_id=order_request.run_id,
-            account_id=order_request.account_id,
-            decision_id=order_request.decision_id,
-            symbol=order_request.symbol,
-            side=order_request.side,
-            order_type=order_request.order_type,
-            quantity=order_request.quantity,
-            limit_price=order_request.limit_price,
-            status="filled",
-            submitted_at_sim_time=order_request.submitted_at_sim_time,
-            updated_at_sim_time=order_request.submitted_at_sim_time,
-        )
-        fill = Fill(
-            fill_id=uuid4(),
-            order_id=order_id,
-            run_id=order_request.run_id,
-            symbol=order_request.symbol,
-            side=order_request.side,
-            quantity=order_request.quantity,
-            price=fill_price,
-            fee=fee,
-            slippage_bps=self.slippage_bps,
-            filled_at_sim_time=order_request.submitted_at_sim_time,
-        )
-        return order, fill
+        return self._matching_engine.match_market_order(order_request, reference_price)
