@@ -1,14 +1,61 @@
 """Tests for market data normalization, validation, and import."""
 
+import csv
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
+
+import pyarrow as arrow
+import pyarrow.parquet as parquet
+import pytest
 
 from tiko.data import (
+    CsvCandleImporter,
+    MarketDataImportError,
     MarketDataValidator,
+    ParquetCandleImporter,
     normalize_candle_record,
     normalize_ccxt_ohlcv_row,
 )
 from tiko.domain.market import Candle
+
+
+def sample_candle_row() -> dict[str, str]:
+    """Create a raw candle row used by file importer tests.
+
+    Returns:
+        Raw candle row with required fields.
+    """
+
+    return {
+        "symbol": "BTCUSDT",
+        "timeframe": "1h",
+        "open_time": "2026-01-01T00:00:00Z",
+        "close_time": "2026-01-01T01:00:00Z",
+        "open": "100",
+        "high": "110",
+        "low": "90",
+        "close": "105",
+        "volume": "2.5",
+        "quote_volume": "262.5",
+        "source": "fixture",
+        "as_of": "2026-01-01T01:00:00Z",
+        "created_at": "2026-01-01T01:00:00Z",
+    }
+
+
+def write_csv(path: Path, rows: list[dict[str, str]]) -> None:
+    """Write raw candle rows to a CSV fixture file.
+
+    Args:
+        path: Destination file path.
+        rows: Raw rows to write.
+    """
+
+    with path.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def test_normalize_candle_record_parses_scalars() -> None:
@@ -86,3 +133,41 @@ def test_validator_reports_price_and_availability_errors() -> None:
         "high_below_body",
         "low_above_body",
     }
+
+
+def test_csv_importer_returns_candles_and_validation_report(tmp_path: Path) -> None:
+    """Verify CSV import normalizes rows and returns validation output."""
+
+    path = tmp_path / "candles.csv"
+    write_csv(path, [sample_candle_row()])
+
+    result = CsvCandleImporter().import_file(path)
+
+    assert result.source_path == path
+    assert len(result.candles) == 1
+    assert result.candles[0].close == Decimal("105")
+    assert not result.validation_report.has_errors()
+
+
+def test_parquet_importer_matches_csv_normalization(tmp_path: Path) -> None:
+    """Verify Parquet import uses the same candle normalization path."""
+
+    path = tmp_path / "candles.parquet"
+    parquet.write_table(arrow.Table.from_pylist([sample_candle_row()]), path)
+
+    result = ParquetCandleImporter().import_file(path)
+
+    assert len(result.candles) == 1
+    assert result.candles[0].symbol == "BTCUSDT"
+    assert result.candles[0].quote_volume == Decimal("262.5")
+    assert not result.validation_report.has_errors()
+
+
+def test_csv_importer_rejects_missing_required_columns(tmp_path: Path) -> None:
+    """Verify local imports fail loudly for incomplete candle schemas."""
+
+    path = tmp_path / "missing.csv"
+    write_csv(path, [{"symbol": "BTCUSDT"}])
+
+    with pytest.raises(MarketDataImportError, match="missing required columns"):
+        CsvCandleImporter().import_file(path)
