@@ -3,6 +3,8 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
+
 from tiko.core.config import Settings
 from tiko.db import (
     SimulationRepository,
@@ -10,7 +12,9 @@ from tiko.db import (
     create_database_engine,
     create_session_factory,
 )
+from tiko.domain.market import Candle
 from tiko.services import SimulationService
+from tiko.simulation.replay import MarketReplayExhausted
 
 
 def create_test_repository() -> SimulationRepository:
@@ -23,6 +27,30 @@ def create_test_repository() -> SimulationRepository:
     engine = create_database_engine("sqlite+pysqlite:///:memory:")
     create_all_tables(engine)
     return SimulationRepository(create_session_factory(engine))
+
+
+def create_replay_candle() -> Candle:
+    """Create a replay candle with delayed point-in-time availability.
+
+    Returns:
+        Candle for replay-backed service tests.
+    """
+
+    return Candle(
+        symbol="BTCUSDT",
+        timeframe="1h",
+        open_time=datetime(2026, 1, 1, tzinfo=UTC),
+        close_time=datetime(2026, 1, 1, 1, tzinfo=UTC),
+        open=Decimal("100"),
+        high=Decimal("110"),
+        low=Decimal("90"),
+        close=Decimal("105"),
+        volume=Decimal("2"),
+        quote_volume=None,
+        source="replay-test",
+        as_of=datetime(2026, 1, 1, 2, tzinfo=UTC),
+        created_at=datetime(2026, 1, 1, 2, tzinfo=UTC),
+    )
 
 
 def test_simulation_step_creates_internal_order_and_fill() -> None:
@@ -110,3 +138,42 @@ def test_repository_backed_service_persists_created_run_and_step() -> None:
     assert repository.get_latest_risk_review(run.run_id) == result.risk_review
     assert repository.list_orders(run.run_id) == [result.order]
     assert repository.list_fills(run.run_id) == [result.fill]
+
+
+def test_replay_backed_service_uses_replay_candle_as_simulated_time() -> None:
+    """Verify replay-backed runs consume imported candles without lookahead."""
+
+    repository = create_test_repository()
+    candle = create_replay_candle()
+    service = SimulationService(Settings(), repository=repository)
+    run = service.create_run(
+        name="replay",
+        symbols=["BTCUSDT"],
+        replay_candles=[candle],
+    )
+
+    result = service.step_run(run.run_id, confidence=0.7)
+
+    assert run.mode == "historical_replay"
+    assert run.start_sim_time == candle.open_time
+    assert result.candle == candle
+    assert result.event.simulated_time == candle.as_of
+    assert result.run.current_sim_time == candle.as_of
+    assert repository.list_candles(run.run_id) == [candle]
+
+
+def test_replay_backed_service_marks_run_completed_when_exhausted() -> None:
+    """Verify replay exhaustion updates run lifecycle state."""
+
+    service = SimulationService(Settings())
+    run = service.create_run(
+        name="short-replay",
+        symbols=["BTCUSDT"],
+        replay_candles=[create_replay_candle()],
+    )
+    service.step_run(run.run_id)
+
+    with pytest.raises(MarketReplayExhausted):
+        service.step_run(run.run_id)
+
+    assert service.get_run(run.run_id).status == "completed"

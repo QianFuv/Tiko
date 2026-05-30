@@ -1,6 +1,7 @@
 """Deterministic replay over normalized market candles."""
 
 from collections.abc import Sequence
+from datetime import datetime
 
 from tiko.domain.market import Candle
 
@@ -56,6 +57,15 @@ class MarketReplay:
         """
 
         return len(self._candles) - self._index
+
+    def start_time(self) -> datetime:
+        """Return the initial simulated time implied by the replay.
+
+        Returns:
+            Open time of the first replay candle.
+        """
+
+        return self._candles[0].open_time
 
     def next_candle(self) -> Candle:
         """Return the next candle in replay order.

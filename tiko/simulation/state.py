@@ -7,6 +7,7 @@ from tiko.domain.market import Candle, MarketEvent
 from tiko.domain.order import Fill, SimOrder
 from tiko.domain.risk import RiskReview
 from tiko.domain.simulation import SimulationRun
+from tiko.simulation.replay import MarketReplay
 
 
 @dataclass
@@ -15,6 +16,7 @@ class SimulationState:
 
     run: SimulationRun
     step_index: int = 0
+    market_replay: MarketReplay | None = None
     candles: list[Candle] = field(default_factory=list)
     events: list[MarketEvent] = field(default_factory=list)
     decisions: list[TradeIntent] = field(default_factory=list)

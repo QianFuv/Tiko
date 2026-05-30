@@ -1,5 +1,6 @@
 """In-memory simulation orchestration service."""
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -8,7 +9,7 @@ from tiko.core.config import Settings
 from tiko.db.repositories import SimulationRepository
 from tiko.domain.account import SimAccount
 from tiko.domain.decision import TradeIntent
-from tiko.domain.market import MarketEvent
+from tiko.domain.market import Candle, MarketEvent
 from tiko.domain.order import Fill, SimOrder
 from tiko.domain.risk import RiskReview
 from tiko.domain.simulation import SimulationRun
@@ -18,6 +19,7 @@ from tiko.simulation.broker import SimBroker
 from tiko.simulation.clock import advance_simulated_time
 from tiko.simulation.event_bus import EventBus
 from tiko.simulation.ledger import apply_fill_to_account
+from tiko.simulation.replay import MarketReplay, MarketReplayExhausted
 from tiko.simulation.state import SimulationState, SimulationStepResult
 from tiko.simulation.synthetic import generate_synthetic_candle
 
@@ -48,6 +50,7 @@ class SimulationService:
         name: str,
         symbols: list[str],
         start_sim_time: datetime | None = None,
+        replay_candles: Sequence[Candle] | None = None,
     ) -> SimulationRun:
         """Create a new process-local simulation run.
 
@@ -55,12 +58,18 @@ class SimulationService:
             name: Human-readable run name.
             symbols: Symbols included in the simulation.
             start_sim_time: Optional start time. Defaults to current UTC hour.
+            replay_candles: Optional normalized candles for historical replay.
 
         Returns:
             Created simulation run.
         """
 
         run_id = uuid4()
+        market_replay = (
+            MarketReplay(replay_candles, symbols)
+            if replay_candles is not None
+            else None
+        )
         account = SimAccount(
             account_id=uuid4(),
             name=f"{name}-account",
@@ -72,22 +81,29 @@ class SimulationService:
             max_drawdown=Decimal("0"),
             status="active",
         )
-        start_time = start_sim_time or datetime.now(UTC).replace(
-            minute=0, second=0, microsecond=0
-        )
+        if start_sim_time is not None:
+            start_time = start_sim_time
+        elif market_replay is not None:
+            start_time = market_replay.start_time()
+        else:
+            start_time = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
         run = SimulationRun(
             run_id=run_id,
             name=name,
             status="created",
-            mode="synthetic_market",
+            mode="historical_replay"
+            if market_replay is not None
+            else "synthetic_market",
             account=account,
             symbols=symbols,
             start_sim_time=start_time,
             current_sim_time=start_time,
-            config={"data_source": "synthetic"},
+            config={
+                "data_source": "replay" if market_replay is not None else "synthetic"
+            },
             created_at=datetime.now(UTC),
         )
-        self._states[run_id] = SimulationState(run=run)
+        self._states[run_id] = SimulationState(run=run, market_replay=market_replay)
         if self._repository is not None:
             self._repository.save_run(run)
         return run
@@ -128,9 +144,16 @@ class SimulationService:
         """
 
         state = self._states[run_id]
-        next_time = advance_simulated_time(state.run.current_sim_time, 3600)
-        symbol = state.run.symbols[0]
-        candle = generate_synthetic_candle(symbol, state.step_index, next_time)
+        try:
+            candle = self._next_candle(state)
+        except MarketReplayExhausted:
+            completed_run = state.run.model_copy(update={"status": "completed"})
+            state.run = completed_run
+            if self._repository is not None:
+                self._repository.save_run(completed_run)
+            raise
+        next_time = candle.as_of
+        symbol = candle.symbol
         event = MarketEvent(
             event_id=uuid4(),
             type="candle_closed",
@@ -187,6 +210,26 @@ class SimulationService:
         if self._repository is not None:
             self._repository.save_step_result(result)
         return result
+
+    def _next_candle(self, state: SimulationState) -> Candle:
+        """Return the next candle for a simulation state.
+
+        Args:
+            state: Simulation state to advance.
+
+        Returns:
+            Next candle from replay or synthetic generation.
+
+        Raises:
+            MarketReplayExhausted: If replay mode has no remaining candles.
+        """
+
+        if state.market_replay is not None:
+            return state.market_replay.next_candle()
+        next_time = advance_simulated_time(state.run.current_sim_time, 3600)
+        return generate_synthetic_candle(
+            state.run.symbols[0], state.step_index, next_time
+        )
 
     def list_orders(self) -> list[SimOrder]:
         """List simulated orders across all runs.
