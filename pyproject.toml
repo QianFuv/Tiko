@@ -7,6 +7,7 @@ dependencies = [
     "ccxt>=4.5.24",
     "fastapi>=0.128.0",
     "pydantic-settings>=2.12.0",
+    "sqlalchemy>=2.0.45",
     "uvicorn>=0.40.0",
 ]
 
