@@ -4,7 +4,25 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from tiko.core.config import Settings
+from tiko.db import (
+    SimulationRepository,
+    create_all_tables,
+    create_database_engine,
+    create_session_factory,
+)
 from tiko.services import SimulationService
+
+
+def create_test_repository() -> SimulationRepository:
+    """Create an in-memory repository for service integration tests.
+
+    Returns:
+        Simulation repository bound to an in-memory SQLite database.
+    """
+
+    engine = create_database_engine("sqlite+pysqlite:///:memory:")
+    create_all_tables(engine)
+    return SimulationRepository(create_session_factory(engine))
 
 
 def test_simulation_step_creates_internal_order_and_fill() -> None:
@@ -68,3 +86,27 @@ def test_low_confidence_intent_is_rejected_without_order() -> None:
     assert result.fill is None
     assert service.list_orders() == []
     assert service.list_fills() == []
+
+
+def test_repository_backed_service_persists_created_run_and_step() -> None:
+    """Verify optional persistence hooks write service-generated artifacts."""
+
+    repository = create_test_repository()
+    service = SimulationService(Settings(), repository=repository)
+    run = service.create_run(
+        name="persisted-service",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    assert repository.get_run(run.run_id) == run
+
+    result = service.step_run(run.run_id, confidence=0.7)
+
+    assert result.order is not None
+    assert result.fill is not None
+    assert repository.get_run(run.run_id) == result.run
+    assert repository.list_decisions(run.run_id) == [result.decision]
+    assert repository.get_latest_risk_review(run.run_id) == result.risk_review
+    assert repository.list_orders(run.run_id) == [result.order]
+    assert repository.list_fills(run.run_id) == [result.fill]

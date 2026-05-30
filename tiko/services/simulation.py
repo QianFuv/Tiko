@@ -5,6 +5,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 from tiko.core.config import Settings
+from tiko.db.repositories import SimulationRepository
 from tiko.domain.account import SimAccount
 from tiko.domain.decision import TradeIntent
 from tiko.domain.market import MarketEvent
@@ -22,16 +23,20 @@ from tiko.simulation.synthetic import generate_synthetic_candle
 
 
 class SimulationService:
-    """Coordinate deterministic in-memory simulation runs."""
+    """Coordinate deterministic simulation runs with optional persistence."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self, settings: Settings, repository: SimulationRepository | None = None
+    ) -> None:
         """Initialize service dependencies and state.
 
         Args:
             settings: Application settings.
+            repository: Optional persistence repository.
         """
 
         self._settings = settings
+        self._repository = repository
         self._states: dict[UUID, SimulationState] = {}
         self._risk_service = RiskService(settings.minimum_trade_confidence)
         self._portfolio_service = PortfolioService()
@@ -83,6 +88,8 @@ class SimulationService:
             created_at=datetime.now(UTC),
         )
         self._states[run_id] = SimulationState(run=run)
+        if self._repository is not None:
+            self._repository.save_run(run)
         return run
 
     def list_runs(self) -> list[SimulationRun]:
@@ -168,7 +175,7 @@ class SimulationService:
         state.events.append(event)
         state.decisions.append(intent)
         state.risk_reviews.append(risk_review)
-        return SimulationStepResult(
+        result = SimulationStepResult(
             run=updated_run,
             candle=candle,
             event=event,
@@ -177,6 +184,9 @@ class SimulationService:
             order=order,
             fill=fill,
         )
+        if self._repository is not None:
+            self._repository.save_step_result(result)
+        return result
 
     def list_orders(self) -> list[SimOrder]:
         """List simulated orders across all runs.
