@@ -1,9 +1,17 @@
 """Read-only market data connector contracts and guards."""
 
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from typing import Any, Protocol
 
 import ccxt
+
+from tiko.data.normalization import (
+    MarketDataNormalizationError,
+    normalize_ccxt_ohlcv_row,
+)
+from tiko.data.validation import MarketDataValidator
+from tiko.domain.market import Candle
 
 ALLOWED_PUBLIC_METHODS = frozenset(
     {
@@ -13,6 +21,28 @@ ALLOWED_PUBLIC_METHODS = frozenset(
         "fetchTrades",
         "fetchOrderBook",
         "fetchOHLCV",
+    }
+)
+
+CRYPTOFEED_PUBLIC_CHANNELS = frozenset(
+    {
+        "trades",
+        "l2_book",
+        "ticker",
+        "candles",
+        "funding",
+        "open_interest",
+    }
+)
+
+CRYPTOFEED_FORBIDDEN_CHANNELS = frozenset(
+    {
+        "balances",
+        "orders",
+        "fills",
+        "positions",
+        "user_trades",
+        "account",
     }
 )
 
@@ -113,18 +143,41 @@ class ReadOnlyMarketDataConnector(Protocol):
             Public OHLCV rows.
         """
 
+    def fetch_candles(
+        self,
+        symbol: str,
+        timeframe: str,
+        since: int | None = None,
+        limit: int | None = None,
+        fetched_at: datetime | None = None,
+    ) -> list[Candle]:
+        """Fetch normalized public candles for one symbol and timeframe.
+
+        Args:
+            symbol: Exchange symbol to query.
+            timeframe: Candle timeframe.
+            since: Optional start timestamp in milliseconds.
+            limit: Optional maximum number of candles.
+            fetched_at: Optional wall-clock fetch timestamp.
+
+        Returns:
+            Normalized public candles.
+        """
+
 
 class GuardedExchangeClient:
     """Wrap an exchange object with a public market-data-only method guard."""
 
-    def __init__(self, exchange: Any) -> None:
+    def __init__(self, exchange: Any, source_name: str = "ccxt") -> None:
         """Initialize the guarded exchange wrapper.
 
         Args:
             exchange: Exchange-like object exposing CCXT-style public methods.
+            source_name: Source label used for normalized market data.
         """
 
         self._exchange = exchange
+        self._source_name = source_name
 
     def call_method(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
         """Call a public market data method after enforcing safety policy.
@@ -235,6 +288,48 @@ class GuardedExchangeClient:
 
         return self.call_method("fetchOHLCV", symbol, timeframe, since, limit)
 
+    def fetch_candles(
+        self,
+        symbol: str,
+        timeframe: str,
+        since: int | None = None,
+        limit: int | None = None,
+        fetched_at: datetime | None = None,
+    ) -> list[Candle]:
+        """Fetch and validate normalized public OHLCV candles.
+
+        Args:
+            symbol: Exchange symbol to query.
+            timeframe: Candle timeframe.
+            since: Optional start timestamp in milliseconds.
+            limit: Optional maximum number of candles.
+            fetched_at: Optional wall-clock fetch timestamp.
+
+        Returns:
+            Normalized candles.
+
+        Raises:
+            MarketDataNormalizationError: If normalized candles fail validation.
+        """
+
+        candles = [
+            normalize_ccxt_ohlcv_row(
+                row=row,
+                symbol=symbol,
+                timeframe=timeframe,
+                source=self._source_name,
+                fetched_at=fetched_at,
+            )
+            for row in self.fetch_ohlcv(symbol, timeframe, since=since, limit=limit)
+        ]
+        report = MarketDataValidator().validate_candles(candles)
+        if report.has_errors():
+            codes = ", ".join(issue.code for issue in report.issues)
+            raise MarketDataNormalizationError(
+                f"Fetched candle data failed validation: {codes}."
+            )
+        return candles
+
 
 class CcxtReadOnlyConnector(GuardedExchangeClient):
     """Create a CCXT-backed read-only public market data connector."""
@@ -260,4 +355,39 @@ class CcxtReadOnlyConnector(GuardedExchangeClient):
         safe_options.pop("secret", None)
         safe_options.pop("password", None)
         safe_options.setdefault("enableRateLimit", True)
-        super().__init__(exchange_class(safe_options))
+        super().__init__(
+            exchange_class(safe_options), source_name=f"ccxt:{exchange_id}"
+        )
+
+
+def validate_cryptofeed_channels(channels: Sequence[str]) -> tuple[str, ...]:
+    """Validate that requested Cryptofeed channels are public market data only.
+
+    Args:
+        channels: Requested Cryptofeed channel names.
+
+    Returns:
+        Validated channel tuple.
+
+    Raises:
+        MarketDataPermissionError: If a channel is forbidden or unsupported.
+    """
+
+    requested_channels = tuple(channels)
+    forbidden_channels = sorted(
+        set(requested_channels).intersection(CRYPTOFEED_FORBIDDEN_CHANNELS)
+    )
+    if forbidden_channels:
+        forbidden_text = ", ".join(forbidden_channels)
+        raise MarketDataPermissionError(
+            f"Cryptofeed channels are not allowed: {forbidden_text}."
+        )
+    unsupported_channels = sorted(
+        set(requested_channels).difference(CRYPTOFEED_PUBLIC_CHANNELS)
+    )
+    if unsupported_channels:
+        unsupported_text = ", ".join(unsupported_channels)
+        raise MarketDataPermissionError(
+            f"Cryptofeed channels are not recognized as public: {unsupported_text}."
+        )
+    return requested_channels

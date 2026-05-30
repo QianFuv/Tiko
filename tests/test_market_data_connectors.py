@@ -1,10 +1,18 @@
 """Tests for read-only market data connector safety boundaries."""
 
+from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 import pytest
 
-from tiko.data import GuardedExchangeClient, MarketDataPermissionError
+from tiko.data import (
+    CRYPTOFEED_FORBIDDEN_CHANNELS,
+    CRYPTOFEED_PUBLIC_CHANNELS,
+    GuardedExchangeClient,
+    MarketDataPermissionError,
+    validate_cryptofeed_channels,
+)
 
 
 class FakeExchange:
@@ -134,6 +142,27 @@ def test_public_market_data_methods_are_allowed() -> None:
     ]
 
 
+def test_fetch_candles_normalizes_public_ohlcv_rows() -> None:
+    """Verify guarded CCXT-style OHLCV rows normalize into candles."""
+
+    exchange = FakeExchange()
+    connector = GuardedExchangeClient(exchange, source_name="ccxt:test")
+
+    candles = connector.fetch_candles(
+        "BTC/USDT",
+        "1h",
+        limit=1,
+        fetched_at=datetime(2026, 1, 1, 2, tzinfo=UTC),
+    )
+
+    assert len(candles) == 1
+    assert candles[0].symbol == "BTC/USDT"
+    assert candles[0].close == Decimal("1.5")
+    assert candles[0].source == "ccxt:test"
+    assert candles[0].created_at == datetime(2026, 1, 1, 2, tzinfo=UTC)
+    assert exchange.calls == ["fetchOHLCV"]
+
+
 def test_private_method_is_blocked_before_exchange_call() -> None:
     """Verify private trading methods are blocked before the exchange sees them."""
 
@@ -159,3 +188,17 @@ def test_unknown_method_is_blocked() -> None:
         connector.call_method("privateGetAccount")
 
     assert exchange.calls == []
+
+
+def test_cryptofeed_channel_policy_allows_only_public_market_data() -> None:
+    """Verify Cryptofeed channel policy excludes authenticated account channels."""
+
+    assert validate_cryptofeed_channels(["trades", "ticker"]) == ("trades", "ticker")
+    assert "trades" in CRYPTOFEED_PUBLIC_CHANNELS
+    assert "orders" in CRYPTOFEED_FORBIDDEN_CHANNELS
+
+    with pytest.raises(MarketDataPermissionError):
+        validate_cryptofeed_channels(["orders"])
+
+    with pytest.raises(MarketDataPermissionError):
+        validate_cryptofeed_channels(["private_user_stream"])

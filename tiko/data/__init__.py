@@ -2,11 +2,14 @@
 
 from tiko.data.connectors import (
     ALLOWED_PUBLIC_METHODS,
+    CRYPTOFEED_FORBIDDEN_CHANNELS,
+    CRYPTOFEED_PUBLIC_CHANNELS,
     FORBIDDEN_PRIVATE_METHODS,
     CcxtReadOnlyConnector,
     GuardedExchangeClient,
     MarketDataPermissionError,
     ReadOnlyMarketDataConnector,
+    validate_cryptofeed_channels,
 )
 from tiko.data.importers import (
     CandleImportResult,
@@ -27,6 +30,8 @@ from tiko.data.validation import (
 
 __all__ = [
     "ALLOWED_PUBLIC_METHODS",
+    "CRYPTOFEED_FORBIDDEN_CHANNELS",
+    "CRYPTOFEED_PUBLIC_CHANNELS",
     "FORBIDDEN_PRIVATE_METHODS",
     "CcxtReadOnlyConnector",
     "CandleImportResult",
@@ -42,4 +47,5 @@ __all__ = [
     "ReadOnlyMarketDataConnector",
     "normalize_candle_record",
     "normalize_ccxt_ohlcv_row",
+    "validate_cryptofeed_channels",
 ]
