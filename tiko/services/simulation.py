@@ -8,6 +8,8 @@ from tiko.core.config import Settings
 from tiko.domain.account import SimAccount
 from tiko.domain.decision import TradeIntent
 from tiko.domain.market import MarketEvent
+from tiko.domain.order import Fill, SimOrder
+from tiko.domain.risk import RiskReview
 from tiko.domain.simulation import SimulationRun
 from tiko.services.portfolio import PortfolioService
 from tiko.services.risk import RiskService
@@ -176,7 +178,7 @@ class SimulationService:
             fill=fill,
         )
 
-    def list_orders(self) -> list[object]:
+    def list_orders(self) -> list[SimOrder]:
         """List simulated orders across all runs.
 
         Returns:
@@ -185,7 +187,7 @@ class SimulationService:
 
         return [order for state in self._states.values() for order in state.orders]
 
-    def list_fills(self) -> list[object]:
+    def list_fills(self) -> list[Fill]:
         """List simulated fills across all runs.
 
         Returns:
@@ -205,7 +207,7 @@ class SimulationService:
             decision for state in self._states.values() for decision in state.decisions
         ]
 
-    def get_latest_risk_review(self, run_id: UUID) -> object | None:
+    def get_latest_risk_review(self, run_id: UUID) -> RiskReview | None:
         """Return the latest risk review for a run.
 
         Args:
