@@ -3,6 +3,7 @@
 from tiko.domain.account import Position, SimAccount
 from tiko.domain.decision import TradeIntent
 from tiko.domain.market import Asset, Candle, MarketEvent, OrderBookSnapshot
+from tiko.domain.observation import Observation
 from tiko.domain.order import Fill, OrderRequest, SimOrder
 from tiko.domain.risk import RiskReview
 from tiko.domain.simulation import SimulationRun
@@ -12,6 +13,7 @@ __all__ = [
     "Candle",
     "Fill",
     "MarketEvent",
+    "Observation",
     "OrderBookSnapshot",
     "OrderRequest",
     "Position",
