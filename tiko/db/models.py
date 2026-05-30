@@ -2,9 +2,72 @@
 
 from datetime import datetime
 from decimal import Decimal
+from typing import cast
 
 from sqlalchemy import JSON, DateTime, Float, ForeignKey, Numeric, String, Text
+from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.types import TypeDecorator, TypeEngine
+
+
+class ExactDecimal(TypeDecorator[Decimal]):
+    """Persist decimals without SQLite floating-point round-trip drift."""
+
+    impl = String
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[object]:
+        """Return a dialect-specific database type for decimal values.
+
+        Args:
+            dialect: Active SQLAlchemy database dialect.
+
+        Returns:
+            Database type used for the current dialect.
+        """
+
+        if dialect.name == "sqlite":
+            return cast(TypeEngine[object], dialect.type_descriptor(String(128)))
+        return cast(
+            TypeEngine[object],
+            dialect.type_descriptor(Numeric(38, 18, asdecimal=True)),
+        )
+
+    def process_bind_param(
+        self, value: Decimal | None, dialect: Dialect
+    ) -> str | Decimal | None:
+        """Convert a Python decimal before sending it to the database.
+
+        Args:
+            value: Decimal value to persist.
+            dialect: Active SQLAlchemy database dialect.
+
+        Returns:
+            Bound value for the current dialect.
+        """
+
+        if value is None:
+            return None
+        if dialect.name == "sqlite":
+            return str(value)
+        return value
+
+    def process_result_value(
+        self, value: object | None, dialect: Dialect
+    ) -> Decimal | None:
+        """Convert a database value back to a Python decimal.
+
+        Args:
+            value: Raw database value.
+            dialect: Active SQLAlchemy database dialect.
+
+        Returns:
+            Decimal value or `None`.
+        """
+
+        if value is None:
+            return None
+        return Decimal(str(value))
 
 
 class Base(DeclarativeBase):
@@ -19,24 +82,12 @@ class AccountRecord(Base):
     account_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     base_currency: Mapped[str] = mapped_column(String(16), nullable=False)
-    initial_equity: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
-    )
-    cash_balance: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
-    )
-    total_equity: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
-    )
-    realized_pnl: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
-    )
-    unrealized_pnl: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
-    )
-    max_drawdown: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
-    )
+    initial_equity: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    cash_balance: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    total_equity: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    realized_pnl: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    unrealized_pnl: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    max_drawdown: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
 
 
@@ -60,9 +111,7 @@ class SimulationRunRecord(Base):
         DateTime(timezone=True), nullable=False
     )
     end_sim_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    speed_multiplier: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
-    )
+    speed_multiplier: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
     config: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
@@ -82,24 +131,12 @@ class CandleRecord(Base):
     close_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
-    open: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
-    )
-    high: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
-    )
-    low: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
-    )
-    close: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
-    )
-    volume: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
-    )
-    quote_volume: Mapped[Decimal | None] = mapped_column(
-        Numeric(38, 18, asdecimal=True)
-    )
+    open: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    high: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    low: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    close: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    volume: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    quote_volume: Mapped[Decimal | None] = mapped_column(ExactDecimal())
     source: Mapped[str] = mapped_column(String(64), nullable=False)
     as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -135,15 +172,9 @@ class DecisionRecord(Base):
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     market_type: Mapped[str] = mapped_column(String(32), nullable=False)
     action: Mapped[str] = mapped_column(String(64), nullable=False)
-    target_weight: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
-    )
-    target_notional: Mapped[Decimal | None] = mapped_column(
-        Numeric(38, 18, asdecimal=True)
-    )
-    max_leverage: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
-    )
+    target_weight: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    target_notional: Mapped[Decimal | None] = mapped_column(ExactDecimal())
+    max_leverage: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     expected_holding_period: Mapped[str] = mapped_column(String(64), nullable=False)
     thesis: Mapped[str] = mapped_column(Text, nullable=False)
@@ -167,14 +198,12 @@ class RiskReviewRecord(Base):
     )
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     original_target_weight: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
+        ExactDecimal(), nullable=False
     )
     approved_target_weight: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
+        ExactDecimal(), nullable=False
     )
-    max_order_notional: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
-    )
+    max_order_notional: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
     reasons: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     triggered_rules: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     created_at_sim_time: Mapped[datetime] = mapped_column(
@@ -194,10 +223,8 @@ class OrderRecord(Base):
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     side: Mapped[str] = mapped_column(String(16), nullable=False)
     order_type: Mapped[str] = mapped_column(String(16), nullable=False)
-    quantity: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
-    )
-    limit_price: Mapped[Decimal | None] = mapped_column(Numeric(38, 18, asdecimal=True))
+    quantity: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    limit_price: Mapped[Decimal | None] = mapped_column(ExactDecimal())
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     submitted_at_sim_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
@@ -217,18 +244,10 @@ class FillRecord(Base):
     run_id: Mapped[str] = mapped_column(ForeignKey("simulation_runs.run_id"))
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     side: Mapped[str] = mapped_column(String(16), nullable=False)
-    quantity: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
-    )
-    price: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
-    )
-    fee: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
-    )
-    slippage_bps: Mapped[Decimal] = mapped_column(
-        Numeric(38, 18, asdecimal=True), nullable=False
-    )
+    quantity: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    price: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    fee: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    slippage_bps: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
     filled_at_sim_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
