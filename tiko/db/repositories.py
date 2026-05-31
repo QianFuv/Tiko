@@ -37,6 +37,7 @@ from tiko.db.models import (
     PortfolioSnapshotRecord,
     PositionRecord,
     ProjectRecordRow,
+    RawMarketDataRecordRow,
     RealtimeEventRecord,
     ReportRecord,
     RiskReviewRecord,
@@ -64,6 +65,7 @@ from tiko.domain.dataset import (
     DatasetRecord,
     DatasetSource,
     DatasetStatus,
+    RawMarketDataRecord,
 )
 from tiko.domain.decision import DecisionReview, DecisionStatus, TradeIntent
 from tiko.domain.experiment import ExperimentKind, ExperimentRecord, ExperimentStatus
@@ -496,6 +498,7 @@ class SimulationRepository:
         dataset: DatasetRecord,
         candles: tuple[Candle, ...],
         quality_report: DatasetQualityReport,
+        raw_records: Sequence[RawMarketDataRecord] | None = None,
     ) -> None:
         """Persist imported dataset metadata, candles, and quality details.
 
@@ -503,11 +506,16 @@ class SimulationRepository:
             dataset: Dataset metadata to persist.
             candles: Normalized candles owned by the dataset.
             quality_report: Latest dataset validation summary.
+            raw_records: Optional raw rows to replace for the dataset.
         """
 
         with self._session_factory() as session:
             self._merge_dataset(session, dataset)
             self._replace_dataset_candles(session, dataset.dataset_id, candles)
+            if raw_records is not None:
+                self._replace_raw_market_data_records(
+                    session, dataset.dataset_id, raw_records
+                )
             self._merge_dataset_quality_report(session, quality_report)
             session.commit()
 
@@ -581,6 +589,26 @@ class SimulationRepository:
                 statement = statement.limit(limit)
             records = session.scalars(statement).all()
             return [self._to_dataset_candle(record) for record in records]
+
+    def list_raw_market_data_records(
+        self, dataset_id: UUID
+    ) -> list[RawMarketDataRecord]:
+        """List raw market data rows for one dataset.
+
+        Args:
+            dataset_id: Dataset identifier.
+
+        Returns:
+            Persisted raw rows ordered by row index.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(RawMarketDataRecordRow)
+                .where(RawMarketDataRecordRow.dataset_id == str(dataset_id))
+                .order_by(RawMarketDataRecordRow.row_index)
+            ).all()
+            return [self._to_raw_market_data_record(record) for record in records]
 
     def save_experiment(self, experiment: ExperimentRecord) -> None:
         """Persist a research experiment.
@@ -1339,6 +1367,40 @@ class SimulationRepository:
                 created_at=candle.created_at,
             )
             for candle in candles
+        )
+
+    def _replace_raw_market_data_records(
+        self,
+        session: Session,
+        dataset_id: UUID,
+        raw_records: Sequence[RawMarketDataRecord],
+    ) -> None:
+        """Replace all raw market data rows for one dataset.
+
+        Args:
+            session: Active SQLAlchemy session.
+            dataset_id: Dataset identifier.
+            raw_records: Replacement raw row sequence.
+        """
+
+        session.execute(
+            delete(RawMarketDataRecordRow).where(
+                RawMarketDataRecordRow.dataset_id == str(dataset_id)
+            )
+        )
+        session.add_all(
+            RawMarketDataRecordRow(
+                raw_record_id=str(record.raw_record_id),
+                dataset_id=str(record.dataset_id),
+                ingestion_run_id=str(record.ingestion_run_id),
+                source=record.source,
+                source_uri=record.source_uri,
+                row_index=record.row_index,
+                payload=record.payload,
+                fetched_at=record.fetched_at,
+                created_at=record.created_at,
+            )
+            for record in raw_records
         )
 
     def _merge_dataset_quality_report(
@@ -2168,6 +2230,30 @@ class SimulationRepository:
             ingestion_run_id=UUID(record.ingestion_run_id)
             if record.ingestion_run_id is not None
             else None,
+            created_at=self._aware_datetime(record.created_at),
+        )
+
+    def _to_raw_market_data_record(
+        self, record: RawMarketDataRecordRow
+    ) -> RawMarketDataRecord:
+        """Convert a raw market data row to a domain model.
+
+        Args:
+            record: Persisted raw market data row.
+
+        Returns:
+            Raw market data record domain model.
+        """
+
+        return RawMarketDataRecord(
+            raw_record_id=UUID(record.raw_record_id),
+            dataset_id=UUID(record.dataset_id),
+            ingestion_run_id=UUID(record.ingestion_run_id),
+            source=cast(DatasetSource, record.source),
+            source_uri=record.source_uri,
+            row_index=record.row_index,
+            payload=dict(record.payload),
+            fetched_at=self._optional_aware_datetime(record.fetched_at),
             created_at=self._aware_datetime(record.created_at),
         )
 

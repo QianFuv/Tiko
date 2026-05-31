@@ -48,3 +48,17 @@ class DatasetQualityReport(DomainModel):
     warning_count: int = Field(ge=0)
     has_errors: bool
     issues: list[DatasetQualityIssue] = Field(default_factory=list)
+
+
+class RawMarketDataRecord(DomainModel):
+    """Represent a raw ingested market data row before normalization."""
+
+    raw_record_id: UUID
+    dataset_id: UUID
+    ingestion_run_id: UUID
+    source: DatasetSource
+    source_uri: str = Field(min_length=1)
+    row_index: int = Field(ge=0)
+    payload: dict[str, object]
+    fetched_at: datetime | None = None
+    created_at: datetime

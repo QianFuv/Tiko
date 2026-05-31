@@ -17,7 +17,12 @@ from tiko.db import (
     create_database_engine,
     create_session_factory,
 )
-from tiko.domain.dataset import DatasetQualityIssue, DatasetQualityReport, DatasetRecord
+from tiko.domain.dataset import (
+    DatasetQualityIssue,
+    DatasetQualityReport,
+    DatasetRecord,
+    RawMarketDataRecord,
+)
 from tiko.domain.decision import DecisionReview
 from tiko.domain.experiment import ExperimentRecord
 from tiko.domain.market import Asset, Candle, MarketEvent
@@ -169,6 +174,33 @@ def sample_quality_report(dataset_id: UUID) -> DatasetQualityReport:
     )
 
 
+def sample_raw_record(
+    dataset_id: UUID, ingestion_run_id: UUID, row_index: int = 0
+) -> RawMarketDataRecord:
+    """Create a raw market data row fixture.
+
+    Args:
+        dataset_id: Dataset identifier.
+        ingestion_run_id: Ingestion run identifier.
+        row_index: Source row index.
+
+    Returns:
+        Raw market data record domain model.
+    """
+
+    return RawMarketDataRecord(
+        raw_record_id=uuid4(),
+        dataset_id=dataset_id,
+        ingestion_run_id=ingestion_run_id,
+        source="csv",
+        source_uri="memory://fixture.csv",
+        row_index=row_index,
+        payload={"symbol": "BTCUSDT", "row_index": row_index},
+        fetched_at=datetime(2026, 1, 1, 1, 5, tzinfo=UTC),
+        created_at=datetime(2026, 1, 1, 1, 6, tzinfo=UTC),
+    )
+
+
 def sample_experiment(dataset_id: UUID) -> ExperimentRecord:
     """Create an experiment fixture.
 
@@ -253,6 +285,7 @@ def test_metadata_creates_expected_tables(sqlite_engine: Engine) -> None:
         "portfolio_snapshots",
         "positions",
         "projects",
+        "raw_market_data_records",
         "realtime_events",
         "risk_reviews",
         "reports",
@@ -433,14 +466,33 @@ def test_repository_persists_datasets(
     dataset = sample_dataset()
     candle = sample_candle()
     quality_report = sample_quality_report(dataset.dataset_id)
+    raw_records = (
+        sample_raw_record(dataset.dataset_id, candle.ingestion_run_id or uuid4()),
+    )
 
-    repository.save_dataset(dataset, (candle,), quality_report)
+    repository.save_dataset(dataset, (candle,), quality_report, raw_records=raw_records)
 
     assert repository.get_dataset(dataset.dataset_id) == dataset
     assert repository.list_datasets() == [dataset]
     assert repository.get_dataset_quality_report(dataset.dataset_id) == quality_report
     assert repository.list_dataset_candles(dataset.dataset_id, limit=10) == [candle]
     assert repository.list_dataset_candles(dataset.dataset_id, limit=0) == []
+    assert repository.list_raw_market_data_records(dataset.dataset_id) == list(
+        raw_records
+    )
+
+    replacement_raw_records = (
+        sample_raw_record(
+            dataset.dataset_id, raw_records[0].ingestion_run_id, row_index=1
+        ),
+    )
+    repository.save_dataset(
+        dataset, (candle,), quality_report, raw_records=replacement_raw_records
+    )
+
+    assert repository.list_raw_market_data_records(dataset.dataset_id) == list(
+        replacement_raw_records
+    )
 
 
 def test_repository_persists_experiments(
@@ -480,6 +532,10 @@ def test_dataset_service_writes_through_repository(
     assert persisted_service.get_quality_report(dataset.dataset_id) == quality_report
     assert persisted_service.list_candles(dataset.dataset_id, limit=1)[0].symbol == (
         "BTCUSDT"
+    )
+    assert (
+        persisted_service.list_raw_records(dataset.dataset_id)[0].payload["symbol"]
+        == "BTCUSDT"
     )
 
 

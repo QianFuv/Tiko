@@ -22,6 +22,7 @@ from tiko.domain.dataset import (
     DatasetRecord,
     DatasetSource,
     DatasetStatus,
+    RawMarketDataRecord,
 )
 from tiko.domain.decision import DecisionReview, TradeIntent
 from tiko.domain.experiment import ExperimentKind, ExperimentRecord, ExperimentStatus
@@ -145,6 +146,7 @@ __all__ = [
     "Position",
     "Principal",
     "ProjectRecord",
+    "RawMarketDataRecord",
     "RiskLimits",
     "RiskReview",
     "RenderedReport",

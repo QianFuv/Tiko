@@ -1,8 +1,10 @@
 """Dataset registry service for imported research candles."""
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from tiko.data import (
     CsvCandleImporter,
@@ -18,6 +20,7 @@ from tiko.domain.dataset import (
     DatasetRecord,
     DatasetSource,
     DatasetStatus,
+    RawMarketDataRecord,
 )
 from tiko.domain.market import Candle
 
@@ -48,6 +51,7 @@ class DatasetService:
         self._datasets: dict[UUID, DatasetRecord] = {}
         self._candles: dict[UUID, tuple[Candle, ...]] = {}
         self._quality_reports: dict[UUID, DatasetQualityReport] = {}
+        self._raw_records: dict[UUID, tuple[RawMarketDataRecord, ...]] = {}
 
     def upload_dataset(
         self,
@@ -95,11 +99,22 @@ class DatasetService:
             candles=result.candles,
             status="invalid" if quality_report.has_errors else "validated",
         )
+        raw_records = self._build_raw_records(
+            dataset_id=dataset_id,
+            source=resolved_source,
+            source_uri=str(result.source_path),
+            ingestion_run_id=result.ingestion_run_id,
+            raw_records=result.raw_records,
+            candles=result.candles,
+        )
         self._datasets[dataset_id] = record
         self._candles[dataset_id] = result.candles
         self._quality_reports[dataset_id] = quality_report
+        self._raw_records[dataset_id] = raw_records
         if self._repository is not None:
-            self._repository.save_dataset(record, result.candles, quality_report)
+            self._repository.save_dataset(
+                record, result.candles, quality_report, raw_records=raw_records
+            )
         return record
 
     def list_datasets(self) -> list[DatasetRecord]:
@@ -196,6 +211,24 @@ class DatasetService:
             self.get_dataset(dataset_id)
             return self._repository.list_dataset_candles(dataset_id, limit)
         return list(self._candles[dataset_id][:limit])
+
+    def list_raw_records(self, dataset_id: UUID) -> list[RawMarketDataRecord]:
+        """List raw market data rows captured for a dataset.
+
+        Args:
+            dataset_id: Dataset identifier.
+
+        Returns:
+            Raw market data records ordered by row index.
+
+        Raises:
+            KeyError: If the dataset does not exist.
+        """
+
+        if self._repository is not None:
+            self.get_dataset(dataset_id)
+            return self._repository.list_raw_market_data_records(dataset_id)
+        return list(self._raw_records[dataset_id])
 
     def _get_candles_for_validation(self, dataset_id: UUID) -> tuple[Candle, ...]:
         """Load candles for dataset validation.
@@ -308,3 +341,88 @@ class DatasetService:
             has_errors=validation_report.has_errors(),
             issues=issues,
         )
+
+    def _build_raw_records(
+        self,
+        dataset_id: UUID,
+        source: DatasetSource,
+        source_uri: str,
+        ingestion_run_id: UUID,
+        raw_records: tuple[dict[str, object], ...],
+        candles: tuple[Candle, ...],
+    ) -> tuple[RawMarketDataRecord, ...]:
+        """Build raw market data records for durable replay and audit.
+
+        Args:
+            dataset_id: Dataset identifier.
+            source: Dataset source type.
+            source_uri: Source URI or path.
+            ingestion_run_id: Import run identifier shared by normalized candles.
+            raw_records: Raw row payloads from the importer.
+            candles: Normalized candles created from the raw rows.
+
+        Returns:
+            Raw market data records ordered by row index.
+        """
+
+        created_at = datetime.now(UTC)
+        return tuple(
+            RawMarketDataRecord(
+                raw_record_id=uuid5(
+                    NAMESPACE_URL, f"raw-market-data:{dataset_id}:{row_index}"
+                ),
+                dataset_id=dataset_id,
+                ingestion_run_id=ingestion_run_id,
+                source=source,
+                source_uri=source_uri,
+                row_index=row_index,
+                payload=self._normalize_raw_payload(payload),
+                fetched_at=candles[row_index].fetched_at
+                if row_index < len(candles)
+                else None,
+                created_at=created_at,
+            )
+            for row_index, payload in enumerate(raw_records)
+        )
+
+    def _normalize_raw_payload(
+        self, payload: Mapping[str, object]
+    ) -> dict[str, object]:
+        """Convert raw payload values into JSON-compatible values.
+
+        Args:
+            payload: Raw importer payload.
+
+        Returns:
+            JSON-compatible payload dictionary.
+        """
+
+        return {
+            str(key): self._normalize_raw_payload_value(value)
+            for key, value in payload.items()
+        }
+
+    def _normalize_raw_payload_value(self, value: object) -> object:
+        """Convert one raw payload value into a JSON-compatible value.
+
+        Args:
+            value: Raw payload value.
+
+        Returns:
+            JSON-compatible value.
+        """
+
+        if value is None or isinstance(value, str | int | float | bool):
+            return value
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, Decimal | UUID | Path):
+            return str(value)
+        if isinstance(value, Mapping):
+            return {
+                str(key): self._normalize_raw_payload_value(nested_value)
+                for key, nested_value in value.items()
+            }
+        if isinstance(value, list | tuple):
+            return [self._normalize_raw_payload_value(item) for item in value]
+        return str(value)

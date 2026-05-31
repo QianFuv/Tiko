@@ -283,6 +283,24 @@ class DatasetCandleRecord(Base):
     )
 
 
+class RawMarketDataRecordRow(Base):
+    """Persist a raw market data row before normalization."""
+
+    __tablename__ = "raw_market_data_records"
+
+    raw_record_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.dataset_id"))
+    ingestion_run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_uri: Mapped[str] = mapped_column(Text, nullable=False)
+    row_index: Mapped[int] = mapped_column(nullable=False)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class CandleRecord(Base):
     """Persist a point-in-time candle emitted by a simulation run."""
 

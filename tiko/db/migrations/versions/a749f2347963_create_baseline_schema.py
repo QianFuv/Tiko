@@ -140,6 +140,23 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("candle_id"),
     )
     op.create_table(
+        "raw_market_data_records",
+        sa.Column("raw_record_id", sa.String(length=36), nullable=False),
+        sa.Column("dataset_id", sa.String(length=36), nullable=False),
+        sa.Column("ingestion_run_id", sa.String(length=36), nullable=False),
+        sa.Column("source", sa.String(length=32), nullable=False),
+        sa.Column("source_uri", sa.Text(), nullable=False),
+        sa.Column("row_index", sa.Integer(), nullable=False),
+        sa.Column("payload", sa.JSON(), nullable=False),
+        sa.Column("fetched_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["dataset_id"],
+            ["datasets.dataset_id"],
+        ),
+        sa.PrimaryKeyConstraint("raw_record_id"),
+    )
+    op.create_table(
         "dataset_quality_reports",
         sa.Column("dataset_id", sa.String(length=36), nullable=False),
         sa.Column("total_records", sa.Integer(), nullable=False),
@@ -643,6 +660,7 @@ def downgrade() -> None:
     op.drop_table("projects")
     op.drop_table("experiments")
     op.drop_table("dataset_quality_reports")
+    op.drop_table("raw_market_data_records")
     op.drop_table("dataset_candles")
     op.drop_table("users")
     op.drop_table("reports")

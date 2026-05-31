@@ -28,6 +28,7 @@ class CandleImportResult:
 
     source_path: Path
     ingestion_run_id: UUID
+    raw_records: tuple[dict[str, object], ...]
     candles: tuple[Candle, ...]
     validation_report: MarketDataValidationReport
 
@@ -95,14 +96,16 @@ class CsvCandleImporter:
         """
 
         ingestion_run_id = uuid4()
+        raw_records = tuple(dict(record) for record in records)
         candles = normalize_records(
-            records,
+            raw_records,
             default_fetched_at=datetime.now(UTC),
             default_ingestion_run_id=ingestion_run_id,
         )
         return CandleImportResult(
             source_path=source_path,
             ingestion_run_id=ingestion_run_id,
+            raw_records=raw_records,
             candles=tuple(candles),
             validation_report=self._validator.validate_candles(candles),
         )
@@ -137,14 +140,16 @@ class ParquetCandleImporter:
         table = parquet.read_table(source_path)
         validate_required_columns(table.column_names)
         ingestion_run_id = uuid4()
+        raw_records = tuple(dict(record) for record in table.to_pylist())
         candles = normalize_records(
-            table.to_pylist(),
+            raw_records,
             default_fetched_at=datetime.now(UTC),
             default_ingestion_run_id=ingestion_run_id,
         )
         return CandleImportResult(
             source_path=source_path,
             ingestion_run_id=ingestion_run_id,
+            raw_records=raw_records,
             candles=tuple(candles),
             validation_report=self._validator.validate_candles(candles),
         )

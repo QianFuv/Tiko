@@ -22,6 +22,7 @@ from tiko.domain import (
     OrderRequest,
     PortfolioOrderPlan,
     Principal,
+    RawMarketDataRecord,
     RiskReview,
     SimAccount,
     SimOrder,
@@ -409,6 +410,27 @@ def test_dataset_and_experiment_schemas_validate_research_state() -> None:
         ExperimentRecord.model_validate(
             experiment.model_dump() | {"kind": "live_trade"}
         )
+
+
+def test_raw_market_data_record_schema_preserves_payload() -> None:
+    """Verify raw dataset rows preserve audit payloads and row constraints."""
+
+    raw_record = RawMarketDataRecord(
+        raw_record_id=uuid4(),
+        dataset_id=uuid4(),
+        ingestion_run_id=uuid4(),
+        source="csv",
+        source_uri="memory://candles.csv",
+        row_index=0,
+        payload={"symbol": "BTCUSDT", "open": "100"},
+        fetched_at=current_time(),
+        created_at=current_time(),
+    )
+
+    assert raw_record.payload["symbol"] == "BTCUSDT"
+
+    with pytest.raises(ValidationError):
+        RawMarketDataRecord.model_validate(raw_record.model_dump() | {"row_index": -1})
 
 
 def test_runtime_schemas_validate_worker_and_job_state() -> None:

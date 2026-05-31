@@ -268,6 +268,7 @@ def test_csv_importer_returns_candles_and_validation_report(tmp_path: Path) -> N
     result = CsvCandleImporter().import_file(path)
 
     assert result.source_path == path
+    assert result.raw_records == (sample_candle_row(),)
     assert len(result.candles) == 1
     assert result.candles[0].close == Decimal("105")
     assert result.candles[0].fetched_at is not None
@@ -283,6 +284,7 @@ def test_parquet_importer_matches_csv_normalization(tmp_path: Path) -> None:
 
     result = ParquetCandleImporter().import_file(path)
 
+    assert result.raw_records[0]["symbol"] == "BTCUSDT"
     assert len(result.candles) == 1
     assert result.candles[0].symbol == "BTCUSDT"
     assert result.candles[0].quote_volume == Decimal("262.5")
