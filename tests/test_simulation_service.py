@@ -1093,15 +1093,14 @@ def test_service_creates_reports_and_updates_alerts() -> None:
         symbols=["BTCUSDT"],
         start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
     )
-    service.step_run(run.run_id, confidence=0.7)
-
-    report = service.create_simulation_report(run.run_id)
+    result = service.step_run(run.run_id, confidence=0.7)
     alert = service.create_alert(
         run_id=run.run_id,
         category="drawdown",
         severity="warning",
         message="Drawdown near threshold.",
     )
+    report = service.create_simulation_report(run.run_id)
     updated_alert = service.update_alert_status(
         run_id=run.run_id,
         alert_id=alert.alert_id,
@@ -1109,8 +1108,40 @@ def test_service_creates_reports_and_updates_alerts() -> None:
     )
 
     activity = report.sections["activity"]
+    timeline = report.sections["timeline"]
+    dataset = report.sections["dataset"]
+    equity_curve = report.sections["equity_curve"]
+    drawdown_curve = report.sections["drawdown_curve"]
+    position_curve = report.sections["position_curve"]
+    trades = report.sections["trades"]
+    key_metrics = report.sections["key_metrics"]
+    risk_events = report.sections["risk_events"]
+    agent_performance = report.sections["agent_performance"]
+    error_attribution = report.sections["error_attribution"]
     assert isinstance(activity, dict)
+    assert isinstance(timeline, dict)
+    assert isinstance(dataset, dict)
+    assert isinstance(equity_curve, list)
+    assert isinstance(drawdown_curve, list)
+    assert isinstance(position_curve, list)
+    assert isinstance(trades, list)
+    assert isinstance(key_metrics, dict)
+    assert isinstance(risk_events, list)
+    assert isinstance(agent_performance, dict)
+    assert isinstance(error_attribution, dict)
+    assert result.fill is not None
     assert activity["decision_count"] == 1
+    assert timeline["start_sim_time"] == run.start_sim_time.isoformat()
+    assert dataset["data_source"] == "synthetic"
+    assert equity_curve[0]["total_equity"] == str(result.run.account.total_equity)
+    assert drawdown_curve[0]["max_drawdown"] == str(result.run.account.max_drawdown)
+    assert position_curve[0]["symbol"] == "BTCUSDT"
+    assert trades[0]["fill_id"] == str(result.fill.fill_id)
+    assert key_metrics["latest"]["fill_count"] == 1
+    assert risk_events == []
+    assert agent_performance["decision_count"] == 1
+    assert error_attribution["alert_count"] == 1
+    assert error_attribution["alerts"][0]["alert_id"] == str(alert.alert_id)
     assert service.list_reports(run.run_id) == [report]
     assert updated_alert.status == "acknowledged"
     assert service.list_alerts(run.run_id) == [updated_alert]

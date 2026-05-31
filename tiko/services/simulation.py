@@ -2024,6 +2024,8 @@ class SimulationService:
             ),
             sections={
                 "configuration": run.config,
+                "dataset": self._build_report_dataset_section(state),
+                "timeline": self._build_report_timeline_section(state),
                 "symbols": run.symbols,
                 "account": {
                     "cash_balance": str(run.account.cash_balance),
@@ -2039,6 +2041,14 @@ class SimulationService:
                     "fill_count": len(state.fills),
                     "memory_count": len(state.memory_entries),
                 },
+                "equity_curve": self._build_report_equity_curve(state),
+                "drawdown_curve": self._build_report_drawdown_curve(state),
+                "position_curve": self._build_report_position_curve(state),
+                "trades": self._build_report_trade_list(state),
+                "key_metrics": self._build_report_key_metrics(state),
+                "risk_events": self._build_report_risk_events(state),
+                "agent_performance": self._build_report_agent_performance(state),
+                "error_attribution": self._build_report_error_attribution(state),
             },
             created_at_sim_time=run.current_sim_time,
             created_at=datetime.now(UTC),
@@ -2047,6 +2057,269 @@ class SimulationService:
         if self._repository is not None:
             self._repository.save_report(report)
         return report
+
+    def _build_report_dataset_section(
+        self, state: SimulationState
+    ) -> dict[str, object]:
+        """Build dataset context for a simulation report.
+
+        Args:
+            state: Simulation state used for report generation.
+
+        Returns:
+            Dataset report section.
+        """
+
+        replay = state.market_replay
+        return {
+            "data_source": state.run.config.get("data_source", "unknown"),
+            "mode": state.run.mode,
+            "symbols": state.run.symbols,
+            "emitted_candle_count": len(state.candles),
+            "remaining_replay_candles": replay.remaining() if replay is not None else 0,
+        }
+
+    def _build_report_timeline_section(
+        self, state: SimulationState
+    ) -> dict[str, object]:
+        """Build timeline context for a simulation report.
+
+        Args:
+            state: Simulation state used for report generation.
+
+        Returns:
+            Timeline report section.
+        """
+
+        return {
+            "start_sim_time": state.run.start_sim_time.isoformat(),
+            "current_sim_time": state.run.current_sim_time.isoformat(),
+            "created_at": state.run.created_at.isoformat(),
+            "status": state.run.status,
+            "speed_multiplier": str(state.run.speed_multiplier),
+        }
+
+    def _build_report_equity_curve(
+        self, state: SimulationState
+    ) -> list[dict[str, object]]:
+        """Build an equity curve from portfolio snapshots.
+
+        Args:
+            state: Simulation state used for report generation.
+
+        Returns:
+            Equity curve points.
+        """
+
+        return [
+            {
+                "simulated_time": snapshot.simulated_time.isoformat(),
+                "cash_balance": str(snapshot.cash_balance),
+                "total_equity": str(snapshot.total_equity),
+                "realized_pnl": str(snapshot.realized_pnl),
+                "unrealized_pnl": str(snapshot.unrealized_pnl),
+            }
+            for snapshot in state.portfolio_snapshots
+        ]
+
+    def _build_report_drawdown_curve(
+        self, state: SimulationState
+    ) -> list[dict[str, object]]:
+        """Build a drawdown curve from portfolio snapshots.
+
+        Args:
+            state: Simulation state used for report generation.
+
+        Returns:
+            Drawdown curve points.
+        """
+
+        return [
+            {
+                "simulated_time": snapshot.simulated_time.isoformat(),
+                "max_drawdown": str(snapshot.max_drawdown),
+                "gross_exposure": str(snapshot.gross_exposure),
+                "net_exposure": str(snapshot.net_exposure),
+            }
+            for snapshot in state.portfolio_snapshots
+        ]
+
+    def _build_report_position_curve(
+        self, state: SimulationState
+    ) -> list[dict[str, object]]:
+        """Build current position exposure points for a simulation report.
+
+        Args:
+            state: Simulation state used for report generation.
+
+        Returns:
+            Position exposure points.
+        """
+
+        return [
+            {
+                "symbol": position.symbol,
+                "side": position.side,
+                "quantity": str(position.quantity),
+                "notional": str(position.notional),
+                "mark_price": str(position.mark_price),
+                "updated_at_sim_time": position.updated_at_sim_time.isoformat(),
+            }
+            for position in state.positions
+        ]
+
+    def _build_report_trade_list(
+        self, state: SimulationState
+    ) -> list[dict[str, object]]:
+        """Build simulated trade rows for a simulation report.
+
+        Args:
+            state: Simulation state used for report generation.
+
+        Returns:
+            Simulated trade rows.
+        """
+
+        orders_by_id = {order.order_id: order for order in state.orders}
+        rows: list[dict[str, object]] = []
+        for fill in state.fills:
+            order = orders_by_id.get(fill.order_id)
+            rows.append(
+                {
+                    "fill_id": str(fill.fill_id),
+                    "order_id": str(fill.order_id),
+                    "decision_id": str(order.decision_id)
+                    if order is not None and order.decision_id is not None
+                    else None,
+                    "symbol": fill.symbol,
+                    "side": fill.side,
+                    "quantity": str(fill.quantity),
+                    "price": str(fill.price),
+                    "fee": str(fill.fee),
+                    "slippage_bps": str(fill.slippage_bps),
+                    "filled_at_sim_time": fill.filled_at_sim_time.isoformat(),
+                }
+            )
+        return rows
+
+    def _build_report_key_metrics(self, state: SimulationState) -> dict[str, object]:
+        """Build key performance metrics for a simulation report.
+
+        Args:
+            state: Simulation state used for report generation.
+
+        Returns:
+            Key metrics report section.
+        """
+
+        latest_metrics = (
+            state.metric_snapshots[-1].metrics if state.metric_snapshots else {}
+        )
+        return {
+            "latest": latest_metrics,
+            "history": [
+                {
+                    "simulated_time": snapshot.simulated_time.isoformat(),
+                    "metrics": snapshot.metrics,
+                }
+                for snapshot in state.metric_snapshots
+            ],
+        }
+
+    def _build_report_risk_events(
+        self, state: SimulationState
+    ) -> list[dict[str, object]]:
+        """Build risk event rows for a simulation report.
+
+        Args:
+            state: Simulation state used for report generation.
+
+        Returns:
+            Risk event rows.
+        """
+
+        return [
+            {
+                "review_id": str(review.review_id),
+                "decision_id": str(review.decision_id),
+                "status": review.status,
+                "reasons": review.reasons,
+                "triggered_rules": review.triggered_rules,
+                "created_at_sim_time": review.created_at_sim_time.isoformat(),
+            }
+            for review in state.risk_reviews
+            if review.status != "approved" or review.reasons or review.triggered_rules
+        ]
+
+    def _build_report_agent_performance(
+        self, state: SimulationState
+    ) -> dict[str, object]:
+        """Build agent performance context for a simulation report.
+
+        Args:
+            state: Simulation state used for report generation.
+
+        Returns:
+            Agent performance report section.
+        """
+
+        actions: dict[str, int] = {}
+        statuses: dict[str, int] = {}
+        confidence_sum = 0.0
+        for decision in state.decisions:
+            actions[decision.action] = actions.get(decision.action, 0) + 1
+            confidence_sum += decision.confidence
+        for agent_run in state.agent_runs:
+            statuses[agent_run.status] = statuses.get(agent_run.status, 0) + 1
+        decision_count = len(state.decisions)
+        average_confidence = confidence_sum / decision_count if decision_count else 0.0
+        return {
+            "decision_count": decision_count,
+            "agent_run_count": len(state.agent_runs),
+            "message_count": len(state.agent_messages),
+            "actions": actions,
+            "agent_run_statuses": statuses,
+            "average_confidence": average_confidence,
+        }
+
+    def _build_report_error_attribution(
+        self, state: SimulationState
+    ) -> dict[str, object]:
+        """Build error attribution context for a simulation report.
+
+        Args:
+            state: Simulation state used for report generation.
+
+        Returns:
+            Error attribution report section.
+        """
+
+        risk_events = self._build_report_risk_events(state)
+        failed_agent_runs = [
+            {
+                "agent_run_id": str(agent_run.agent_run_id),
+                "agent_id": agent_run.agent_id,
+                "status": agent_run.status,
+            }
+            for agent_run in state.agent_runs
+            if agent_run.status == "failed"
+        ]
+        return {
+            "risk_event_count": len(risk_events),
+            "alert_count": len(state.alerts),
+            "failed_agent_run_count": len(failed_agent_runs),
+            "alerts": [
+                {
+                    "alert_id": str(alert.alert_id),
+                    "category": alert.category,
+                    "severity": alert.severity,
+                    "status": alert.status,
+                    "message": alert.message,
+                }
+                for alert in state.alerts
+            ],
+            "failed_agent_runs": failed_agent_runs,
+        }
 
     def create_decision_report(self, decision_id: UUID) -> ReportArtifact:
         """Create a structured decision trace report.
