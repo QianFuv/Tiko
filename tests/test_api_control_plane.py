@@ -189,6 +189,44 @@ def test_model_registry_routes_manage_research_models() -> None:
     )
 
 
+def test_plugin_registry_routes_validate_sandbox_policy() -> None:
+    """Verify plugin registry routes accept safe manifests and reject unsafe ones."""
+
+    client = create_test_client()
+    safe_manifest = {
+        "name": "synthetic_liquidity_shock_generator",
+        "version": "0.1.0",
+        "plugin_type": "event_generation",
+        "description": "Generate synthetic liquidity shocks for simulations.",
+        "permissions": {"write_market_events": True},
+        "inputs": ["run_id", "symbols"],
+        "output_schema": "MarketEvent",
+        "tests": ["test_schema_valid"],
+    }
+
+    create_response = client.post("/api/plugins", json=safe_manifest)
+
+    assert create_response.status_code == 200
+    plugin_id = create_response.json()["plugin_id"]
+    assert client.get("/api/plugins").json()[0]["plugin_id"] == plugin_id
+    assert client.get(f"/api/plugins/{plugin_id}").json()["status"] == "validated"
+    assert (
+        client.post(
+            f"/api/plugins/{plugin_id}/status",
+            json={"status": "enabled"},
+        ).json()["status"]
+        == "enabled"
+    )
+
+    unsafe_manifest = safe_manifest | {
+        "permissions": {"write_market_events": True, "write_orders": True}
+    }
+    unsafe_response = client.post("/api/plugins", json=unsafe_manifest)
+
+    assert unsafe_response.status_code == 422
+    assert "write_orders" in unsafe_response.json()["detail"]
+
+
 def test_simulation_websocket_returns_event_snapshot() -> None:
     """Verify WebSocket route returns current simulation events."""
 

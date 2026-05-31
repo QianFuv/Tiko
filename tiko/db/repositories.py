@@ -17,6 +17,7 @@ from tiko.db.models import (
     MemoryEntryRecord,
     ModelRegistryRecord,
     OrderRecord,
+    PluginRegistryRecord,
     RiskReviewRecord,
     SimulationRunRecord,
 )
@@ -26,6 +27,12 @@ from tiko.domain.market import Candle, MarketEvent
 from tiko.domain.memory import MemoryEntry
 from tiko.domain.model import ModelRegistryEntry, ModelStatus, ModelType
 from tiko.domain.order import Fill, SimOrder
+from tiko.domain.plugin import (
+    PluginManifest,
+    PluginRegistryEntry,
+    PluginStatus,
+    SandboxResult,
+)
 from tiko.domain.risk import RiskReview
 from tiko.domain.simulation import SimulationRun
 from tiko.simulation.state import SimulationStepResult
@@ -356,6 +363,46 @@ class SimulationRepository:
             ).all()
             return [self._to_model_registry_entry(record) for record in records]
 
+    def save_plugin_registry_entry(self, entry: PluginRegistryEntry) -> None:
+        """Persist a plugin registry entry.
+
+        Args:
+            entry: Plugin registry entry to persist.
+        """
+
+        with self._session_factory() as session:
+            self._merge_plugin_registry_entry(session, entry)
+            session.commit()
+
+    def get_plugin_registry_entry(self, plugin_id: UUID) -> PluginRegistryEntry | None:
+        """Load one plugin registry entry.
+
+        Args:
+            plugin_id: Plugin identifier.
+
+        Returns:
+            Plugin registry entry or `None`.
+        """
+
+        with self._session_factory() as session:
+            record = session.get(PluginRegistryRecord, str(plugin_id))
+            if record is None:
+                return None
+            return self._to_plugin_registry_entry(record)
+
+    def list_plugin_registry_entries(self) -> list[PluginRegistryEntry]:
+        """List plugin registry entries ordered by creation time.
+
+        Returns:
+            Persisted plugin registry entries.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(PluginRegistryRecord).order_by(PluginRegistryRecord.created_at)
+            ).all()
+            return [self._to_plugin_registry_entry(record) for record in records]
+
     def _merge_run(self, session: Session, run: SimulationRun) -> None:
         """Merge a run and its account into the active session.
 
@@ -579,6 +626,26 @@ class SimulationRepository:
                 validation_dataset_id=str(entry.validation_dataset_id),
                 metrics=entry.metrics,
                 artifact_uri=entry.artifact_uri,
+                status=entry.status,
+                created_at=entry.created_at,
+            )
+        )
+
+    def _merge_plugin_registry_entry(
+        self, session: Session, entry: PluginRegistryEntry
+    ) -> None:
+        """Merge a plugin registry entry into the active session.
+
+        Args:
+            session: Active SQLAlchemy session.
+            entry: Plugin registry entry to merge.
+        """
+
+        session.merge(
+            PluginRegistryRecord(
+                plugin_id=str(entry.plugin_id),
+                manifest=entry.manifest.model_dump(mode="json"),
+                sandbox_result=entry.sandbox_result.model_dump(mode="json"),
                 status=entry.status,
                 created_at=entry.created_at,
             )
@@ -868,6 +935,26 @@ class SimulationRepository:
             metrics=dict(record.metrics),
             artifact_uri=record.artifact_uri,
             status=cast(ModelStatus, record.status),
+            created_at=self._aware_datetime(record.created_at),
+        )
+
+    def _to_plugin_registry_entry(
+        self, record: PluginRegistryRecord
+    ) -> PluginRegistryEntry:
+        """Convert a plugin registry row to a domain model.
+
+        Args:
+            record: Persisted plugin registry row.
+
+        Returns:
+            Plugin registry domain model.
+        """
+
+        return PluginRegistryEntry(
+            plugin_id=UUID(record.plugin_id),
+            manifest=PluginManifest.model_validate(record.manifest),
+            sandbox_result=SandboxResult.model_validate(record.sandbox_result),
+            status=cast(PluginStatus, record.status),
             created_at=self._aware_datetime(record.created_at),
         )
 

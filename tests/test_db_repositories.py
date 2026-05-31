@@ -18,6 +18,8 @@ from tiko.db import (
 from tiko.domain.decision import DecisionReview
 from tiko.domain.memory import MemoryEntry
 from tiko.domain.model import ModelRegistryEntry
+from tiko.domain.plugin import PluginManifest, PluginPermissions, PluginRegistryEntry
+from tiko.plugins import validate_plugin_manifest
 from tiko.services import SimulationService
 
 
@@ -66,6 +68,7 @@ def test_metadata_creates_expected_tables(sqlite_engine: Engine) -> None:
         "memory_entries",
         "model_registry",
         "orders",
+        "plugin_registry",
         "risk_reviews",
         "simulation_runs",
     }
@@ -191,6 +194,35 @@ def test_repository_persists_model_registry_entries(
 
     assert repository.get_model_registry_entry(entry.model_id) == entry
     assert repository.list_model_registry_entries() == [entry]
+
+
+def test_repository_persists_plugin_registry_entries(
+    repository: SimulationRepository,
+) -> None:
+    """Verify plugin registry entries persist and round-trip."""
+
+    manifest = PluginManifest(
+        name="synthetic_liquidity_shock_generator",
+        version="0.1.0",
+        plugin_type="event_generation",
+        description="Generate synthetic liquidity shocks for simulations.",
+        permissions=PluginPermissions(write_market_events=True),
+        inputs=["run_id", "symbols"],
+        output_schema="MarketEvent",
+        tests=["test_schema_valid"],
+    )
+    entry = PluginRegistryEntry(
+        plugin_id=uuid4(),
+        manifest=manifest,
+        sandbox_result=validate_plugin_manifest(manifest),
+        status="validated",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    repository.save_plugin_registry_entry(entry)
+
+    assert repository.get_plugin_registry_entry(entry.plugin_id) == entry
+    assert repository.list_plugin_registry_entries() == [entry]
 
 
 def test_repository_persists_rejected_step_without_order_or_fill(

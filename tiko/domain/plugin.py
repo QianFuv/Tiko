@@ -1,0 +1,66 @@
+"""Plugin manifest and registry schemas."""
+
+from datetime import datetime
+from typing import Literal
+from uuid import UUID
+
+from pydantic import Field
+
+from tiko.domain.base import DomainModel
+
+PluginType = Literal[
+    "market_data_connector",
+    "data_import",
+    "synthetic_market",
+    "feature_calculation",
+    "event_generation",
+    "analysis_tool",
+    "report",
+    "experiment",
+]
+PluginStatus = Literal["draft", "validated", "enabled", "archived", "rejected"]
+FileSystemAccess = Literal["none", "sandbox", "readonly"]
+
+
+class PluginPermissions(DomainModel):
+    """Represent plugin capabilities allowed by sandbox policy."""
+
+    read_market_data: bool = False
+    read_portfolio: bool = False
+    write_market_events: bool = False
+    write_features: bool = False
+    write_orders: bool = False
+    network_access: bool = False
+    file_system_access: FileSystemAccess = "sandbox"
+    provider_allowlist: list[str] = Field(default_factory=list)
+
+
+class PluginManifest(DomainModel):
+    """Represent a proposed plugin manifest."""
+
+    name: str = Field(min_length=1)
+    version: str = Field(min_length=1)
+    plugin_type: PluginType
+    description: str = Field(min_length=1)
+    permissions: PluginPermissions = Field(default_factory=PluginPermissions)
+    inputs: list[str] = Field(default_factory=list)
+    output_schema: str = Field(min_length=1)
+    tests: list[str] = Field(default_factory=list)
+
+
+class SandboxResult(DomainModel):
+    """Represent deterministic plugin sandbox validation output."""
+
+    passed: bool
+    violations: list[str]
+    warnings: list[str]
+
+
+class PluginRegistryEntry(DomainModel):
+    """Represent a validated plugin registry entry."""
+
+    plugin_id: UUID
+    manifest: PluginManifest
+    sandbox_result: SandboxResult
+    status: PluginStatus
+    created_at: datetime

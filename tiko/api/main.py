@@ -9,6 +9,7 @@ from tiko.api.routes import (
     market,
     models,
     orders,
+    plugins,
     portfolio,
     risk,
     simulations,
@@ -30,6 +31,7 @@ def create_app() -> FastAPI:
     application.include_router(market.router, prefix=settings.api_prefix)
     application.include_router(agents.router, prefix=settings.api_prefix)
     application.include_router(models.router, prefix=settings.api_prefix)
+    application.include_router(plugins.router, prefix=settings.api_prefix)
     application.include_router(simulations.router, prefix=settings.api_prefix)
     application.include_router(decisions.router, prefix=settings.api_prefix)
     application.include_router(portfolio.router, prefix=settings.api_prefix)

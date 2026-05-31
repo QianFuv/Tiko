@@ -277,6 +277,20 @@ class ModelRegistryRecord(Base):
     )
 
 
+class PluginRegistryRecord(Base):
+    """Persist plugin manifests and sandbox validation results."""
+
+    __tablename__ = "plugin_registry"
+
+    plugin_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    manifest: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    sandbox_result: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class OrderRecord(Base):
     """Persist an internal simulated order."""
 

@@ -7,6 +7,15 @@ from tiko.domain.memory import MemoryEntry, MemoryType
 from tiko.domain.model import ModelRegistryEntry, ModelStatus, ModelType
 from tiko.domain.observation import Observation
 from tiko.domain.order import Fill, OrderRequest, SimOrder
+from tiko.domain.plugin import (
+    FileSystemAccess,
+    PluginManifest,
+    PluginPermissions,
+    PluginRegistryEntry,
+    PluginStatus,
+    PluginType,
+    SandboxResult,
+)
 from tiko.domain.risk import RiskReview
 from tiko.domain.rl import EnvironmentStep, RewardBreakdown, RewardComponents, RlAction
 from tiko.domain.simulation import SimulationRun
@@ -17,6 +26,7 @@ __all__ = [
     "DecisionReview",
     "EnvironmentStep",
     "Fill",
+    "FileSystemAccess",
     "MarketEvent",
     "MemoryEntry",
     "MemoryType",
@@ -26,11 +36,17 @@ __all__ = [
     "Observation",
     "OrderBookSnapshot",
     "OrderRequest",
+    "PluginManifest",
+    "PluginPermissions",
+    "PluginRegistryEntry",
+    "PluginStatus",
+    "PluginType",
     "Position",
     "RiskReview",
     "RewardBreakdown",
     "RewardComponents",
     "RlAction",
+    "SandboxResult",
     "SimAccount",
     "SimOrder",
     "SimulationRun",
