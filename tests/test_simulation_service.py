@@ -186,6 +186,30 @@ def test_low_confidence_intent_is_rejected_without_order() -> None:
     assert service.list_portfolio_snapshots(run.run_id) == [result.portfolio_snapshot]
 
 
+def test_daily_loss_circuit_blocks_after_prior_simulated_loss() -> None:
+    """Verify prior simulated loss triggers the daily loss circuit breaker."""
+
+    service = SimulationService(Settings(max_daily_loss=Decimal("0.00001")))
+    run = service.create_run(
+        name="daily-loss-circuit",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    first_result = service.step_run(run.run_id, confidence=0.7)
+
+    second_result = service.step_run(run.run_id, confidence=0.7)
+
+    assert first_result.risk_review.status == "approved"
+    assert first_result.fill is not None
+    assert second_result.risk_review.status == "circuit_blocked"
+    assert second_result.risk_review.reasons == ["daily_loss_limit_exceeded"]
+    assert second_result.order is None
+    assert second_result.fill is None
+    assert second_result.ledger_entry is None
+    assert len(service.list_orders()) == 1
+    assert len(service.list_fills()) == 1
+
+
 def test_repository_backed_service_persists_created_run_and_step() -> None:
     """Verify optional persistence hooks write service-generated artifacts."""
 

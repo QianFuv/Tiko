@@ -1611,6 +1611,8 @@ function buildDemoRiskLimits(runId: string): RiskLimits {
     minimum_data_quality_score: 0.8,
     max_target_weight: "0.25",
     max_order_notional: "25000",
+    max_drawdown: "0.20",
+    max_daily_loss: "0.05",
     live_trading_allowed: false,
   };
 }

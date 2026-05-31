@@ -355,6 +355,8 @@ export type RiskLimits = {
   minimum_data_quality_score: number;
   max_target_weight: string;
   max_order_notional: string;
+  max_drawdown: string;
+  max_daily_loss: string;
   live_trading_allowed: boolean;
 };
 

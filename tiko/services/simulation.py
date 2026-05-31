@@ -168,6 +168,8 @@ class SimulationService:
         minimum_data_quality_score: float,
         max_target_weight: Decimal,
         max_order_notional: Decimal,
+        max_drawdown: Decimal | None = None,
+        max_daily_loss: Decimal | None = None,
     ) -> RiskLimits:
         """Update active risk limits for future simulation steps.
 
@@ -177,6 +179,8 @@ class SimulationService:
             minimum_data_quality_score: Minimum observation quality required.
             max_target_weight: Maximum absolute target portfolio weight.
             max_order_notional: Maximum simulated order notional.
+            max_drawdown: Optional maximum drawdown ratio.
+            max_daily_loss: Optional maximum daily loss ratio.
 
         Returns:
             Updated run-level risk limits.
@@ -192,6 +196,16 @@ class SimulationService:
             minimum_data_quality_score=minimum_data_quality_score,
             max_target_weight=max_target_weight,
             max_order_notional=max_order_notional,
+            max_drawdown=(
+                max_drawdown
+                if max_drawdown is not None
+                else state.risk_limits.max_drawdown
+            ),
+            max_daily_loss=(
+                max_daily_loss
+                if max_daily_loss is not None
+                else state.risk_limits.max_daily_loss
+            ),
             live_trading_allowed=False,
         )
         state.risk_limits = limits
@@ -213,6 +227,8 @@ class SimulationService:
             minimum_data_quality_score=self._settings.minimum_data_quality_score,
             max_target_weight=self._settings.max_target_weight,
             max_order_notional=self._settings.max_order_notional,
+            max_drawdown=self._settings.max_drawdown,
+            max_daily_loss=self._settings.max_daily_loss,
             live_trading_allowed=False,
         )
 
@@ -231,6 +247,8 @@ class SimulationService:
             minimum_data_quality_score=limits.minimum_data_quality_score,
             max_target_weight=limits.max_target_weight,
             max_order_notional=limits.max_order_notional,
+            max_drawdown=limits.max_drawdown,
+            max_daily_loss=limits.max_daily_loss,
         )
 
     def _get_state(self, run_id: UUID) -> SimulationState:
@@ -452,7 +470,9 @@ class SimulationService:
             confidence=confidence,
             simulated_time=next_time,
         )
-        risk_review = self._build_risk_service(state.risk_limits).review(intent)
+        risk_review = self._build_risk_service(state.risk_limits).review(
+            intent, account=decision_run.account
+        )
         order = None
         fill = None
         order_request = self._portfolio_service.create_order_request(

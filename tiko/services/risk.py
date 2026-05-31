@@ -4,6 +4,7 @@ from decimal import Decimal
 from typing import Literal
 from uuid import uuid4
 
+from tiko.domain.account import SimAccount
 from tiko.domain.decision import TradeIntent
 from tiko.domain.risk import RiskReview
 
@@ -17,6 +18,8 @@ class RiskService:
         minimum_data_quality_score: float = 0.0,
         max_target_weight: Decimal = Decimal("1"),
         max_order_notional: Decimal = Decimal("1000000000"),
+        max_drawdown: Decimal = Decimal("1"),
+        max_daily_loss: Decimal = Decimal("1"),
     ) -> None:
         """Initialize risk thresholds.
 
@@ -25,23 +28,43 @@ class RiskService:
             minimum_data_quality_score: Minimum data quality required.
             max_target_weight: Maximum absolute portfolio target weight.
             max_order_notional: Maximum simulated order notional.
+            max_drawdown: Maximum allowed drawdown ratio.
+            max_daily_loss: Maximum allowed realized loss ratio.
         """
 
         self.minimum_confidence = minimum_confidence
         self.minimum_data_quality_score = minimum_data_quality_score
         self.max_target_weight = max_target_weight
         self.max_order_notional = max_order_notional
+        self.max_drawdown = max_drawdown
+        self.max_daily_loss = max_daily_loss
 
-    def review(self, intent: TradeIntent) -> RiskReview:
+    def review(
+        self, intent: TradeIntent, account: SimAccount | None = None
+    ) -> RiskReview:
         """Review a structured trade intent.
 
         Args:
             intent: Agent-generated trade intent.
+            account: Optional pre-trade simulated account state.
 
         Returns:
             Risk review decision.
         """
 
+        circuit_reasons, circuit_rules = self._circuit_breaker_reasons(account)
+        if circuit_reasons:
+            return RiskReview(
+                review_id=uuid4(),
+                decision_id=intent.decision_id,
+                status="circuit_blocked",
+                original_target_weight=intent.target_weight,
+                approved_target_weight=Decimal("0"),
+                max_order_notional=Decimal("0"),
+                reasons=circuit_reasons,
+                triggered_rules=circuit_rules,
+                created_at_sim_time=intent.created_at_sim_time,
+            )
         rejection_reasons: list[str] = []
         triggered_rules: list[str] = []
         if intent.confidence < self.minimum_confidence:
@@ -86,3 +109,60 @@ class RiskService:
             triggered_rules=risk_rules,
             created_at_sim_time=intent.created_at_sim_time,
         )
+
+    def _circuit_breaker_reasons(
+        self, account: SimAccount | None
+    ) -> tuple[list[str], list[str]]:
+        """Build account-state circuit breaker reasons.
+
+        Args:
+            account: Optional pre-trade simulated account state.
+
+        Returns:
+            Reason codes and triggered rule names.
+        """
+
+        if account is None or account.initial_equity <= Decimal("0"):
+            return [], []
+        reasons: list[str] = []
+        rules: list[str] = []
+        daily_loss_ratio = self._loss_ratio(account.realized_pnl, account)
+        if daily_loss_ratio >= self.max_daily_loss:
+            reasons.append("daily_loss_limit_exceeded")
+            rules.append("max_daily_loss")
+        drawdown_ratio = self._drawdown_ratio(account.max_drawdown, account)
+        if drawdown_ratio >= self.max_drawdown:
+            reasons.append("drawdown_limit_exceeded")
+            rules.append("max_drawdown")
+        return reasons, rules
+
+    def _loss_ratio(self, realized_pnl: Decimal, account: SimAccount) -> Decimal:
+        """Return realized loss as a positive equity ratio.
+
+        Args:
+            realized_pnl: Current realized PnL.
+            account: Simulated account state.
+
+        Returns:
+            Positive realized loss ratio.
+        """
+
+        if realized_pnl >= Decimal("0"):
+            return Decimal("0")
+        return abs(realized_pnl) / account.initial_equity
+
+    def _drawdown_ratio(self, max_drawdown: Decimal, account: SimAccount) -> Decimal:
+        """Return drawdown as a positive equity ratio.
+
+        Args:
+            max_drawdown: Account max drawdown ratio or amount.
+            account: Simulated account state.
+
+        Returns:
+            Positive drawdown ratio.
+        """
+
+        absolute_drawdown = abs(max_drawdown)
+        if absolute_drawdown <= Decimal("1"):
+            return absolute_drawdown
+        return absolute_drawdown / account.initial_equity

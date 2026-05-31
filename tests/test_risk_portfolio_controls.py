@@ -45,8 +45,15 @@ def create_intent(
     )
 
 
-def create_account() -> SimAccount:
+def create_account(
+    realized_pnl: Decimal = Decimal("0"),
+    max_drawdown: Decimal = Decimal("0"),
+) -> SimAccount:
     """Create a simulated account for portfolio tests.
+
+    Args:
+        realized_pnl: Realized PnL value.
+        max_drawdown: Max drawdown value.
 
     Returns:
         Simulated account domain model.
@@ -58,9 +65,9 @@ def create_account() -> SimAccount:
         initial_equity=Decimal("100000"),
         cash_balance=Decimal("100000"),
         total_equity=Decimal("100000"),
-        realized_pnl=Decimal("0"),
+        realized_pnl=realized_pnl,
         unrealized_pnl=Decimal("0"),
-        max_drawdown=Decimal("0"),
+        max_drawdown=max_drawdown,
         status="active",
     )
 
@@ -137,4 +144,39 @@ def test_portfolio_does_not_execute_rejected_review() -> None:
         reference_price=Decimal("100"),
     )
 
+    assert order_request is None
+
+
+def test_risk_circuit_breakers_block_loss_and_drawdown_breaches() -> None:
+    """Verify account-state circuit breakers stop simulated execution."""
+
+    risk_service = RiskService(
+        minimum_confidence=0.5,
+        max_daily_loss=Decimal("0.01"),
+        max_drawdown=Decimal("0.05"),
+    )
+
+    loss_review = risk_service.review(
+        create_intent(),
+        account=create_account(realized_pnl=Decimal("-1500")),
+    )
+    drawdown_review = risk_service.review(
+        create_intent(),
+        account=create_account(max_drawdown=Decimal("-0.08")),
+    )
+    order_request = PortfolioService().create_order_request(
+        account=create_account(realized_pnl=Decimal("-1500")),
+        intent=create_intent(),
+        risk_review=loss_review,
+        reference_price=Decimal("100"),
+    )
+
+    assert loss_review.status == "circuit_blocked"
+    assert loss_review.approved_target_weight == Decimal("0")
+    assert loss_review.max_order_notional == Decimal("0")
+    assert loss_review.reasons == ["daily_loss_limit_exceeded"]
+    assert loss_review.triggered_rules == ["max_daily_loss"]
+    assert drawdown_review.status == "circuit_blocked"
+    assert drawdown_review.reasons == ["drawdown_limit_exceeded"]
+    assert drawdown_review.triggered_rules == ["max_drawdown"]
     assert order_request is None

@@ -18,6 +18,8 @@ class RiskLimits(DomainModel):
     minimum_data_quality_score: float = Field(ge=0.0, le=1.0)
     max_target_weight: Decimal = Field(ge=Decimal("0"), le=Decimal("1"))
     max_order_notional: Decimal = Field(ge=Decimal("0"))
+    max_drawdown: Decimal = Field(default=Decimal("1"), ge=Decimal("0"))
+    max_daily_loss: Decimal = Field(default=Decimal("1"), ge=Decimal("0"))
     live_trading_allowed: bool = False
 
 

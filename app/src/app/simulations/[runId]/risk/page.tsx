@@ -40,10 +40,10 @@ export default async function RiskPage({
       tone: "warn",
     },
     {
-      label: "Live trading",
-      value: data.riskLimits.live_trading_allowed ? "Allowed" : "Blocked",
-      detail: "Platform execution boundary",
-      tone: data.riskLimits.live_trading_allowed ? "danger" : "good",
+      label: "Daily loss",
+      value: formatPercent(data.riskLimits.max_daily_loss),
+      detail: "Circuit breaker",
+      tone: "danger",
     },
   ];
 
@@ -78,6 +78,20 @@ export default async function RiskPage({
               <LimitRow
                 label="Maximum target weight"
                 value={formatPercent(data.riskLimits.max_target_weight)}
+              />
+              <LimitRow
+                label="Maximum drawdown"
+                value={formatPercent(data.riskLimits.max_drawdown)}
+              />
+              <LimitRow
+                label="Maximum daily loss"
+                value={formatPercent(data.riskLimits.max_daily_loss)}
+              />
+              <LimitRow
+                label="Live trading"
+                value={
+                  data.riskLimits.live_trading_allowed ? "Allowed" : "Blocked"
+                }
               />
             </dl>
           </div>

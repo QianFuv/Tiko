@@ -115,6 +115,14 @@ export default async function SettingsPage(): Promise<ReactElement> {
               label="Maximum order notional"
               value={formatCurrency(data.riskLimits.max_order_notional)}
             />
+            <SettingsRow
+              label="Maximum drawdown"
+              value={formatPercent(data.riskLimits.max_drawdown)}
+            />
+            <SettingsRow
+              label="Maximum daily loss"
+              value={formatPercent(data.riskLimits.max_daily_loss)}
+            />
           </dl>
         </div>
       </section>
