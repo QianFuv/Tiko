@@ -2,12 +2,18 @@
 
 from collections.abc import Sequence
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
+from math import isfinite
 from uuid import UUID, uuid4
 
-from tiko.domain.account import Position
+from tiko.domain.account import Position, SimAccount
 from tiko.domain.market import Candle, FeatureSnapshot, MarketEvent, OrderBookSnapshot
 from tiko.domain.memory import MemoryEntry
-from tiko.domain.observation import Observation
+from tiko.domain.observation import (
+    Observation,
+    ObservationDataQuality,
+    ObservationNumericState,
+)
 from tiko.domain.risk import RiskLimits
 from tiko.domain.simulation import SimulationRun
 
@@ -70,6 +76,18 @@ class ObservationBuilder:
         )
         selected_positions = self._select_positions(run, as_of, positions or [])
         selected_memory = self._select_memory(run.run_id, as_of, memory_entries or [])
+        data_quality = self._build_data_quality(
+            as_of, selected_candles, selected_orderbook, selected_features
+        )
+        numeric_state = self._build_numeric_state(
+            account=run.account,
+            candles=selected_candles,
+            events=selected_events,
+            orderbook=selected_orderbook,
+            features=selected_features,
+            positions=selected_positions,
+            memory=selected_memory,
+        )
         return Observation(
             observation_id=observation_id or uuid4(),
             run_id=run.run_id,
@@ -83,6 +101,8 @@ class ObservationBuilder:
             positions=selected_positions,
             risk_limits=risk_limits,
             memory=selected_memory,
+            data_quality=data_quality,
+            numeric_state=numeric_state,
         )
 
     def _select_candles(
@@ -251,3 +271,184 @@ class ObservationBuilder:
                 str(entry.memory_id),
             ),
         )
+
+    def _build_data_quality(
+        self,
+        as_of: datetime,
+        candles: Sequence[Candle],
+        orderbook: OrderBookSnapshot | None,
+        features: dict[str, object],
+    ) -> ObservationDataQuality:
+        """Build explicit observation data-quality indicators.
+
+        Args:
+            as_of: Observation timestamp.
+            candles: Selected candles.
+            orderbook: Selected order book snapshot.
+            features: Selected feature map.
+
+        Returns:
+            Data-quality score and warning codes.
+        """
+
+        score = 1.0
+        warnings: list[str] = []
+        if not candles:
+            score = 0.0
+            warnings.append("missing_candles")
+        elif candles[-1].as_of < as_of:
+            score = min(score, 0.8)
+            warnings.append("stale_candle")
+        if orderbook is None:
+            score = min(score, 0.9)
+            warnings.append("missing_orderbook")
+        if not features:
+            score = min(score, 0.9)
+            warnings.append("missing_features")
+        return ObservationDataQuality(score=score, warnings=warnings)
+
+    def _build_numeric_state(
+        self,
+        account: SimAccount,
+        candles: Sequence[Candle],
+        events: Sequence[MarketEvent],
+        orderbook: OrderBookSnapshot | None,
+        features: dict[str, object],
+        positions: Sequence[Position],
+        memory: Sequence[MemoryEntry],
+    ) -> ObservationNumericState:
+        """Build a deterministic numeric state vector.
+
+        Args:
+            account: Simulated account context.
+            candles: Selected candles.
+            events: Selected market events.
+            orderbook: Selected order book snapshot.
+            features: Selected feature map.
+            positions: Selected simulated positions.
+            memory: Selected memory entries.
+
+        Returns:
+            Ordered numeric feature names and values.
+        """
+
+        feature_names: list[str] = []
+        values: list[float] = []
+        self._append_numeric(
+            feature_names, values, "account.cash_balance", account.cash_balance
+        )
+        self._append_numeric(
+            feature_names, values, "account.total_equity", account.total_equity
+        )
+        self._append_numeric(
+            feature_names, values, "account.max_drawdown", account.max_drawdown
+        )
+        self._append_numeric(feature_names, values, "events.count", len(events))
+        self._append_numeric(feature_names, values, "memory.count", len(memory))
+        if candles:
+            latest_candle = candles[-1]
+            self._append_numeric(
+                feature_names, values, "market.last_close", latest_candle.close
+            )
+            self._append_numeric(
+                feature_names, values, "market.last_volume", latest_candle.volume
+            )
+        if orderbook is not None:
+            self._append_numeric(
+                feature_names, values, "orderbook.mid_price", orderbook.mid_price
+            )
+            self._append_numeric(
+                feature_names, values, "orderbook.spread_bps", orderbook.spread_bps
+            )
+            self._append_numeric(
+                feature_names,
+                values,
+                "orderbook.depth_1pct_usd",
+                orderbook.depth_1pct_usd,
+            )
+        gross_notional = sum(
+            (position.notional for position in positions), Decimal("0")
+        )
+        net_notional = sum(
+            (self._signed_notional(position) for position in positions),
+            Decimal("0"),
+        )
+        self._append_numeric(
+            feature_names, values, "portfolio.position_count", len(positions)
+        )
+        self._append_numeric(
+            feature_names, values, "portfolio.gross_notional", gross_notional
+        )
+        self._append_numeric(
+            feature_names, values, "portfolio.net_notional", net_notional
+        )
+        for feature_name in sorted(features):
+            self._append_numeric(
+                feature_names,
+                values,
+                f"feature.{feature_name}",
+                features[feature_name],
+            )
+        return ObservationNumericState(feature_names=feature_names, values=values)
+
+    def _signed_notional(self, position: Position) -> Decimal:
+        """Return signed notional for one simulated position.
+
+        Args:
+            position: Simulated position.
+
+        Returns:
+            Positive, negative, or zero notional based on side.
+        """
+
+        if position.side == "long":
+            return position.notional
+        if position.side == "short":
+            return -position.notional
+        return Decimal("0")
+
+    def _append_numeric(
+        self,
+        feature_names: list[str],
+        values: list[float],
+        feature_name: str,
+        value: object,
+    ) -> None:
+        """Append one numeric value if it can be represented safely.
+
+        Args:
+            feature_names: Mutable feature name list.
+            values: Mutable numeric value list.
+            feature_name: Feature name.
+            value: Candidate numeric value.
+        """
+
+        numeric_value = self._coerce_numeric(value)
+        if numeric_value is None:
+            return
+        feature_names.append(feature_name)
+        values.append(numeric_value)
+
+    def _coerce_numeric(self, value: object) -> float | None:
+        """Convert a candidate value into a finite float.
+
+        Args:
+            value: Candidate value.
+
+        Returns:
+            Finite float value, or `None` for non-numeric input.
+        """
+
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int | float):
+            return float(value) if isfinite(float(value)) else None
+        if isinstance(value, Decimal):
+            return float(value) if isfinite(float(value)) else None
+        if isinstance(value, str):
+            try:
+                decimal_value = Decimal(value)
+            except InvalidOperation:
+                return None
+            return float(decimal_value) if isfinite(float(decimal_value)) else None
+        return None

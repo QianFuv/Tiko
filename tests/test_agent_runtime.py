@@ -19,7 +19,11 @@ from tiko.domain.account import Position, SimAccount
 from tiko.domain.decision import TradeIntent
 from tiko.domain.market import Candle, OrderBookSnapshot
 from tiko.domain.memory import MemoryEntry
-from tiko.domain.observation import Observation
+from tiko.domain.observation import (
+    Observation,
+    ObservationDataQuality,
+    ObservationNumericState,
+)
 from tiko.domain.risk import RiskLimits
 
 
@@ -226,6 +230,13 @@ def test_openrouter_agent_builds_scoped_trade_intent() -> None:
                     created_at=base_observation.as_of,
                 )
             ],
+            "data_quality": ObservationDataQuality(
+                score=0.9, warnings=["missing_features"]
+            ),
+            "numeric_state": ObservationNumericState(
+                feature_names=["market.last_close"],
+                values=[105.0],
+            ),
         }
     )
     captured_payload: dict[str, object] = {}
@@ -307,6 +318,14 @@ def test_openrouter_agent_builds_scoped_trade_intent() -> None:
     assert (
         observation_payload["memory"][0]["summary"] == "Prior review favored patience."
     )
+    assert observation_payload["data_quality"] == {
+        "score": 0.9,
+        "warnings": ["missing_features"],
+    }
+    assert observation_payload["numeric_state"] == {
+        "feature_names": ["market.last_close"],
+        "values": [105.0],
+    }
     assert intent.run_id == observation.run_id
     assert intent.symbol == observation.symbol
     assert intent.action == "open_long"

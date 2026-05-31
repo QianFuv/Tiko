@@ -340,3 +340,47 @@ def test_observation_includes_available_context_without_lookahead() -> None:
     assert observation.positions == [prior_position]
     assert observation.risk_limits == risk_limits
     assert observation.memory == [available_memory]
+    assert observation.data_quality.score == 1.0
+    assert observation.data_quality.warnings == []
+    numeric_state = dict(
+        zip(
+            observation.numeric_state.feature_names,
+            observation.numeric_state.values,
+            strict=True,
+        )
+    )
+    assert numeric_state["account.total_equity"] == 1000.0
+    assert numeric_state["market.last_close"] == 2.0
+    assert numeric_state["orderbook.mid_price"] == 105.0
+    assert numeric_state["portfolio.gross_notional"] == 105.0
+    assert numeric_state["feature.hour"] == 2.0
+    assert "feature.momentum" not in numeric_state
+
+
+def test_observation_reports_quality_warnings_for_missing_context() -> None:
+    """Verify missing market context creates explicit quality warnings."""
+
+    observation = ObservationBuilder().build(
+        run=create_run(),
+        symbol="BTCUSDT",
+        as_of=datetime(2026, 1, 1, 2, tzinfo=UTC),
+        candles=[],
+        events=[],
+    )
+    numeric_state = dict(
+        zip(
+            observation.numeric_state.feature_names,
+            observation.numeric_state.values,
+            strict=True,
+        )
+    )
+
+    assert observation.data_quality.score == 0.0
+    assert observation.data_quality.warnings == [
+        "missing_candles",
+        "missing_orderbook",
+        "missing_features",
+    ]
+    assert numeric_state["account.cash_balance"] == 1000.0
+    assert numeric_state["events.count"] == 0.0
+    assert numeric_state["memory.count"] == 0.0

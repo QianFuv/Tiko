@@ -440,6 +440,8 @@ class OpenRouterTraderAgent:
             "memory": [
                 entry.model_dump(mode="json") for entry in observation.memory[-20:]
             ],
+            "data_quality": observation.data_quality.model_dump(mode="json"),
+            "numeric_state": observation.numeric_state.model_dump(mode="json"),
             "output_contract": {
                 "required_fields": list(REQUIRED_TRADE_INTENT_PROPOSAL_FIELDS),
                 "allowed_actions": list(TRADE_INTENT_ACTIONS),
