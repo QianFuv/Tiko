@@ -2,7 +2,7 @@
 
 import json
 from collections.abc import Callable
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from json import JSONDecodeError
 from typing import Literal, cast
 from urllib.error import HTTPError, URLError
@@ -423,10 +423,9 @@ class OpenRouterTraderAgent:
             Validated trade intent.
         """
 
-        target_notional_value = proposal.get("target_notional")
         target_notional = (
-            Decimal(str(target_notional_value))
-            if target_notional_value is not None
+            self._require_decimal(proposal, "target_notional")
+            if proposal.get("target_notional") is not None
             else None
         )
         return TradeIntent(
@@ -436,9 +435,9 @@ class OpenRouterTraderAgent:
             symbol=observation.symbol,
             market_type="synthetic",
             action=cast(TradeIntentAction, self._require_string(proposal, "action")),
-            target_weight=Decimal(str(proposal["target_weight"])),
+            target_weight=self._require_decimal(proposal, "target_weight"),
             target_notional=target_notional,
-            max_leverage=Decimal(str(proposal["max_leverage"])),
+            max_leverage=self._require_decimal(proposal, "max_leverage"),
             confidence=self._require_float(proposal, "confidence"),
             expected_holding_period=self._require_string(
                 proposal, "expected_holding_period"
@@ -470,6 +469,30 @@ class OpenRouterTraderAgent:
         if not isinstance(value, str):
             raise OpenRouterAgentError(f"OpenRouter proposal field {key} is invalid.")
         return value
+
+    def _require_decimal(self, proposal: dict[str, object], key: str) -> Decimal:
+        """Read a required decimal proposal field.
+
+        Args:
+            proposal: Provider proposal fields.
+            key: Field key.
+
+        Returns:
+            Parsed decimal field value.
+
+        Raises:
+            OpenRouterAgentError: If the field is missing or not decimal-like.
+        """
+
+        value = proposal.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float, str, Decimal)):
+            raise OpenRouterAgentError(f"OpenRouter proposal field {key} is invalid.")
+        try:
+            return Decimal(str(value))
+        except (InvalidOperation, ValueError) as error:
+            raise OpenRouterAgentError(
+                f"OpenRouter proposal field {key} is invalid."
+            ) from error
 
     def _require_string_list(self, proposal: dict[str, object], key: str) -> list[str]:
         """Read a required string-list proposal field.

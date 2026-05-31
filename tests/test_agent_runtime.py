@@ -246,6 +246,45 @@ def test_openrouter_agent_rejects_malformed_response() -> None:
         OpenRouterTraderAgent(client).decide(create_observation([]))
 
 
+def test_openrouter_agent_rejects_invalid_decimal_response_fields() -> None:
+    """Verify invalid decimal proposal fields fail as provider errors."""
+
+    def transport(
+        endpoint: str,
+        headers: dict[str, str],
+        payload: dict[str, object],
+        timeout_seconds: int,
+    ) -> dict[str, object]:
+        """Return a response with invalid decimal content."""
+
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "action": "hold",
+                                "target_weight": "0",
+                                "max_leverage": "not-a-decimal",
+                                "confidence": 0.5,
+                                "expected_holding_period": "1h",
+                                "thesis": "No edge.",
+                                "evidence": [],
+                                "invalidation_conditions": [],
+                                "data_quality_score": 0.5,
+                            }
+                        )
+                    }
+                }
+            ]
+        }
+
+    client = OpenRouterClient(api_key="test-key", transport=transport)
+
+    with pytest.raises(OpenRouterAgentError, match="max_leverage"):
+        OpenRouterTraderAgent(client).decide(create_observation([]))
+
+
 def test_openrouter_client_falls_back_to_json_object_mode() -> None:
     """Verify provider schema-mode failures can fall back to JSON object mode."""
 
