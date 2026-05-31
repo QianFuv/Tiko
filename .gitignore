@@ -5,3 +5,4 @@ __pycache__/
 docs/plan/
 .env
 .env.*
+AGENTS.md
