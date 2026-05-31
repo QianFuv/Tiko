@@ -1,6 +1,7 @@
 """Domain schemas for the Tiko simulation architecture."""
 
 from tiko.domain.account import Position, SimAccount
+from tiko.domain.comparison import RunBenchmark, RunComparison
 from tiko.domain.decision import DecisionReview, TradeIntent
 from tiko.domain.market import Asset, Candle, MarketEvent, OrderBookSnapshot
 from tiko.domain.memory import MemoryEntry, MemoryType
@@ -60,6 +61,8 @@ __all__ = [
     "RewardBreakdown",
     "RewardComponents",
     "RlAction",
+    "RunBenchmark",
+    "RunComparison",
     "SandboxResult",
     "SimAccount",
     "SimOrder",

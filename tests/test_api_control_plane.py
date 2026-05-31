@@ -63,6 +63,44 @@ def test_simulation_routes_create_and_step_run() -> None:
     assert len(list_response.json()) == 1
 
 
+def test_comparison_routes_benchmark_and_compare_runs() -> None:
+    """Verify comparison routes expose deterministic benchmark tooling."""
+
+    client = create_test_client()
+    first_run_id = client.post(
+        "/api/simulations",
+        json={
+            "name": "first",
+            "symbols": ["BTCUSDT"],
+            "start_sim_time": "2026-01-01T00:00:00Z",
+        },
+    ).json()["run_id"]
+    second_run_id = client.post(
+        "/api/simulations",
+        json={
+            "name": "second",
+            "symbols": ["BTCUSDT"],
+            "start_sim_time": "2026-01-01T00:00:00Z",
+        },
+    ).json()["run_id"]
+    client.post(f"/api/simulations/{first_run_id}/step", json={"confidence": 0.7})
+    client.post(f"/api/simulations/{second_run_id}/step", json={"confidence": 0.7})
+
+    benchmark_response = client.get(f"/api/comparisons/runs/{first_run_id}/benchmark")
+    comparison_response = client.post(
+        "/api/comparisons/runs",
+        json={
+            "baseline_run_id": first_run_id,
+            "candidate_run_id": second_run_id,
+        },
+    )
+
+    assert benchmark_response.status_code == 200
+    assert benchmark_response.json()["fill_count"] == 1
+    assert comparison_response.status_code == 200
+    assert comparison_response.json()["fingerprints_match"] is True
+
+
 def test_query_routes_expose_simulated_state() -> None:
     """Verify query routes expose decisions, orders, fills, portfolio, and risk."""
 

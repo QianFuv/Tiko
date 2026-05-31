@@ -5,9 +5,11 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
+from tiko.analysis import build_run_benchmark, compare_run_benchmarks
 from tiko.core.config import Settings
 from tiko.db.repositories import SimulationRepository
 from tiko.domain.account import SimAccount
+from tiko.domain.comparison import RunBenchmark, RunComparison
 from tiko.domain.decision import DecisionReview, TradeIntent
 from tiko.domain.market import Candle, MarketEvent
 from tiko.domain.memory import MemoryEntry, MemoryType
@@ -606,6 +608,48 @@ class SimulationService:
                     self._repository.save_alert(updated_alert)
                 return updated_alert
         raise KeyError(alert_id)
+
+    def build_benchmark(self, run_id: UUID) -> RunBenchmark:
+        """Build deterministic benchmark metrics for a run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Run benchmark summary.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        state = self._states[run_id]
+        return build_run_benchmark(
+            run=state.run,
+            decisions=state.decisions,
+            orders=state.orders,
+            fills=state.fills,
+        )
+
+    def compare_runs(
+        self, baseline_run_id: UUID, candidate_run_id: UUID
+    ) -> RunComparison:
+        """Compare two runs through deterministic benchmark fingerprints.
+
+        Args:
+            baseline_run_id: Baseline simulation run identifier.
+            candidate_run_id: Candidate simulation run identifier.
+
+        Returns:
+            Pairwise run comparison.
+
+        Raises:
+            KeyError: If either run does not exist.
+        """
+
+        return compare_run_benchmarks(
+            baseline=self.build_benchmark(baseline_run_id),
+            candidate=self.build_benchmark(candidate_run_id),
+        )
 
     def _find_decision_state(
         self, decision_id: UUID
