@@ -6,7 +6,9 @@ from tiko.api.routes import (
     agents,
     audit,
     comparisons,
+    datasets,
     decisions,
+    experiments,
     health,
     market,
     models,
@@ -35,6 +37,8 @@ def create_app() -> FastAPI:
     application.include_router(agents.router, prefix=settings.api_prefix)
     application.include_router(audit.router, prefix=settings.api_prefix)
     application.include_router(comparisons.router, prefix=settings.api_prefix)
+    application.include_router(datasets.router, prefix=settings.api_prefix)
+    application.include_router(experiments.router, prefix=settings.api_prefix)
     application.include_router(models.router, prefix=settings.api_prefix)
     application.include_router(plugins.router, prefix=settings.api_prefix)
     application.include_router(reports.router, prefix=settings.api_prefix)

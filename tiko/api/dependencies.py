@@ -11,6 +11,8 @@ from tiko.core.config import get_settings
 from tiko.domain.security import Permission, Principal, Role
 from tiko.services import (
     AuditService,
+    DatasetService,
+    ExperimentService,
     ModelRegistryService,
     PluginRegistryService,
     SimulationService,
@@ -59,6 +61,28 @@ def get_audit_service() -> AuditService:
     """
 
     return AuditService()
+
+
+@lru_cache
+def get_dataset_service() -> DatasetService:
+    """Return the process-local dataset service singleton.
+
+    Returns:
+        In-memory dataset service.
+    """
+
+    return DatasetService()
+
+
+@lru_cache
+def get_experiment_service() -> ExperimentService:
+    """Return the process-local experiment service singleton.
+
+    Returns:
+        In-memory experiment service.
+    """
+
+    return ExperimentService()
 
 
 def get_current_principal(
@@ -125,3 +149,5 @@ def reset_simulation_service() -> None:
     get_model_registry_service.cache_clear()
     get_plugin_registry_service.cache_clear()
     get_audit_service.cache_clear()
+    get_dataset_service.cache_clear()
+    get_experiment_service.cache_clear()

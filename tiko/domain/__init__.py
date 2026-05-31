@@ -2,7 +2,15 @@
 
 from tiko.domain.account import Position, SimAccount
 from tiko.domain.comparison import RunBenchmark, RunComparison
+from tiko.domain.dataset import (
+    DatasetQualityIssue,
+    DatasetQualityReport,
+    DatasetRecord,
+    DatasetSource,
+    DatasetStatus,
+)
 from tiko.domain.decision import DecisionReview, TradeIntent
+from tiko.domain.experiment import ExperimentKind, ExperimentRecord, ExperimentStatus
 from tiko.domain.market import Asset, Candle, MarketEvent, OrderBookSnapshot
 from tiko.domain.memory import MemoryEntry, MemoryType
 from tiko.domain.model import ModelRegistryEntry, ModelStatus, ModelType
@@ -38,8 +46,16 @@ __all__ = [
     "AlertStatus",
     "AuditLogEntry",
     "Candle",
+    "DatasetQualityIssue",
+    "DatasetQualityReport",
+    "DatasetRecord",
+    "DatasetSource",
+    "DatasetStatus",
     "DecisionReview",
     "EnvironmentStep",
+    "ExperimentKind",
+    "ExperimentRecord",
+    "ExperimentStatus",
     "Fill",
     "FileSystemAccess",
     "MarketEvent",

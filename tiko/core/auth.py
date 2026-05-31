@@ -11,6 +11,8 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             "manage_plugins",
             "manage_reports",
             "manage_alerts",
+            "manage_datasets",
+            "manage_experiments",
             "read_audit",
         }
     ),
@@ -20,6 +22,8 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             "manage_research",
             "manage_plugins",
             "manage_reports",
+            "manage_datasets",
+            "manage_experiments",
         }
     ),
     "operator": frozenset(

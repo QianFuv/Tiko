@@ -23,6 +23,62 @@ export type BackendHealthState = {
   error: string | null;
 };
 
+export type DatasetStatus = "validated" | "invalid";
+
+export type DatasetRecord = {
+  dataset_id: string;
+  name: string;
+  source: string;
+  source_uri: string;
+  symbols: string[];
+  timeframes: string[];
+  candle_count: number;
+  status: DatasetStatus;
+  start_time: string | null;
+  end_time: string | null;
+  created_at: string;
+};
+
+export type DatasetQualityIssue = {
+  index: number;
+  severity: "error" | "warning";
+  code: string;
+  message: string;
+  symbol: string;
+  open_time: string;
+};
+
+export type DatasetQualityReport = {
+  dataset_id: string;
+  total_records: number;
+  error_count: number;
+  warning_count: number;
+  has_errors: boolean;
+  issues: DatasetQualityIssue[];
+};
+
+export type ExperimentStatus =
+  | "draft"
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed";
+
+export type ExperimentRecord = {
+  experiment_id: string;
+  name: string;
+  kind: string;
+  hypothesis: string;
+  dataset_id: string;
+  model_id: string | null;
+  parameters: Record<string, unknown>;
+  status: ExperimentStatus;
+  metrics: Record<string, unknown>;
+  created_at: string;
+  queued_at: string | null;
+  completed_at: string | null;
+};
+
 export type SimAccount = {
   account_id: string;
   name: string;

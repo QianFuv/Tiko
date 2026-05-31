@@ -11,6 +11,9 @@ from tiko.core.auth import ROLE_PERMISSIONS, has_permission
 from tiko.domain import (
     Asset,
     Candle,
+    DatasetQualityReport,
+    DatasetRecord,
+    ExperimentRecord,
     Fill,
     OrderRequest,
     Principal,
@@ -226,3 +229,53 @@ def test_security_roles_preserve_read_only_viewer_boundary() -> None:
 
     with pytest.raises(ValidationError):
         Principal.model_validate({"user_id": "invalid@example.test", "role": "trader"})
+
+
+def test_dataset_and_experiment_schemas_validate_research_state() -> None:
+    """Verify research control-plane schemas constrain known states."""
+
+    dataset_id = uuid4()
+    dataset = DatasetRecord(
+        dataset_id=dataset_id,
+        name="BTCUSDT research candles",
+        source="csv",
+        source_uri="memory://candles.csv",
+        symbols=["BTCUSDT"],
+        timeframes=["1h"],
+        candle_count=1,
+        status="validated",
+        start_time=current_time(),
+        end_time=current_time(),
+        created_at=current_time(),
+    )
+    quality = DatasetQualityReport(
+        dataset_id=dataset.dataset_id,
+        total_records=1,
+        error_count=0,
+        warning_count=0,
+        has_errors=False,
+        issues=[],
+    )
+    experiment = ExperimentRecord(
+        experiment_id=uuid4(),
+        name="baseline walk-forward",
+        kind="walk_forward",
+        hypothesis="Momentum survives validation splits.",
+        dataset_id=dataset.dataset_id,
+        parameters={"splits": 3},
+        status="queued",
+        metrics={},
+        created_at=current_time(),
+        queued_at=current_time(),
+    )
+
+    assert quality.dataset_id == dataset_id
+    assert experiment.dataset_id == dataset_id
+    assert experiment.status == "queued"
+
+    with pytest.raises(ValidationError):
+        DatasetRecord.model_validate(dataset.model_dump() | {"status": "uploaded"})
+    with pytest.raises(ValidationError):
+        ExperimentRecord.model_validate(
+            experiment.model_dump() | {"kind": "live_trade"}
+        )

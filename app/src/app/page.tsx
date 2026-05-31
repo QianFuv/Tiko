@@ -128,6 +128,25 @@ export default async function Home(): Promise<ReactElement> {
 
         <aside className="grid content-start gap-5">
           <div>
+            <h2 className="text-xl font-semibold">Research Control</h2>
+            <div className="mt-3 grid gap-2 text-sm">
+              <Link
+                href="/datasets"
+                className="flex items-center justify-between gap-3 border-b border-[#d8dee4] py-2 font-medium text-[#1f6f8b] hover:text-[#174f63]"
+              >
+                <span>Datasets</span>
+                <span>Open</span>
+              </Link>
+              <Link
+                href="/experiments"
+                className="flex items-center justify-between gap-3 border-b border-[#d8dee4] py-2 font-medium text-[#1f6f8b] hover:text-[#174f63]"
+              >
+                <span>Experiments</span>
+                <span>Open</span>
+              </Link>
+            </div>
+          </div>
+          <div>
             <h2 className="text-xl font-semibold">Safety Boundary</h2>
             <dl className="mt-3 grid gap-2 text-sm">
               <BoundaryRow label="Live exchange orders" value="Blocked" />
@@ -140,12 +159,12 @@ export default async function Home(): Promise<ReactElement> {
           <div>
             <h2 className="text-xl font-semibold">Build Order</h2>
             <ol className="mt-3 grid gap-2 text-sm text-[#44504b]">
-              <BuildStep value="REST and WebSocket APIs" status="Done" />
+              <BuildStep value="Dataset and experiment APIs" status="Active" />
               <BuildStep
                 value="Long-running observation pages"
-                status="Active"
+                status="Done"
               />
-              <BuildStep value="Memory and posterior review" status="Next" />
+              <BuildStep value="Workers and scheduler" status="Next" />
             </ol>
           </div>
         </aside>

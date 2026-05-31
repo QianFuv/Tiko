@@ -6,6 +6,9 @@ import type {
   ApiData,
   BackendHealthState,
   DataSource,
+  DatasetQualityReport,
+  DatasetRecord,
+  ExperimentRecord,
   Fill,
   PortfolioSummary,
   PositionView,
@@ -25,6 +28,8 @@ const DEMO_DECISION_ID = "00000000-0000-4000-8000-000000000101";
 const DEMO_ORDER_ID = "00000000-0000-4000-8000-000000000201";
 const DEMO_FILL_ID = "00000000-0000-4000-8000-000000000301";
 const DEMO_REVIEW_ID = "00000000-0000-4000-8000-000000000401";
+const DEMO_DATASET_ID = "00000000-0000-4000-8000-000000000901";
+const DEMO_EXPERIMENT_ID = "00000000-0000-4000-8000-000000001001";
 const DEMO_TIME = "2026-05-31T00:00:00Z";
 
 /**
@@ -90,6 +95,50 @@ export async function fetchSimulation(
   runId: string,
 ): Promise<ApiData<SimulationRun>> {
   return fetchApiData(`/api/simulations/${runId}`, () => buildDemoRun(runId));
+}
+
+/**
+ * Fetch imported research datasets.
+ *
+ * @returns Dataset records from the backend or demo fallback data.
+ */
+export async function fetchDatasets(): Promise<ApiData<DatasetRecord[]>> {
+  return fetchApiData("/api/datasets", buildDemoDatasets);
+}
+
+/**
+ * Fetch quality reports for imported datasets.
+ *
+ * @param datasets - Datasets to resolve quality reports for.
+ * @returns Quality reports from the backend or demo fallback data.
+ */
+export async function fetchDatasetQualityReports(
+  datasets: DatasetRecord[],
+): Promise<ApiData<DatasetQualityReport[]>> {
+  if (datasets.length === 0) {
+    return { data: [], source: "backend", error: null };
+  }
+  const results = await Promise.all(
+    datasets.map((dataset) =>
+      fetchApiData(`/api/datasets/${dataset.dataset_id}/quality`, () =>
+        buildDemoDatasetQualityReport(dataset),
+      ),
+    ),
+  );
+  return {
+    data: results.map((result) => result.data),
+    source: combineDataSources(results.map((result) => result.source)),
+    error: results.find((result) => result.error !== null)?.error ?? null,
+  };
+}
+
+/**
+ * Fetch research experiments.
+ *
+ * @returns Experiment records from the backend or demo fallback data.
+ */
+export async function fetchExperiments(): Promise<ApiData<ExperimentRecord[]>> {
+  return fetchApiData("/api/experiments", buildDemoExperiments);
 }
 
 /**
@@ -362,6 +411,78 @@ function buildDemoRun(runId: string): SimulationRun {
     },
     created_at: "2026-05-30T00:00:00Z",
   };
+}
+
+/**
+ * Build deterministic demo dataset records.
+ *
+ * @returns Demo dataset records.
+ */
+function buildDemoDatasets(): DatasetRecord[] {
+  return [
+    {
+      dataset_id: DEMO_DATASET_ID,
+      name: "BTCUSDT hourly research candles",
+      source: "csv",
+      source_uri: "demo://datasets/btcusdt-hourly.csv",
+      symbols: ["BTCUSDT"],
+      timeframes: ["1h"],
+      candle_count: 720,
+      status: "validated",
+      start_time: "2026-05-01T00:00:00Z",
+      end_time: "2026-05-31T00:00:00Z",
+      created_at: "2026-05-31T00:00:00Z",
+    },
+  ];
+}
+
+/**
+ * Build deterministic demo dataset quality.
+ *
+ * @param dataset - Dataset associated with the quality report.
+ * @returns Demo dataset quality report.
+ */
+function buildDemoDatasetQualityReport(
+  dataset: DatasetRecord,
+): DatasetQualityReport {
+  return {
+    dataset_id: dataset.dataset_id,
+    total_records: dataset.candle_count,
+    error_count: dataset.status === "invalid" ? 1 : 0,
+    warning_count: 0,
+    has_errors: dataset.status === "invalid",
+    issues: [],
+  };
+}
+
+/**
+ * Build deterministic demo experiment records.
+ *
+ * @returns Demo experiment records.
+ */
+function buildDemoExperiments(): ExperimentRecord[] {
+  return [
+    {
+      experiment_id: DEMO_EXPERIMENT_ID,
+      name: "Momentum walk-forward baseline",
+      kind: "walk_forward",
+      hypothesis: "Momentum remains positive across validation splits.",
+      dataset_id: DEMO_DATASET_ID,
+      model_id: null,
+      parameters: {
+        splits: 3,
+        lookback_hours: 24,
+        max_target_weight: "0.12",
+      },
+      status: "queued",
+      metrics: {
+        queued: true,
+      },
+      created_at: "2026-05-31T00:00:00Z",
+      queued_at: DEMO_TIME,
+      completed_at: null,
+    },
+  ];
 }
 
 /**
