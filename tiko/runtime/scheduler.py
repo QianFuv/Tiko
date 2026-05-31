@@ -3,6 +3,7 @@
 import json
 from datetime import datetime
 
+from tiko.domain.reporting import Alert
 from tiko.domain.runtime import WatchdogReport
 from tiko.services.runtime import RuntimeService
 from tiko.services.simulation import SimulationService
@@ -34,7 +35,30 @@ class RuntimeScheduler:
             Watchdog report for current runtime state.
         """
 
-        return self._service.run_watchdog()
+        if self._simulation_service is None:
+            return self._service.run_watchdog()
+        runs = self._simulation_service.list_runs()
+        return self._service.run_watchdog(
+            simulation_runs=runs,
+            alerts=self._list_simulation_alerts(),
+        )
+
+    def _list_simulation_alerts(self) -> list[Alert]:
+        """List alerts available to scheduler watchdog checks.
+
+        Returns:
+            Alerts from all known simulation runs.
+        """
+
+        if self._simulation_service is None:
+            return []
+        alerts: list[Alert] = []
+        for run in self._simulation_service.list_runs():
+            try:
+                alerts.extend(self._simulation_service.list_alerts(run.run_id))
+            except KeyError:
+                continue
+        return alerts
 
     def tick_simulation_clock(
         self,

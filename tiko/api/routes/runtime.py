@@ -9,8 +9,10 @@ from pydantic import BaseModel, Field
 from tiko.api.dependencies import (
     get_audit_service,
     get_runtime_service,
+    get_simulation_service,
     require_permission,
 )
+from tiko.domain.reporting import Alert
 from tiko.domain.runtime import (
     BackgroundJob,
     WatchdogReport,
@@ -18,10 +20,11 @@ from tiko.domain.runtime import (
     WorkerStatus,
 )
 from tiko.domain.security import Principal
-from tiko.services import AuditService, RuntimeService
+from tiko.services import AuditService, RuntimeService, SimulationService
 
 router = APIRouter(prefix="/runtime", tags=["runtime"])
 RuntimeServiceDep = Annotated[RuntimeService, Depends(get_runtime_service)]
+SimulationServiceDep = Annotated[SimulationService, Depends(get_simulation_service)]
 AuditServiceDep = Annotated[AuditService, Depends(get_audit_service)]
 ManageRuntimePrincipalDep = Annotated[
     Principal, Depends(require_permission("manage_runtime"))
@@ -131,6 +134,7 @@ def record_worker_heartbeat(
 @router.post("/watchdog", response_model=WatchdogReport)
 def run_runtime_watchdog(
     service: RuntimeServiceDep,
+    simulation_service: SimulationServiceDep,
     audit_service: AuditServiceDep,
     principal: ManageRuntimePrincipalDep,
 ) -> WatchdogReport:
@@ -138,6 +142,7 @@ def run_runtime_watchdog(
 
     Args:
         service: Runtime service dependency.
+        simulation_service: Simulation service dependency.
         audit_service: Audit service dependency.
         principal: Authorized caller principal.
 
@@ -145,7 +150,11 @@ def run_runtime_watchdog(
         Watchdog report.
     """
 
-    report = service.run_watchdog()
+    runs = simulation_service.list_runs()
+    report = service.run_watchdog(
+        simulation_runs=runs,
+        alerts=list_watchdog_alerts(simulation_service),
+    )
     audit_service.record(
         principal=principal,
         action="runtime.watchdog.run",
@@ -158,3 +167,22 @@ def run_runtime_watchdog(
         },
     )
     return report
+
+
+def list_watchdog_alerts(simulation_service: SimulationService) -> list[Alert]:
+    """List alerts available to the runtime watchdog.
+
+    Args:
+        simulation_service: Simulation service dependency.
+
+    Returns:
+        Alerts from all known simulation runs.
+    """
+
+    alerts: list[Alert] = []
+    for run in simulation_service.list_runs():
+        try:
+            alerts.extend(simulation_service.list_alerts(run.run_id))
+        except KeyError:
+            continue
+    return alerts

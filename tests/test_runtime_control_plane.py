@@ -185,3 +185,36 @@ def test_runtime_heartbeat_and_watchdog_rbac_and_audit() -> None:
         "runtime.heartbeat.record",
         "runtime.watchdog.run",
     ]
+
+
+def test_runtime_watchdog_reports_abnormal_risk_alerts() -> None:
+    """Verify runtime watchdog includes open abnormal risk alerts."""
+
+    client = create_test_client()
+    create_response = client.post(
+        "/api/simulations",
+        json={"name": "watchdog-risk", "symbols": ["BTCUSDT"]},
+        headers=OPERATOR_HEADERS,
+    )
+    assert create_response.status_code == 200
+    run_id = create_response.json()["run_id"]
+    alert_response = client.post(
+        f"/api/risk/{run_id}/alerts",
+        json={
+            "category": "risk_circuit_breaker",
+            "severity": "critical",
+            "message": "Risk circuit breaker is active.",
+        },
+        headers=OPERATOR_HEADERS,
+    )
+
+    watchdog_response = client.post(
+        "/api/runtime/watchdog",
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert alert_response.status_code == 200
+    assert watchdog_response.status_code == 200
+    assert "abnormal_risk_state" in {
+        check["code"] for check in watchdog_response.json()["checks"]
+    }

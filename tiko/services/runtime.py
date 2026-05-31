@@ -4,18 +4,30 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+from tiko.domain.reporting import Alert
 from tiko.domain.runtime import (
     BackgroundJob,
     JobType,
     WatchdogCheck,
     WatchdogReport,
+    WatchdogSeverity,
     WorkerHeartbeat,
     WorkerStatus,
 )
+from tiko.domain.simulation import SimulationRun
 
 MAX_HEALTHY_QUEUE_DEPTH = 1000
 MAX_HEALTHY_CLOCK_LAG_MS = 60_000
 MAX_RUNNING_JOB_AGE_SECONDS = 3_600
+MAX_STUCK_SIMULATION_SECONDS = 900
+ABNORMAL_RISK_ALERT_CATEGORIES = frozenset(
+    {
+        "drawdown",
+        "order_anomaly",
+        "risk_circuit_breaker",
+        "runtime_stuck",
+    }
+)
 
 
 class RuntimeService:
@@ -241,11 +253,18 @@ class RuntimeService:
             key=lambda heartbeat: heartbeat.worker_name,
         )
 
-    def run_watchdog(self, now: datetime | None = None) -> WatchdogReport:
+    def run_watchdog(
+        self,
+        now: datetime | None = None,
+        simulation_runs: Sequence[SimulationRun] = (),
+        alerts: Sequence[Alert] = (),
+    ) -> WatchdogReport:
         """Run deterministic runtime watchdog checks.
 
         Args:
             now: Optional evaluation time for deterministic checks.
+            simulation_runs: Optional simulation runs to include in checks.
+            alerts: Optional run alerts to include in risk-state checks.
 
         Returns:
             Watchdog report over current process-local runtime state.
@@ -291,6 +310,8 @@ class RuntimeService:
         checks.extend(self._queue_depth_checks(heartbeats))
         checks.extend(self._clock_lag_checks(heartbeats))
         checks.extend(self._running_job_checks(checked_at))
+        checks.extend(self._stuck_simulation_checks(checked_at, simulation_runs))
+        checks.extend(self._abnormal_risk_state_checks(alerts))
         if not checks:
             checks.append(
                 WatchdogCheck(
@@ -384,6 +405,84 @@ class RuntimeService:
                     )
                 )
         return checks
+
+    def _stuck_simulation_checks(
+        self, now: datetime, simulation_runs: Sequence[SimulationRun]
+    ) -> list[WatchdogCheck]:
+        """Build watchdog checks for running simulations that have not advanced.
+
+        Args:
+            now: Watchdog evaluation time.
+            simulation_runs: Simulation runs to inspect.
+
+        Returns:
+            Stuck simulation watchdog checks.
+        """
+
+        checks: list[WatchdogCheck] = []
+        for run in simulation_runs:
+            if run.status != "running" or run.current_sim_time > run.start_sim_time:
+                continue
+            running_seconds = int((now - run.created_at).total_seconds())
+            if running_seconds <= MAX_STUCK_SIMULATION_SECONDS:
+                continue
+            checks.append(
+                WatchdogCheck(
+                    code="simulation_stuck",
+                    severity="critical",
+                    message=(
+                        f"Simulation {run.run_id} is running without advancing "
+                        f"simulated time for {running_seconds} seconds."
+                    ),
+                )
+            )
+        return checks
+
+    def _abnormal_risk_state_checks(
+        self, alerts: Sequence[Alert]
+    ) -> list[WatchdogCheck]:
+        """Build watchdog checks for open abnormal risk alerts.
+
+        Args:
+            alerts: Run alerts to inspect.
+
+        Returns:
+            Risk-state watchdog checks.
+        """
+
+        checks: list[WatchdogCheck] = []
+        for alert in alerts:
+            if alert.status != "open" or not self._is_abnormal_risk_alert(alert):
+                continue
+            severity: WatchdogSeverity = (
+                "critical" if alert.severity == "critical" else "warning"
+            )
+            checks.append(
+                WatchdogCheck(
+                    code="abnormal_risk_state",
+                    severity=severity,
+                    message=(
+                        f"Open {alert.category} alert for simulation "
+                        f"{alert.run_id}: {alert.message}"
+                    ),
+                )
+            )
+        return checks
+
+    def _is_abnormal_risk_alert(self, alert: Alert) -> bool:
+        """Return whether an alert represents abnormal risk state.
+
+        Args:
+            alert: Run alert to inspect.
+
+        Returns:
+            `True` when the alert should affect watchdog risk state.
+        """
+
+        return (
+            alert.severity == "critical"
+            or alert.category in ABNORMAL_RISK_ALERT_CATEGORIES
+        )
 
     def _clock_lag_checks(
         self, heartbeats: list[WorkerHeartbeat]

@@ -10,12 +10,16 @@ from tiko.core.config import Settings
 from tiko.domain.account import SimAccount
 from tiko.domain.market import Candle
 from tiko.domain.observation import Observation
-from tiko.domain.reporting import ReportArtifact
+from tiko.domain.reporting import Alert, ReportArtifact
 from tiko.domain.runtime import BackgroundJob
 from tiko.domain.simulation import SimulationRun
 from tiko.runtime.scheduler import RuntimeScheduler, run_scheduler_once
 from tiko.services.experiments import ExperimentService
-from tiko.services.runtime import MAX_RUNNING_JOB_AGE_SECONDS, RuntimeService
+from tiko.services.runtime import (
+    MAX_RUNNING_JOB_AGE_SECONDS,
+    MAX_STUCK_SIMULATION_SECONDS,
+    RuntimeService,
+)
 from tiko.services.simulation import SimulationService
 from tiko.workers import (
     build_worker_definitions,
@@ -264,6 +268,49 @@ def test_watchdog_flags_stale_running_jobs() -> None:
     assert report.worker_status == "healthy"
     assert report.checked_at == evaluation_time
     assert "running_job_stale" in {check.code for check in report.checks}
+
+
+def test_watchdog_flags_stuck_simulations_and_abnormal_risk_alerts() -> None:
+    """Verify watchdog reports stuck simulations and abnormal risk alerts."""
+
+    now = datetime(2026, 1, 2, tzinfo=UTC)
+    run = create_rl_run().model_copy(update={"status": "running", "created_at": now})
+    stuck_run = create_rl_run().model_copy(
+        update={
+            "status": "running",
+            "created_at": now - timedelta(seconds=MAX_STUCK_SIMULATION_SECONDS + 1),
+        }
+    )
+    advanced_run = create_rl_run().model_copy(
+        update={
+            "status": "running",
+            "current_sim_time": now,
+            "created_at": now - timedelta(seconds=MAX_STUCK_SIMULATION_SECONDS + 1),
+        }
+    )
+    alert = Alert(
+        alert_id=uuid4(),
+        run_id=stuck_run.run_id,
+        category="risk_circuit_breaker",
+        severity="warning",
+        message="Risk circuit breaker is active.",
+        status="open",
+        created_at_sim_time=stuck_run.current_sim_time,
+        created_at=now,
+    )
+    resolved_alert = alert.model_copy(
+        update={"alert_id": uuid4(), "status": "resolved"}
+    )
+
+    report = RuntimeService().run_watchdog(
+        now=now,
+        simulation_runs=(run, stuck_run, advanced_run),
+        alerts=(alert, resolved_alert),
+    )
+
+    codes = [check.code for check in report.checks]
+    assert codes.count("simulation_stuck") == 1
+    assert codes.count("abnormal_risk_state") == 1
 
 
 def test_worker_process_roles_record_healthy_heartbeats() -> None:
