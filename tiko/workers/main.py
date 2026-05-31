@@ -64,8 +64,8 @@ def build_default_job_handlers() -> dict[JobType, JobHandler]:
 
     return {
         "agent_inference": build_placeholder_job_result,
-        "backtest": build_placeholder_job_result,
-        "experiment_run": build_placeholder_job_result,
+        "backtest": backtest_worker.handle_backtest_job,
+        "experiment_run": backtest_worker.handle_backtest_job,
         "report_generation": report_worker.handle_report_generation_job,
         "rl_training": rl_worker.handle_training_job,
     }

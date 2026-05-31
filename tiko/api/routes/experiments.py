@@ -135,6 +135,7 @@ def get_experiment(
 def queue_experiment_run(
     experiment_id: UUID,
     service: ExperimentServiceDep,
+    dataset_service: DatasetServiceDep,
     runtime_service: RuntimeServiceDep,
     audit_service: AuditServiceDep,
     principal: ManageExperimentPrincipalDep,
@@ -144,6 +145,7 @@ def queue_experiment_run(
     Args:
         experiment_id: Experiment identifier.
         service: Experiment service dependency.
+        dataset_service: Dataset service dependency.
         runtime_service: Runtime service dependency.
         audit_service: Audit service dependency.
         principal: Authorized caller principal.
@@ -157,13 +159,21 @@ def queue_experiment_run(
 
     try:
         source_experiment = service.get_experiment(experiment_id)
+        dataset = dataset_service.get_dataset(source_experiment.dataset_id)
+        candles = dataset_service.list_candles(
+            source_experiment.dataset_id,
+            limit=dataset.candle_count,
+        )
         job = runtime_service.create_job(
             job_type="experiment_run",
             resource_type="experiment",
             resource_id=str(experiment_id),
             payload={
+                "experiment_id": str(source_experiment.experiment_id),
                 "dataset_id": str(source_experiment.dataset_id),
                 "kind": source_experiment.kind,
+                "parameters": source_experiment.parameters,
+                "candles": [candle.model_dump(mode="json") for candle in candles],
             },
         )
         experiment = service.queue_run(experiment_id, job_id=job.job_id)

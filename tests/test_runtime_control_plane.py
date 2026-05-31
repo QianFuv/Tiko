@@ -119,6 +119,10 @@ def test_experiment_run_creates_runtime_job(tmp_path: Path) -> None:
     assert job["job_type"] == "experiment_run"
     assert job["status"] == "queued"
     assert job["resource_type"] == "experiment"
+    assert job["payload"]["kind"] == "backtest"
+    assert job["payload"]["dataset_id"]
+    assert len(job["payload"]["candles"]) == 1
+    assert job["payload"]["candles"][0]["symbol"] == "BTCUSDT"
     assert job["result"] == {}
     assert job["claimed_by"] is None
     assert job["started_at"] is None

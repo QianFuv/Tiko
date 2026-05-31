@@ -251,7 +251,13 @@ def test_worker_process_jobs_completes_eligible_runtime_jobs() -> None:
         job_type="experiment_run",
         resource_type="experiment",
         resource_id="experiment-1",
-        payload={},
+        payload={
+            "dataset_id": "dataset-1",
+            "kind": "backtest",
+            "candles": [
+                candle.model_dump(mode="json") for candle in create_rl_candles()
+            ],
+        },
     )
     definition = next(
         definition
@@ -273,10 +279,40 @@ def test_worker_process_jobs_completes_eligible_runtime_jobs() -> None:
     assert empty_result.claimed_job_ids == ()
     assert completed_job.status == "completed"
     assert completed_job.result["job_type"] == "experiment_run"
+    assert completed_job.result["message"] == (
+        "Backtest worker completed deterministic candle summary."
+    )
+    assert completed_job.result["returns_by_symbol"] == {"BTCUSDT": "0.1"}
     assert completed_job.claimed_by == "backtest-worker"
     assert unrelated_job.status == "queued"
     assert heartbeat.worker_name == "backtest-worker"
     assert heartbeat.event_queue_depth == 0
+
+
+def test_backtest_worker_fails_empty_candle_payloads() -> None:
+    """Verify invalid backtest payloads fail through worker handling."""
+
+    service = RuntimeService()
+    job = service.create_job(
+        job_type="backtest",
+        resource_type="dataset",
+        resource_id="dataset-1",
+        payload={"candles": []},
+    )
+    definition = next(
+        definition
+        for definition in build_worker_definitions()
+        if definition.worker_name == "backtest-worker"
+    )
+
+    result = process_worker_jobs(service, definition, max_jobs=1)
+    failed_job = service.get_job(job.job_id)
+
+    assert result.claimed_job_ids == (job.job_id,)
+    assert result.completed_job_ids == ()
+    assert result.failed_job_ids == (job.job_id,)
+    assert failed_job.status == "failed"
+    assert failed_job.error_message == "Backtest payload requires at least one candle."
 
 
 def test_rl_worker_processes_static_training_jobs(tmp_path: Path) -> None:
