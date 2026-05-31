@@ -49,6 +49,17 @@ class RenderedReport(DomainModel):
     rendered_at: datetime
 
 
+class StoredReportArtifact(DomainModel):
+    """Represent a persisted rendered report artifact."""
+
+    report_id: UUID
+    report_type: ReportType
+    format: ReportFormat
+    artifact_uri: str = Field(min_length=1)
+    size_bytes: int = Field(ge=0)
+    stored_at: datetime
+
+
 class Alert(DomainModel):
     """Represent an operator-facing simulation alert."""
 

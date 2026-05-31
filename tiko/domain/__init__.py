@@ -62,6 +62,7 @@ from tiko.domain.reporting import (
     ReportArtifact,
     ReportFormat,
     ReportType,
+    StoredReportArtifact,
 )
 from tiko.domain.risk import RiskLimits, RiskReview
 from tiko.domain.rl import (
@@ -157,6 +158,7 @@ __all__ = [
     "SimulationDefinition",
     "SimulationDefinitionMode",
     "SimulationRun",
+    "StoredReportArtifact",
     "TradeIntent",
     "UserProfile",
     "WatchdogCheck",

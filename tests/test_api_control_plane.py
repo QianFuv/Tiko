@@ -1,6 +1,7 @@
 """Smoke tests for the FastAPI simulation control plane."""
 
 from decimal import Decimal
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -521,6 +522,65 @@ def test_query_routes_expose_simulated_state() -> None:
         client.get(f"/api/simulations/{run_id}/memory").json()[0]["memory_type"]
         == "decision"
     )
+
+
+def test_report_artifact_route_stores_rendered_report(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Verify report artifact route writes rendered reports and audits the action."""
+
+    monkeypatch.setenv("TIKO_ARTIFACT_ROOT", str(tmp_path))
+    client = create_test_client()
+    run_id = client.post(
+        "/api/simulations",
+        json={"name": "artifact-api", "symbols": ["BTCUSDT"]},
+        headers=OPERATOR_HEADERS,
+    ).json()["run_id"]
+    client.post(
+        f"/api/simulations/{run_id}/step",
+        json={"confidence": 0.7},
+        headers=OPERATOR_HEADERS,
+    )
+    report_id = client.post(
+        f"/api/reports/simulations/{run_id}",
+        headers=OPERATOR_HEADERS,
+    ).json()["report_id"]
+
+    viewer_response = client.post(
+        f"/api/reports/{report_id}/artifact",
+        headers=VIEWER_HEADERS,
+    )
+    artifact_response = client.post(
+        f"/api/reports/{report_id}/artifact",
+        headers=OPERATOR_HEADERS,
+    )
+    unknown_response = client.post(
+        "/api/reports/00000000-0000-0000-0000-000000000000/artifact",
+        headers=OPERATOR_HEADERS,
+    )
+    artifact_path = tmp_path / "reports" / f"{report_id}.md"
+
+    assert viewer_response.status_code == 403
+    assert artifact_response.status_code == 200
+    artifact = artifact_response.json()
+    assert artifact["report_id"] == report_id
+    assert artifact["format"] == "markdown"
+    assert artifact["size_bytes"] == artifact_path.stat().st_size
+    assert "# artifact-api simulation report" in artifact_path.read_text(
+        encoding="utf-8"
+    )
+    assert unknown_response.status_code == 404
+    audit_actions = [
+        entry["action"]
+        for entry in client.get("/api/audit/logs", headers=ADMIN_HEADERS).json()
+    ]
+    assert audit_actions == [
+        "simulation.create",
+        "simulation.step",
+        "report.simulation.create",
+        "report.artifact.store",
+    ]
 
 
 def test_market_orderbook_route_returns_latest_snapshot_and_safe_empty() -> None:

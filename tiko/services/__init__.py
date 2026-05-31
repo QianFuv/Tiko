@@ -1,5 +1,6 @@
 """Application services for simulation orchestration."""
 
+from tiko.services.artifacts import ReportArtifactStore
 from tiko.services.audit import AuditService
 from tiko.services.datasets import DatasetService, DatasetServiceError
 from tiko.services.experiments import ExperimentService
@@ -19,6 +20,7 @@ __all__ = [
     "ModelRegistryService",
     "PortfolioService",
     "PluginRegistryService",
+    "ReportArtifactStore",
     "ReportRenderService",
     "RiskService",
     "RuntimeService",

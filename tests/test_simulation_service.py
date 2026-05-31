@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -15,7 +16,7 @@ from tiko.db import (
 )
 from tiko.domain.market import Candle
 from tiko.domain.reporting import ReportArtifact
-from tiko.services import ReportRenderService, SimulationService
+from tiko.services import ReportArtifactStore, ReportRenderService, SimulationService
 from tiko.simulation.replay import MarketReplayExhausted
 
 
@@ -564,6 +565,32 @@ def test_report_renderer_handles_empty_sections() -> None:
         "\n"
         "No sections have been attached.\n"
     )
+
+
+def test_report_artifact_store_writes_rendered_report(tmp_path: Path) -> None:
+    """Verify rendered reports persist as local artifacts."""
+
+    service = SimulationService(Settings())
+    renderer = ReportRenderService()
+    store = ReportArtifactStore(tmp_path)
+    run = service.create_run(
+        name="artifact-storage",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    service.step_run(run.run_id, confidence=0.7)
+    report = service.create_simulation_report(run.run_id)
+    rendered_report = renderer.render(report)
+
+    artifact = store.store(rendered_report)
+    artifact_path = tmp_path / "reports" / f"{report.report_id}.md"
+
+    assert artifact.report_id == report.report_id
+    assert artifact.format == "markdown"
+    assert artifact.artifact_uri
+    assert artifact.size_bytes == len(rendered_report.content.encode("utf-8"))
+    assert artifact_path.read_text(encoding="utf-8") == rendered_report.content
+    assert artifact_path.parent.name == "reports"
 
 
 def test_service_rejects_memory_for_decision_from_another_run() -> None:

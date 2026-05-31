@@ -22,6 +22,7 @@ from tiko.services import (
     ExperimentService,
     ModelRegistryService,
     PluginRegistryService,
+    ReportArtifactStore,
     RuntimeService,
     SimulationService,
 )
@@ -134,6 +135,17 @@ def get_runtime_service() -> RuntimeService:
     return RuntimeService()
 
 
+@lru_cache
+def get_report_artifact_store() -> ReportArtifactStore:
+    """Return the configured report artifact store singleton.
+
+    Returns:
+        Report artifact store.
+    """
+
+    return ReportArtifactStore(get_settings().artifact_root)
+
+
 def get_current_principal(
     role_header: Annotated[str | None, Header(alias="X-Tiko-Role")] = None,
     user_header: Annotated[str | None, Header(alias="X-Tiko-User")] = None,
@@ -202,6 +214,7 @@ def reset_simulation_service() -> None:
     get_dataset_service.cache_clear()
     get_experiment_service.cache_clear()
     get_runtime_service.cache_clear()
+    get_report_artifact_store.cache_clear()
     get_persistence_repository.cache_clear()
     get_database_engine.cache_clear()
     get_settings.cache_clear()

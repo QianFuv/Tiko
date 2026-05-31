@@ -8,14 +8,21 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from tiko.api.dependencies import (
     get_audit_service,
     get_experiment_service,
+    get_report_artifact_store,
     get_simulation_service,
     require_permission,
 )
-from tiko.domain.reporting import RenderedReport, ReportArtifact, ReportFormat
+from tiko.domain.reporting import (
+    RenderedReport,
+    ReportArtifact,
+    ReportFormat,
+    StoredReportArtifact,
+)
 from tiko.domain.security import Principal
 from tiko.services import (
     AuditService,
     ExperimentService,
+    ReportArtifactStore,
     ReportRenderService,
     SimulationService,
 )
@@ -24,6 +31,9 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 SimulationServiceDep = Annotated[SimulationService, Depends(get_simulation_service)]
 ExperimentServiceDep = Annotated[ExperimentService, Depends(get_experiment_service)]
 AuditServiceDep = Annotated[AuditService, Depends(get_audit_service)]
+ReportArtifactStoreDep = Annotated[
+    ReportArtifactStore, Depends(get_report_artifact_store)
+]
 ManageReportsPrincipalDep = Annotated[
     Principal, Depends(require_permission("manage_reports"))
 ]
@@ -105,6 +115,52 @@ def render_report(
 
     report = find_report_artifact(report_id, simulation_service, experiment_service)
     return ReportRenderService().render(report, report_format=report_format)
+
+
+@router.post("/{report_id}/artifact", response_model=StoredReportArtifact)
+def store_report_artifact(
+    report_id: UUID,
+    simulation_service: SimulationServiceDep,
+    experiment_service: ExperimentServiceDep,
+    artifact_store: ReportArtifactStoreDep,
+    audit_service: AuditServiceDep,
+    principal: ManageReportsPrincipalDep,
+    report_format: ReportFormatQuery = "markdown",
+) -> StoredReportArtifact:
+    """Store one rendered report artifact.
+
+    Args:
+        report_id: Report identifier.
+        simulation_service: Simulation service dependency.
+        experiment_service: Experiment service dependency.
+        artifact_store: Report artifact store dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
+        report_format: Requested report render format.
+
+    Returns:
+        Stored report artifact metadata.
+
+    Raises:
+        HTTPException: If the report does not exist.
+    """
+
+    report = find_report_artifact(report_id, simulation_service, experiment_service)
+    rendered_report = ReportRenderService().render(report, report_format=report_format)
+    artifact = artifact_store.store(rendered_report)
+    audit_service.record(
+        principal=principal,
+        action="report.artifact.store",
+        resource_type="report_artifact",
+        resource_id=str(report.report_id),
+        metadata={
+            "report_type": report.report_type,
+            "format": artifact.format,
+            "artifact_uri": artifact.artifact_uri,
+            "size_bytes": artifact.size_bytes,
+        },
+    )
+    return artifact
 
 
 @router.post("/simulations/{run_id}", response_model=ReportArtifact)
