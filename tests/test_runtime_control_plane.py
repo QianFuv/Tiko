@@ -119,6 +119,10 @@ def test_experiment_run_creates_runtime_job(tmp_path: Path) -> None:
     assert job["job_type"] == "experiment_run"
     assert job["status"] == "queued"
     assert job["resource_type"] == "experiment"
+    assert job["result"] == {}
+    assert job["claimed_by"] is None
+    assert job["started_at"] is None
+    assert job["completed_at"] is None
     assert unknown_response.status_code == 404
     assert watchdog_response.status_code == 200
     watchdog = watchdog_response.json()

@@ -29,9 +29,13 @@ class BackgroundJob(DomainModel):
     resource_id: str = Field(min_length=1)
     status: JobStatus
     payload: dict[str, object] = Field(default_factory=dict)
+    result: dict[str, object] = Field(default_factory=dict)
+    claimed_by: str | None = None
     error_message: str | None = None
     created_at: datetime
     updated_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
 
 
 class WorkerHeartbeat(DomainModel):

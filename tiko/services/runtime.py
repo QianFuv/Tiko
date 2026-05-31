@@ -1,5 +1,6 @@
 """Runtime job and watchdog service."""
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -67,6 +68,24 @@ class RuntimeService:
 
         return sorted(self._jobs.values(), key=lambda job: job.created_at)
 
+    def count_queued_jobs(self, job_types: Sequence[JobType] | None = None) -> int:
+        """Count queued runtime jobs.
+
+        Args:
+            job_types: Optional eligible job types.
+
+        Returns:
+            Number of queued jobs matching the optional type filter.
+        """
+
+        eligible_job_types = set(job_types) if job_types is not None else None
+        return sum(
+            1
+            for job in self._jobs.values()
+            if job.status == "queued"
+            and (eligible_job_types is None or job.job_type in eligible_job_types)
+        )
+
     def get_job(self, job_id: UUID) -> BackgroundJob:
         """Get one runtime job.
 
@@ -81,6 +100,103 @@ class RuntimeService:
         """
 
         return self._jobs[job_id]
+
+    def claim_next_job(
+        self,
+        worker_name: str,
+        job_types: Sequence[JobType],
+    ) -> BackgroundJob | None:
+        """Claim the next queued job matching worker capabilities.
+
+        Args:
+            worker_name: Worker claiming the job.
+            job_types: Job types supported by the worker.
+
+        Returns:
+            Claimed running job, or `None` when no eligible queued job exists.
+        """
+
+        eligible_job_types = set(job_types)
+        now = datetime.now(UTC)
+        for job in self.list_jobs():
+            if job.status != "queued" or job.job_type not in eligible_job_types:
+                continue
+            claimed_job = job.model_copy(
+                update={
+                    "status": "running",
+                    "claimed_by": worker_name,
+                    "started_at": now,
+                    "updated_at": now,
+                }
+            )
+            self._jobs[job.job_id] = claimed_job
+            return claimed_job
+        return None
+
+    def complete_job(
+        self,
+        job_id: UUID,
+        result: dict[str, object],
+    ) -> BackgroundJob:
+        """Mark a running job as completed.
+
+        Args:
+            job_id: Runtime job identifier.
+            result: Structured job result metadata.
+
+        Returns:
+            Completed job.
+
+        Raises:
+            KeyError: If the job does not exist.
+            ValueError: If the job is not running.
+        """
+
+        job = self._jobs[job_id]
+        if job.status != "running":
+            raise ValueError("Only running jobs can be completed.")
+        now = datetime.now(UTC)
+        completed_job = job.model_copy(
+            update={
+                "status": "completed",
+                "result": result,
+                "error_message": None,
+                "updated_at": now,
+                "completed_at": now,
+            }
+        )
+        self._jobs[job_id] = completed_job
+        return completed_job
+
+    def fail_job(self, job_id: UUID, error_message: str) -> BackgroundJob:
+        """Mark a running job as failed.
+
+        Args:
+            job_id: Runtime job identifier.
+            error_message: Failure reason.
+
+        Returns:
+            Failed job.
+
+        Raises:
+            KeyError: If the job does not exist.
+            ValueError: If the job is not running.
+        """
+
+        job = self._jobs[job_id]
+        if job.status != "running":
+            raise ValueError("Only running jobs can be failed.")
+        now = datetime.now(UTC)
+        failed_job = job.model_copy(
+            update={
+                "status": "failed",
+                "error_message": error_message,
+                "updated_at": now,
+                "completed_at": now,
+            }
+        )
+        self._jobs[job_id] = failed_job
+        return failed_job
 
     def record_heartbeat(
         self,
