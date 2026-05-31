@@ -3,6 +3,7 @@
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any, Protocol
+from uuid import UUID
 
 import ccxt
 
@@ -150,6 +151,7 @@ class ReadOnlyMarketDataConnector(Protocol):
         since: int | None = None,
         limit: int | None = None,
         fetched_at: datetime | None = None,
+        ingestion_run_id: UUID | None = None,
     ) -> list[Candle]:
         """Fetch normalized public candles for one symbol and timeframe.
 
@@ -159,6 +161,7 @@ class ReadOnlyMarketDataConnector(Protocol):
             since: Optional start timestamp in milliseconds.
             limit: Optional maximum number of candles.
             fetched_at: Optional wall-clock fetch timestamp.
+            ingestion_run_id: Optional ingestion run identifier.
 
         Returns:
             Normalized public candles.
@@ -295,6 +298,7 @@ class GuardedExchangeClient:
         since: int | None = None,
         limit: int | None = None,
         fetched_at: datetime | None = None,
+        ingestion_run_id: UUID | None = None,
     ) -> list[Candle]:
         """Fetch and validate normalized public OHLCV candles.
 
@@ -304,6 +308,7 @@ class GuardedExchangeClient:
             since: Optional start timestamp in milliseconds.
             limit: Optional maximum number of candles.
             fetched_at: Optional wall-clock fetch timestamp.
+            ingestion_run_id: Optional ingestion run identifier.
 
         Returns:
             Normalized candles.
@@ -319,6 +324,7 @@ class GuardedExchangeClient:
                 timeframe=timeframe,
                 source=self._source_name,
                 fetched_at=fetched_at,
+                ingestion_run_id=ingestion_run_id,
             )
             for row in self.fetch_ohlcv(symbol, timeframe, since=since, limit=limit)
         ]

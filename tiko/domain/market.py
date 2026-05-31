@@ -39,6 +39,8 @@ class Candle(DomainModel):
     quote_volume: Decimal | None = Field(default=None, ge=Decimal("0"))
     source: str = Field(min_length=1)
     as_of: datetime
+    fetched_at: datetime | None = None
+    ingestion_run_id: UUID | None = None
     created_at: datetime
 
 

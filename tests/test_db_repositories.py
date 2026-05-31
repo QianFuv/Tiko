@@ -89,6 +89,8 @@ def sample_candle() -> Candle:
         quote_volume=Decimal("262.5"),
         source="fixture",
         as_of=datetime(2026, 1, 1, 1, 0, tzinfo=UTC),
+        fetched_at=datetime(2026, 1, 1, 1, 5, tzinfo=UTC),
+        ingestion_run_id=uuid4(),
         created_at=datetime(2026, 1, 1, 1, 0, tzinfo=UTC),
     )
 

@@ -3,7 +3,9 @@
 import csv
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
+from uuid import UUID, uuid4
 
 import pyarrow.parquet as parquet
 
@@ -25,6 +27,7 @@ class CandleImportResult:
     """Return normalized candles and validation output for an import."""
 
     source_path: Path
+    ingestion_run_id: UUID
     candles: tuple[Candle, ...]
     validation_report: MarketDataValidationReport
 
@@ -91,9 +94,15 @@ class CsvCandleImporter:
             MarketDataImportError: If normalization fails.
         """
 
-        candles = normalize_records(records)
+        ingestion_run_id = uuid4()
+        candles = normalize_records(
+            records,
+            default_fetched_at=datetime.now(UTC),
+            default_ingestion_run_id=ingestion_run_id,
+        )
         return CandleImportResult(
             source_path=source_path,
+            ingestion_run_id=ingestion_run_id,
             candles=tuple(candles),
             validation_report=self._validator.validate_candles(candles),
         )
@@ -127,9 +136,15 @@ class ParquetCandleImporter:
         source_path = Path(path)
         table = parquet.read_table(source_path)
         validate_required_columns(table.column_names)
-        candles = normalize_records(table.to_pylist())
+        ingestion_run_id = uuid4()
+        candles = normalize_records(
+            table.to_pylist(),
+            default_fetched_at=datetime.now(UTC),
+            default_ingestion_run_id=ingestion_run_id,
+        )
         return CandleImportResult(
             source_path=source_path,
+            ingestion_run_id=ingestion_run_id,
             candles=tuple(candles),
             validation_report=self._validator.validate_candles(candles),
         )
@@ -153,11 +168,17 @@ def validate_required_columns(columns: Iterable[str]) -> None:
         )
 
 
-def normalize_records(records: Iterable[Mapping[str, object]]) -> list[Candle]:
+def normalize_records(
+    records: Iterable[Mapping[str, object]],
+    default_fetched_at: datetime | None = None,
+    default_ingestion_run_id: UUID | None = None,
+) -> list[Candle]:
     """Normalize raw records into candle domain models.
 
     Args:
         records: Raw candle records.
+        default_fetched_at: Fetched timestamp used when rows omit one.
+        default_ingestion_run_id: Ingestion run ID used when rows omit one.
 
     Returns:
         Normalized candles.
@@ -169,7 +190,13 @@ def normalize_records(records: Iterable[Mapping[str, object]]) -> list[Candle]:
     candles: list[Candle] = []
     for index, record in enumerate(records):
         try:
-            candles.append(normalize_candle_record(record))
+            candles.append(
+                normalize_candle_record(
+                    record,
+                    default_fetched_at=default_fetched_at,
+                    default_ingestion_run_id=default_ingestion_run_id,
+                )
+            )
         except MarketDataNormalizationError as error:
             raise MarketDataImportError(
                 f"Candle record at index {index} could not be normalized: {error}"

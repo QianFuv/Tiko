@@ -3,6 +3,7 @@
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from uuid import UUID
 
 from tiko.domain.market import Candle
 
@@ -35,11 +36,17 @@ class MarketDataNormalizationError(ValueError):
     """Raised when raw market data cannot be normalized safely."""
 
 
-def normalize_candle_record(record: Mapping[str, object]) -> Candle:
+def normalize_candle_record(
+    record: Mapping[str, object],
+    default_fetched_at: datetime | None = None,
+    default_ingestion_run_id: UUID | None = None,
+) -> Candle:
     """Normalize a mapping into a point-in-time candle domain model.
 
     Args:
         record: Raw candle mapping with required OHLCV fields.
+        default_fetched_at: Fetched timestamp used when the record omits one.
+        default_ingestion_run_id: Ingestion run identifier used when omitted.
 
     Returns:
         Normalized candle.
@@ -68,6 +75,13 @@ def normalize_candle_record(record: Mapping[str, object]) -> Candle:
         quote_volume=parse_optional_decimal(record.get("quote_volume"), "quote_volume"),
         source=parse_string(record["source"], "source"),
         as_of=parse_datetime(record["as_of"], "as_of"),
+        fetched_at=parse_optional_datetime(
+            record.get("fetched_at", default_fetched_at), "fetched_at"
+        ),
+        ingestion_run_id=parse_optional_uuid(
+            record.get("ingestion_run_id", default_ingestion_run_id),
+            "ingestion_run_id",
+        ),
         created_at=parse_datetime(
             record.get("created_at", record["as_of"]), "created_at"
         ),
@@ -80,6 +94,7 @@ def normalize_ccxt_ohlcv_row(
     timeframe: str,
     source: str,
     fetched_at: datetime | None = None,
+    ingestion_run_id: UUID | None = None,
 ) -> Candle:
     """Normalize a CCXT public OHLCV row into a candle domain model.
 
@@ -89,6 +104,7 @@ def normalize_ccxt_ohlcv_row(
         timeframe: Candle timeframe associated with the row.
         source: Read-only data source name.
         fetched_at: Optional wall-clock fetch timestamp.
+        ingestion_run_id: Optional ingestion batch identifier.
 
     Returns:
         Normalized candle.
@@ -118,6 +134,8 @@ def normalize_ccxt_ohlcv_row(
         quote_volume=None,
         source=source,
         as_of=close_time,
+        fetched_at=created_at,
+        ingestion_run_id=ingestion_run_id,
         created_at=created_at,
     )
 
@@ -209,6 +227,48 @@ def parse_datetime(value: object, field_name: str) -> datetime:
                 f"Field {field_name} must be an ISO timestamp."
             ) from error
     raise MarketDataNormalizationError(f"Field {field_name} must be a timestamp.")
+
+
+def parse_optional_datetime(value: object, field_name: str) -> datetime | None:
+    """Parse an optional timestamp into a timezone-aware datetime.
+
+    Args:
+        value: Raw timestamp value.
+        field_name: Field name for errors.
+
+    Returns:
+        Parsed timestamp or `None`.
+    """
+
+    if value in (None, ""):
+        return None
+    return parse_datetime(value, field_name)
+
+
+def parse_optional_uuid(value: object, field_name: str) -> UUID | None:
+    """Parse an optional UUID value.
+
+    Args:
+        value: Raw UUID value.
+        field_name: Field name for errors.
+
+    Returns:
+        Parsed UUID or `None`.
+
+    Raises:
+        MarketDataNormalizationError: If the UUID cannot be parsed.
+    """
+
+    if value in (None, ""):
+        return None
+    if isinstance(value, UUID):
+        return value
+    try:
+        return UUID(str(value))
+    except ValueError as error:
+        raise MarketDataNormalizationError(
+            f"Field {field_name} must be a UUID-compatible value."
+        ) from error
 
 
 def parse_exchange_timestamp(value: object, field_name: str) -> datetime:

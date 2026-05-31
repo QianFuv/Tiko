@@ -276,6 +276,8 @@ class DatasetCandleRecord(Base):
     quote_volume: Mapped[Decimal | None] = mapped_column(ExactDecimal())
     source: Mapped[str] = mapped_column(String(64), nullable=False)
     as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ingestion_run_id: Mapped[str | None] = mapped_column(String(36))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
@@ -302,6 +304,8 @@ class CandleRecord(Base):
     quote_volume: Mapped[Decimal | None] = mapped_column(ExactDecimal())
     source: Mapped[str] = mapped_column(String(64), nullable=False)
     as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ingestion_run_id: Mapped[str | None] = mapped_column(String(36))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

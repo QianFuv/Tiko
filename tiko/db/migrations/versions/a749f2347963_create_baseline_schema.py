@@ -130,6 +130,8 @@ def upgrade() -> None:
         sa.Column("quote_volume", tiko.db.models.ExactDecimal(), nullable=True),
         sa.Column("source", sa.String(length=64), nullable=False),
         sa.Column("as_of", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("fetched_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("ingestion_run_id", sa.String(length=36), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(
             ["dataset_id"],
@@ -236,6 +238,8 @@ def upgrade() -> None:
         sa.Column("quote_volume", tiko.db.models.ExactDecimal(), nullable=True),
         sa.Column("source", sa.String(length=64), nullable=False),
         sa.Column("as_of", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("fetched_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("ingestion_run_id", sa.String(length=36), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(
             ["run_id"],

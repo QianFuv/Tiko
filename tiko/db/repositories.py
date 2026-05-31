@@ -1332,6 +1332,10 @@ class SimulationRepository:
                 quote_volume=candle.quote_volume,
                 source=candle.source,
                 as_of=candle.as_of,
+                fetched_at=candle.fetched_at,
+                ingestion_run_id=str(candle.ingestion_run_id)
+                if candle.ingestion_run_id is not None
+                else None,
                 created_at=candle.created_at,
             )
             for candle in candles
@@ -1409,6 +1413,10 @@ class SimulationRepository:
                 quote_volume=candle.quote_volume,
                 source=candle.source,
                 as_of=candle.as_of,
+                fetched_at=candle.fetched_at,
+                ingestion_run_id=str(candle.ingestion_run_id)
+                if candle.ingestion_run_id is not None
+                else None,
                 created_at=candle.created_at,
             )
         )
@@ -2156,6 +2164,10 @@ class SimulationRepository:
             quote_volume=record.quote_volume,
             source=record.source,
             as_of=self._aware_datetime(record.as_of),
+            fetched_at=self._optional_aware_datetime(record.fetched_at),
+            ingestion_run_id=UUID(record.ingestion_run_id)
+            if record.ingestion_run_id is not None
+            else None,
             created_at=self._aware_datetime(record.created_at),
         )
 
@@ -2182,6 +2194,10 @@ class SimulationRepository:
             quote_volume=record.quote_volume,
             source=record.source,
             as_of=self._aware_datetime(record.as_of),
+            fetched_at=self._optional_aware_datetime(record.fetched_at),
+            ingestion_run_id=UUID(record.ingestion_run_id)
+            if record.ingestion_run_id is not None
+            else None,
             created_at=self._aware_datetime(record.created_at),
         )
 

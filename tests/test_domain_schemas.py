@@ -93,6 +93,32 @@ def test_candle_rejects_negative_volume() -> None:
         )
 
 
+def test_candle_accepts_ingestion_metadata() -> None:
+    """Verify candles can carry fetched and ingestion run metadata."""
+
+    ingestion_run_id = uuid4()
+    fetched_at = current_time()
+    candle = Candle(
+        symbol="BTCUSDT",
+        timeframe="1h",
+        open_time=current_time(),
+        close_time=current_time(),
+        open=Decimal("100"),
+        high=Decimal("110"),
+        low=Decimal("90"),
+        close=Decimal("105"),
+        volume=Decimal("1"),
+        source="ccxt:test",
+        as_of=current_time(),
+        fetched_at=fetched_at,
+        ingestion_run_id=ingestion_run_id,
+        created_at=current_time(),
+    )
+
+    assert candle.fetched_at == fetched_at
+    assert candle.ingestion_run_id == ingestion_run_id
+
+
 def test_trade_intent_rejects_unknown_action() -> None:
     """Verify agent output is restricted to known structured actions."""
 

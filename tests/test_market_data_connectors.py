@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
@@ -147,18 +148,22 @@ def test_fetch_candles_normalizes_public_ohlcv_rows() -> None:
 
     exchange = FakeExchange()
     connector = GuardedExchangeClient(exchange, source_name="ccxt:test")
+    ingestion_run_id = uuid4()
 
     candles = connector.fetch_candles(
         "BTC/USDT",
         "1h",
         limit=1,
         fetched_at=datetime(2026, 1, 1, 2, tzinfo=UTC),
+        ingestion_run_id=ingestion_run_id,
     )
 
     assert len(candles) == 1
     assert candles[0].symbol == "BTC/USDT"
     assert candles[0].close == Decimal("1.5")
     assert candles[0].source == "ccxt:test"
+    assert candles[0].fetched_at == datetime(2026, 1, 1, 2, tzinfo=UTC)
+    assert candles[0].ingestion_run_id == ingestion_run_id
     assert candles[0].created_at == datetime(2026, 1, 1, 2, tzinfo=UTC)
     assert exchange.calls == ["fetchOHLCV"]
 

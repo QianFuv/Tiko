@@ -4,6 +4,7 @@ import csv
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from uuid import uuid4
 
 import pyarrow as arrow
 import pyarrow.parquet as parquet
@@ -99,6 +100,7 @@ def write_csv(path: Path, rows: list[dict[str, str]]) -> None:
 def test_normalize_candle_record_parses_scalars() -> None:
     """Verify raw mapping values normalize into a candle domain model."""
 
+    ingestion_run_id = uuid4()
     candle = normalize_candle_record(
         {
             "symbol": "BTCUSDT",
@@ -113,6 +115,8 @@ def test_normalize_candle_record_parses_scalars() -> None:
             "quote_volume": "",
             "source": "csv",
             "as_of": "2026-01-01T01:00:00Z",
+            "fetched_at": "2026-01-01T01:05:00Z",
+            "ingestion_run_id": str(ingestion_run_id),
         }
     )
 
@@ -120,6 +124,8 @@ def test_normalize_candle_record_parses_scalars() -> None:
     assert candle.open == Decimal("100.10")
     assert candle.quote_volume is None
     assert candle.open_time == datetime(2026, 1, 1, tzinfo=UTC)
+    assert candle.fetched_at == datetime(2026, 1, 1, 1, 5, tzinfo=UTC)
+    assert candle.ingestion_run_id == ingestion_run_id
     assert candle.created_at == candle.as_of
 
 
@@ -140,6 +146,7 @@ def test_normalize_ccxt_ohlcv_row_uses_timeframe_close_time() -> None:
     assert candle.open_time == open_time
     assert candle.close_time == open_time + timedelta(hours=1)
     assert candle.as_of == candle.close_time
+    assert candle.fetched_at == datetime(2026, 1, 2, tzinfo=UTC)
     assert candle.created_at == datetime(2026, 1, 2, tzinfo=UTC)
 
 
@@ -263,6 +270,8 @@ def test_csv_importer_returns_candles_and_validation_report(tmp_path: Path) -> N
     assert result.source_path == path
     assert len(result.candles) == 1
     assert result.candles[0].close == Decimal("105")
+    assert result.candles[0].fetched_at is not None
+    assert result.candles[0].ingestion_run_id == result.ingestion_run_id
     assert not result.validation_report.has_errors()
 
 
@@ -277,6 +286,8 @@ def test_parquet_importer_matches_csv_normalization(tmp_path: Path) -> None:
     assert len(result.candles) == 1
     assert result.candles[0].symbol == "BTCUSDT"
     assert result.candles[0].quote_volume == Decimal("262.5")
+    assert result.candles[0].fetched_at is not None
+    assert result.candles[0].ingestion_run_id == result.ingestion_run_id
     assert not result.validation_report.has_errors()
 
 
