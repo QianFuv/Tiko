@@ -38,6 +38,11 @@ class SimulationCreateRequest(BaseModel):
     name: str = Field(min_length=1)
     symbols: list[str] = Field(min_length=1)
     start_sim_time: datetime | None = None
+    mode: Literal["live_simulated_clock", "synthetic_market"] = "synthetic_market"
+    end_sim_time: datetime | None = None
+    speed_multiplier: Decimal = Field(default=Decimal("1"), gt=Decimal("0"))
+    timeframe: str = Field(default="1h", min_length=1)
+    decision_interval: str = Field(default="1h", min_length=1)
 
 
 class SimulationStepRequest(BaseModel):
@@ -96,11 +101,19 @@ def create_simulation(
         Created simulation run.
     """
 
-    run = service.create_run(
-        name=request.name,
-        symbols=request.symbols,
-        start_sim_time=request.start_sim_time,
-    )
+    try:
+        run = service.create_run(
+            name=request.name,
+            symbols=request.symbols,
+            start_sim_time=request.start_sim_time,
+            mode=request.mode,
+            end_sim_time=request.end_sim_time,
+            speed_multiplier=request.speed_multiplier,
+            timeframe=request.timeframe,
+            decision_interval=request.decision_interval,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
     audit_service.record(
         principal=principal,
         action="simulation.create",

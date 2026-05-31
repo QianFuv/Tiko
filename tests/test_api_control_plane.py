@@ -357,6 +357,46 @@ def test_simulation_lifecycle_routes_update_status_speed_and_audit() -> None:
     ]
 
 
+def test_simulation_create_accepts_configured_run_fields() -> None:
+    """Verify simulation create route stores architecture config fields."""
+
+    client = create_test_client()
+    create_response = client.post(
+        "/api/simulations",
+        json={
+            "name": "configured-create",
+            "symbols": ["BTCUSDT"],
+            "start_sim_time": "2026-01-01T00:00:00Z",
+            "end_sim_time": "2026-01-01T01:00:00Z",
+            "mode": "live_simulated_clock",
+            "speed_multiplier": "4",
+            "timeframe": "15m",
+            "decision_interval": "30m",
+        },
+        headers=OPERATOR_HEADERS,
+    )
+    invalid_response = client.post(
+        "/api/simulations",
+        json={
+            "name": "invalid-end",
+            "symbols": ["BTCUSDT"],
+            "start_sim_time": "2026-01-01T00:00:00Z",
+            "end_sim_time": "2026-01-01T00:00:00Z",
+        },
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert create_response.status_code == 200
+    payload = create_response.json()
+    assert payload["mode"] == "live_simulated_clock"
+    assert payload["speed_multiplier"] == "4"
+    assert payload["end_sim_time"].startswith("2026-01-01T01:00:00")
+    assert payload["config"]["timeframe"] == "15m"
+    assert payload["config"]["decision_interval"] == "30m"
+    assert invalid_response.status_code == 422
+    assert "end_sim_time" in invalid_response.json()["detail"]
+
+
 def test_risk_limit_update_requires_operator_and_affects_reviews() -> None:
     """Verify risk limit updates are authorized, audited, and applied."""
 

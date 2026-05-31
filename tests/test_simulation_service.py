@@ -262,6 +262,41 @@ def test_service_uses_configured_broker_fee_and_slippage() -> None:
     assert result.fill.fee == expected_fee
 
 
+def test_service_create_run_accepts_configured_simulation_fields() -> None:
+    """Verify run creation stores configured simulation settings."""
+
+    service = SimulationService(Settings())
+    start_time = datetime(2026, 1, 1, tzinfo=UTC)
+    end_time = start_time + timedelta(hours=1)
+
+    run = service.create_run(
+        name="configured",
+        symbols=["BTCUSDT"],
+        start_sim_time=start_time,
+        mode="live_simulated_clock",
+        end_sim_time=end_time,
+        speed_multiplier=Decimal("3"),
+        timeframe="15m",
+        decision_interval="30m",
+    )
+    result = service.step_run(run.run_id, confidence=0.7)
+
+    assert run.mode == "live_simulated_clock"
+    assert run.end_sim_time == end_time
+    assert run.speed_multiplier == Decimal("3")
+    assert run.config["timeframe"] == "15m"
+    assert run.config["decision_interval"] == "30m"
+    assert result.run.status == "completed"
+
+    with pytest.raises(ValueError, match="end_sim_time"):
+        service.create_run(
+            name="invalid-end",
+            symbols=["BTCUSDT"],
+            start_sim_time=start_time,
+            end_sim_time=start_time,
+        )
+
+
 def test_simulation_steps_size_orders_against_existing_target() -> None:
     """Verify repeated target steps do not duplicate full target orders."""
 

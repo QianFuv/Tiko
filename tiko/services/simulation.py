@@ -102,6 +102,12 @@ class SimulationService:
         symbols: list[str],
         start_sim_time: datetime | None = None,
         replay_candles: Sequence[Candle] | None = None,
+        *,
+        mode: Literal["live_simulated_clock", "synthetic_market"] = "synthetic_market",
+        end_sim_time: datetime | None = None,
+        speed_multiplier: Decimal = Decimal("1"),
+        timeframe: str = "1h",
+        decision_interval: str = "1h",
     ) -> SimulationRun:
         """Create a new process-local simulation run.
 
@@ -110,11 +116,25 @@ class SimulationService:
             symbols: Symbols included in the simulation.
             start_sim_time: Optional start time. Defaults to current UTC hour.
             replay_candles: Optional normalized candles for historical replay.
+            mode: Non-replay simulation runtime mode.
+            end_sim_time: Optional configured end time.
+            speed_multiplier: Simulated clock speed multiplier.
+            timeframe: Primary market data timeframe label.
+            decision_interval: Decision cadence label.
 
         Returns:
             Created simulation run.
+
+        Raises:
+            ValueError: If configuration values are invalid.
         """
 
+        if speed_multiplier <= Decimal("0"):
+            raise ValueError("speed_multiplier must be greater than zero.")
+        if not timeframe:
+            raise ValueError("timeframe must be non-empty.")
+        if not decision_interval:
+            raise ValueError("decision_interval must be non-empty.")
         run_id = uuid4()
         market_replay = (
             MarketReplay(replay_candles, symbols)
@@ -138,19 +158,26 @@ class SimulationService:
             start_time = market_replay.start_time()
         else:
             start_time = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+        if end_sim_time is not None and end_sim_time <= start_time:
+            raise ValueError("end_sim_time must be after start_sim_time.")
+        resolved_mode: Literal[
+            "historical_replay", "live_simulated_clock", "synthetic_market"
+        ] = "historical_replay" if market_replay is not None else mode
         run = SimulationRun(
             run_id=run_id,
             name=name,
             status="created",
-            mode="historical_replay"
-            if market_replay is not None
-            else "synthetic_market",
+            mode=resolved_mode,
             account=account,
             symbols=symbols,
             start_sim_time=start_time,
             current_sim_time=start_time,
+            end_sim_time=end_sim_time,
+            speed_multiplier=speed_multiplier,
             config={
-                "data_source": "replay" if market_replay is not None else "synthetic"
+                "data_source": "replay" if market_replay is not None else "synthetic",
+                "timeframe": timeframe,
+                "decision_interval": decision_interval,
             },
             created_at=datetime.now(UTC),
         )
@@ -519,9 +546,15 @@ class SimulationService:
             run_id, candle, previous_candle, event.event_id
         )
         self._event_bus.publish(event)
+        run_status = (
+            "completed"
+            if state.run.end_sim_time is not None
+            and next_time >= state.run.end_sim_time
+            else "running"
+        )
         decision_run = state.run.model_copy(
             update={
-                "status": "running",
+                "status": run_status,
                 "current_sim_time": next_time,
             }
         )
