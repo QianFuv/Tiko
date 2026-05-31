@@ -330,6 +330,41 @@ def test_validator_reports_contextual_point_in_time_issues() -> None:
     }
 
 
+def test_validator_reports_cross_source_price_divergence() -> None:
+    """Verify validation reports configured cross-source divergence."""
+
+    first_source = validation_candle(
+        "BTCUSDT", "1h", timedelta(hours=0), timedelta(hours=1)
+    ).model_copy(update={"source": "provider-a", "close": Decimal("100")})
+    second_source = validation_candle(
+        "BTCUSDT", "1h", timedelta(hours=0), timedelta(hours=1)
+    ).model_copy(update={"source": "provider-b", "close": Decimal("103")})
+    within_tolerance = validation_candle(
+        "ETHUSDT", "1h", timedelta(hours=0), timedelta(hours=1)
+    ).model_copy(update={"source": "provider-a", "close": Decimal("100")})
+    other_within_tolerance = validation_candle(
+        "ETHUSDT", "1h", timedelta(hours=0), timedelta(hours=1)
+    ).model_copy(update={"source": "provider-b", "close": Decimal("100.1")})
+
+    disabled_report = MarketDataValidator().validate_candles(
+        [first_source, second_source]
+    )
+    report = MarketDataValidator().validate_candles(
+        [
+            first_source,
+            second_source,
+            within_tolerance,
+            other_within_tolerance,
+        ],
+        cross_source_tolerance_bps=Decimal("100"),
+    )
+
+    assert disabled_report.issues == ()
+    assert report.error_count() == 0
+    assert {issue.code for issue in report.issues} == {"cross_source_price_divergence"}
+    assert {issue.severity for issue in report.issues} == {"warning"}
+
+
 def test_validator_reports_orderbook_sequence_and_checksum_issues() -> None:
     """Verify order book validator reports feed sequence and checksum issues."""
 

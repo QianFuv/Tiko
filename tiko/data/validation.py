@@ -102,6 +102,7 @@ class MarketDataValidator:
         *,
         run_end: datetime | None = None,
         availability_cutoff: datetime | None = None,
+        cross_source_tolerance_bps: Decimal | None = None,
     ) -> MarketDataValidationReport:
         """Validate a candle sequence.
 
@@ -109,14 +110,16 @@ class MarketDataValidator:
             candles: Normalized candles.
             run_end: Optional run end time used to reject future replay data.
             availability_cutoff: Optional point-in-time availability cutoff.
+            cross_source_tolerance_bps: Optional cross-source tolerance in basis
+                points.
 
         Returns:
             Validation report with errors and warnings.
         """
 
         issues: list[MarketDataValidationIssue] = []
-        seen_keys: set[tuple[str, str, str]] = set()
-        previous_by_stream: dict[tuple[str, str], Candle] = {}
+        seen_keys: set[tuple[str, str, str, str]] = set()
+        previous_by_stream: dict[tuple[str, str, str], Candle] = {}
         for index, candle in enumerate(candles):
             issues.extend(self._validate_candle(index, candle))
             issues.extend(
@@ -128,7 +131,12 @@ class MarketDataValidator:
                 )
             )
             issues.extend(self._validate_timeframe_duration(index, candle))
-            key = (candle.symbol, candle.timeframe, candle.open_time.isoformat())
+            key = (
+                candle.source,
+                candle.symbol,
+                candle.timeframe,
+                candle.open_time.isoformat(),
+            )
             if key in seen_keys:
                 issues.append(
                     self._create_issue(
@@ -142,13 +150,19 @@ class MarketDataValidator:
                     )
                 )
             seen_keys.add(key)
-            stream_key = (candle.symbol, candle.timeframe)
+            stream_key = (candle.source, candle.symbol, candle.timeframe)
             previous_candle = previous_by_stream.get(stream_key)
             if previous_candle is not None:
                 issues.extend(
                     self._validate_stream_sequence(index, previous_candle, candle)
                 )
             previous_by_stream[stream_key] = candle
+        if cross_source_tolerance_bps is not None:
+            issues.extend(
+                self._validate_cross_source_divergence(
+                    candles, cross_source_tolerance_bps
+                )
+            )
         return MarketDataValidationReport(
             total_records=len(candles), issues=tuple(issues)
         )
@@ -297,6 +311,59 @@ class MarketDataValidator:
                     severity="error",
                     code="future_availability",
                     message="Candle as_of must not exceed the availability cutoff.",
+                )
+            )
+        return issues
+
+    def _validate_cross_source_divergence(
+        self,
+        candles: Sequence[Candle],
+        tolerance_bps: Decimal,
+    ) -> list[MarketDataValidationIssue]:
+        """Validate close price divergence across candle sources.
+
+        Args:
+            candles: Normalized candles.
+            tolerance_bps: Maximum accepted close-price divergence in basis points.
+
+        Returns:
+            Validation warnings for above-tolerance cross-source divergence.
+
+        Raises:
+            ValueError: If tolerance is negative.
+        """
+
+        if tolerance_bps < Decimal("0"):
+            raise ValueError("cross_source_tolerance_bps must not be negative.")
+        grouped_candles: dict[tuple[str, str, str], list[tuple[int, Candle]]] = {}
+        for index, candle in enumerate(candles):
+            key = (candle.symbol, candle.timeframe, candle.open_time.isoformat())
+            grouped_candles.setdefault(key, []).append((index, candle))
+
+        issues: list[MarketDataValidationIssue] = []
+        for grouped_values in grouped_candles.values():
+            if len({candle.source for _, candle in grouped_values}) < 2:
+                continue
+            _, min_candle = min(grouped_values, key=lambda item: item[1].close)
+            max_index, max_candle = max(grouped_values, key=lambda item: item[1].close)
+            price_midpoint = (max_candle.close + min_candle.close) / Decimal("2")
+            divergence_bps = (
+                (max_candle.close - min_candle.close)
+                / price_midpoint
+                * Decimal("10000")
+            )
+            if divergence_bps <= tolerance_bps:
+                continue
+            issues.append(
+                self._create_issue(
+                    index=max_index,
+                    candle=max_candle,
+                    severity="warning",
+                    code="cross_source_price_divergence",
+                    message=(
+                        "Cross-source close price divergence exceeds the "
+                        "configured tolerance."
+                    ),
                 )
             )
         return issues
