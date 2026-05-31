@@ -1,17 +1,23 @@
 """WebSocket routes for simulation realtime replay streams."""
 
 import asyncio
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from fastapi import APIRouter, WebSocket
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 
-from tiko.api.dependencies import get_simulation_service
-from tiko.services import SimulationService
+from tiko.api.dependencies import (
+    get_realtime_subscriber_service,
+    get_simulation_service,
+)
+from tiko.services import RealtimeFanoutSubscriberService, SimulationService
 
 router = APIRouter(tags=["websocket"])
+FANOUT_READ_TIMEOUT_SECONDS = 0.2
+LIVE_CONTROL_TIMEOUT_SECONDS = 0.01
 
 SimulationStreamTopic = Literal[
     "market.candle",
@@ -50,6 +56,14 @@ STREAM_PAYLOAD_ID_KEYS = (
 )
 
 
+@dataclass(frozen=True)
+class SimulationStreamSubscription:
+    """Represent a WebSocket realtime subscription request."""
+
+    topics: tuple[SimulationStreamTopic, ...]
+    live: bool
+
+
 @router.websocket("/ws/simulations/{run_id}")
 async def simulation_snapshot_websocket(websocket: WebSocket, run_id: UUID) -> None:
     """Send a recovery snapshot and subscribed replay events for a simulation run.
@@ -69,7 +83,8 @@ async def simulation_snapshot_websocket(websocket: WebSocket, run_id: UUID) -> N
         )
         await websocket.close()
         return
-    topics = await _receive_subscription_topics(websocket)
+    subscription = await _receive_subscription(websocket)
+    topics = subscription.topics
     await websocket.send_json(
         {
             "type": "snapshot",
@@ -88,35 +103,127 @@ async def simulation_snapshot_websocket(websocket: WebSocket, run_id: UUID) -> N
             "topics": list(topics),
         }
     )
-    await websocket.close()
+    if not subscription.live or not topics:
+        await _close_websocket(websocket)
+        return
+    subscriber_service = get_realtime_subscriber_service()
+    if subscriber_service is None:
+        await _close_websocket(websocket)
+        return
+    await _stream_live_fanout_events(
+        websocket=websocket,
+        run_id=run_id,
+        topics=topics,
+        subscriber_service=subscriber_service,
+    )
 
 
-async def _receive_subscription_topics(
+async def _receive_subscription(
     websocket: WebSocket,
-) -> tuple[SimulationStreamTopic, ...]:
-    """Receive an optional subscription payload from a websocket client.
+) -> SimulationStreamSubscription:
+    """Receive an optional subscription payload from a WebSocket client.
 
     Args:
         websocket: Accepted WebSocket connection.
 
     Returns:
-        Subscribed topics, defaulting to all supported topics.
+        Subscription settings, defaulting to replay-only all-topic recovery.
     """
 
     try:
         payload = await asyncio.wait_for(websocket.receive_json(), timeout=0.05)
     except TimeoutError:
-        return SUPPORTED_TOPICS
+        return SimulationStreamSubscription(topics=SUPPORTED_TOPICS, live=False)
     if not isinstance(payload, dict) or payload.get("type") != "subscribe":
-        return SUPPORTED_TOPICS
+        return SimulationStreamSubscription(topics=SUPPORTED_TOPICS, live=False)
     requested_topics = payload.get("topics")
     if not isinstance(requested_topics, list):
-        return SUPPORTED_TOPICS
+        return SimulationStreamSubscription(
+            topics=SUPPORTED_TOPICS,
+            live=payload.get("live") is True,
+        )
     topics: list[SimulationStreamTopic] = []
     for topic in requested_topics:
         if isinstance(topic, str) and topic in SUPPORTED_TOPICS:
             topics.append(topic)
-    return tuple(topics)
+    return SimulationStreamSubscription(
+        topics=tuple(topics),
+        live=payload.get("live") is True,
+    )
+
+
+async def _stream_live_fanout_events(
+    websocket: WebSocket,
+    run_id: UUID,
+    topics: tuple[SimulationStreamTopic, ...],
+    subscriber_service: RealtimeFanoutSubscriberService,
+) -> None:
+    """Stream live Redis fanout envelopes to a WebSocket client.
+
+    Args:
+        websocket: Accepted WebSocket connection.
+        run_id: Simulation run identifier.
+        topics: Subscribed realtime topics.
+        subscriber_service: Realtime fanout subscriber service.
+    """
+
+    subscription = subscriber_service.subscribe(run_id, topics)
+    if subscription is None:
+        await _close_websocket(websocket)
+        return
+    try:
+        while True:
+            if await _receive_live_close(websocket):
+                break
+            event = await asyncio.to_thread(
+                subscription.next_event,
+                FANOUT_READ_TIMEOUT_SECONDS,
+            )
+            if event is None:
+                continue
+            topic = event.get("topic")
+            if isinstance(topic, str) and topic in topics:
+                await websocket.send_json({"type": "event", **jsonable_encoder(event)})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        subscription.close()
+        await _close_websocket(websocket)
+
+
+async def _receive_live_close(websocket: WebSocket) -> bool:
+    """Return whether the live WebSocket client requested closure.
+
+    Args:
+        websocket: Accepted WebSocket connection.
+
+    Returns:
+        `True` when the client sent a close control payload or disconnected.
+    """
+
+    try:
+        payload = await asyncio.wait_for(
+            websocket.receive_json(),
+            timeout=LIVE_CONTROL_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        return False
+    except WebSocketDisconnect:
+        return True
+    return isinstance(payload, dict) and payload.get("type") == "close"
+
+
+async def _close_websocket(websocket: WebSocket) -> None:
+    """Close a WebSocket connection when still closeable.
+
+    Args:
+        websocket: WebSocket connection.
+    """
+
+    try:
+        await websocket.close()
+    except RuntimeError:
+        return
 
 
 def _build_replay_events(

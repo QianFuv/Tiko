@@ -22,6 +22,8 @@ from tiko.services import (
     ExperimentService,
     ModelRegistryService,
     PluginRegistryService,
+    RealtimeFanoutService,
+    RealtimeFanoutSubscriberService,
     ReportArtifactStore,
     RuntimeService,
     SimulationService,
@@ -59,6 +61,34 @@ def get_persistence_repository() -> SimulationRepository | None:
 
 
 @lru_cache
+def get_realtime_fanout_service() -> RealtimeFanoutService | None:
+    """Return the configured realtime fanout publisher when Redis is enabled.
+
+    Returns:
+        Realtime fanout publisher or `None` when no Redis URL is configured.
+    """
+
+    settings = get_settings()
+    if settings.redis_url is None:
+        return None
+    return RealtimeFanoutService(redis_url=settings.redis_url)
+
+
+@lru_cache
+def get_realtime_subscriber_service() -> RealtimeFanoutSubscriberService | None:
+    """Return the configured realtime fanout subscriber when Redis is enabled.
+
+    Returns:
+        Realtime fanout subscriber or `None` when no Redis URL is configured.
+    """
+
+    settings = get_settings()
+    if settings.redis_url is None:
+        return None
+    return RealtimeFanoutSubscriberService(redis_url=settings.redis_url)
+
+
+@lru_cache
 def get_simulation_service() -> SimulationService:
     """Return the process-local simulation service singleton.
 
@@ -66,7 +96,11 @@ def get_simulation_service() -> SimulationService:
         Simulation service.
     """
 
-    return SimulationService(get_settings(), repository=get_persistence_repository())
+    return SimulationService(
+        get_settings(),
+        repository=get_persistence_repository(),
+        realtime_fanout=get_realtime_fanout_service(),
+    )
 
 
 @lru_cache
@@ -215,6 +249,8 @@ def reset_simulation_service() -> None:
     get_experiment_service.cache_clear()
     get_runtime_service.cache_clear()
     get_report_artifact_store.cache_clear()
+    get_realtime_fanout_service.cache_clear()
+    get_realtime_subscriber_service.cache_clear()
     get_persistence_repository.cache_clear()
     get_database_engine.cache_clear()
     get_settings.cache_clear()

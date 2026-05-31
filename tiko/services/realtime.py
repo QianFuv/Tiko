@@ -1,6 +1,7 @@
 """Realtime fanout services for Redis-compatible Pub/Sub."""
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
@@ -42,6 +43,53 @@ class RedisPublishClient(Protocol):
 
         Returns:
             Redis subscriber count response.
+        """
+
+
+class RedisPubSubClient(Protocol):
+    """Define the synchronous Redis Pub/Sub subset used by subscribers."""
+
+    def subscribe(self, *channels: str) -> object:
+        """Subscribe to Redis Pub/Sub channels.
+
+        Args:
+            channels: Redis Pub/Sub channels.
+
+        Returns:
+            Redis subscribe response.
+        """
+
+    def get_message(
+        self,
+        ignore_subscribe_messages: bool = False,
+        timeout: float = 0.0,
+    ) -> object | None:
+        """Read one Redis Pub/Sub message when available.
+
+        Args:
+            ignore_subscribe_messages: Whether subscription confirmations are skipped.
+            timeout: Maximum blocking read duration in seconds.
+
+        Returns:
+            Redis message object or `None`.
+        """
+
+    def close(self) -> object:
+        """Close the Redis Pub/Sub connection.
+
+        Returns:
+            Redis close response.
+        """
+
+
+class RedisSubscribeClient(Protocol):
+    """Define the Redis subset used to create Pub/Sub subscribers."""
+
+    def pubsub(self) -> RedisPubSubClient:
+        """Create a Redis Pub/Sub client.
+
+        Returns:
+            Redis Pub/Sub client.
         """
 
 
@@ -208,6 +256,134 @@ class RealtimeFanoutService:
         if isinstance(value, str) and value.isdecimal():
             return int(value)
         raise ValueError("Redis publish response must be an integer subscriber count.")
+
+
+class RealtimeFanoutSubscription:
+    """Read decoded realtime envelopes from a Redis Pub/Sub subscription."""
+
+    def __init__(
+        self,
+        pubsub: RedisPubSubClient,
+        channels: Sequence[str],
+    ) -> None:
+        """Initialize a live fanout subscription.
+
+        Args:
+            pubsub: Redis Pub/Sub client.
+            channels: Subscribed channels.
+        """
+
+        self._pubsub = pubsub
+        self.channels = tuple(channels)
+
+    def next_event(self, timeout_seconds: float = 1.0) -> dict[str, object] | None:
+        """Read and decode the next realtime envelope when available.
+
+        Args:
+            timeout_seconds: Maximum blocking read duration in seconds.
+
+        Returns:
+            Realtime event envelope or `None` when no event is available.
+
+        Raises:
+            json.JSONDecodeError: If Redis returns invalid JSON.
+        """
+
+        message = self._pubsub.get_message(
+            ignore_subscribe_messages=True,
+            timeout=timeout_seconds,
+        )
+        if not isinstance(message, dict) or message.get("type") != "message":
+            return None
+        data = message.get("data")
+        if isinstance(data, bytes):
+            text = data.decode("utf-8")
+        elif isinstance(data, str):
+            text = data
+        else:
+            return None
+        decoded = json.loads(text)
+        if not isinstance(decoded, dict):
+            return None
+        return decoded
+
+    def close(self) -> None:
+        """Close the underlying Redis Pub/Sub subscription."""
+
+        self._pubsub.close()
+
+
+class RealtimeFanoutSubscriberService:
+    """Subscribe to Redis-compatible realtime fanout channels."""
+
+    def __init__(
+        self,
+        redis_url: str | None = None,
+        client: RedisSubscribeClient | None = None,
+        channel_prefix: str = "tiko:realtime",
+    ) -> None:
+        """Initialize the subscriber service.
+
+        Args:
+            redis_url: Optional Redis connection URL.
+            client: Optional already-configured Redis-compatible client.
+            channel_prefix: Prefix used for generated Pub/Sub channels.
+
+        Raises:
+            ValueError: If the channel prefix is empty.
+        """
+
+        normalized_prefix = channel_prefix.strip(":")
+        if not normalized_prefix:
+            raise ValueError("Realtime fanout channel prefix must not be empty.")
+        self._channel_prefix = normalized_prefix
+        self._client = client
+        if self._client is None and redis_url:
+            self._client = redis.Redis.from_url(redis_url, decode_responses=True)
+
+    def is_configured(self) -> bool:
+        """Return whether a subscription client is configured.
+
+        Returns:
+            `True` when Redis subscribing is configured.
+        """
+
+        return self._client is not None
+
+    def subscribe(
+        self,
+        run_id: UUID,
+        topics: Sequence[str],
+    ) -> RealtimeFanoutSubscription | None:
+        """Subscribe to realtime fanout channels for one simulation run.
+
+        Args:
+            run_id: Simulation run identifier.
+            topics: Realtime topics.
+
+        Returns:
+            Fanout subscription or `None` when no client or topics are configured.
+        """
+
+        if self._client is None or not topics:
+            return None
+        channels = tuple(self.build_channel(run_id, topic) for topic in topics)
+        pubsub = self._client.pubsub()
+        pubsub.subscribe(*channels)
+        return RealtimeFanoutSubscription(pubsub, channels)
+
+    def build_channel(self, run_id: UUID, topic: str) -> str:
+        """Build a Redis Pub/Sub channel for a run topic.
+
+        Args:
+            run_id: Simulation run identifier.
+            topic: Realtime topic.
+
+        Returns:
+            Redis Pub/Sub channel.
+        """
+
+        return f"{self._channel_prefix}:{run_id}:{topic}"
 
 
 def build_step_result_envelopes(

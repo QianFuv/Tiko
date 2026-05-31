@@ -1,12 +1,17 @@
 """Smoke tests for the FastAPI simulation control plane."""
 
+import json
+from collections.abc import Sequence
 from decimal import Decimal
 from pathlib import Path
+from uuid import UUID
 
 from fastapi.testclient import TestClient
 
+import tiko.services.realtime as realtime_services
 from tiko.api.dependencies import reset_simulation_service
 from tiko.api.main import create_app
+from tiko.api.routes import websocket as websocket_routes
 
 ADMIN_HEADERS = {"X-Tiko-Role": "admin", "X-Tiko-User": "admin@example.test"}
 OPERATOR_HEADERS = {"X-Tiko-Role": "operator", "X-Tiko-User": "operator@example.test"}
@@ -15,6 +20,105 @@ RESEARCHER_HEADERS = {
     "X-Tiko-User": "researcher@example.test",
 }
 VIEWER_HEADERS = {"X-Tiko-Role": "viewer", "X-Tiko-User": "viewer@example.test"}
+
+
+class FakeRedisRuntime:
+    """Fake Redis client that records API fanout publish calls."""
+
+    def __init__(self) -> None:
+        """Initialize the fake Redis runtime."""
+
+        self.messages: list[tuple[str, str]] = []
+
+    def ping(self) -> bool:
+        """Return a successful connectivity result.
+
+        Returns:
+            Always `True` for API tests.
+        """
+
+        return True
+
+    def publish(self, channel: str, message: str) -> int:
+        """Record one published fanout message.
+
+        Args:
+            channel: Redis Pub/Sub channel.
+            message: Serialized message payload.
+
+        Returns:
+            Simulated subscriber count.
+        """
+
+        self.messages.append((channel, message))
+        return 1
+
+
+class FakeRealtimeSubscription:
+    """Fake live realtime subscription for WebSocket tests."""
+
+    def __init__(self, events: list[dict[str, object]]) -> None:
+        """Initialize the fake subscription.
+
+        Args:
+            events: Events returned to the WebSocket bridge.
+        """
+
+        self.events = list(events)
+        self.closed = False
+
+    def next_event(self, timeout_seconds: float = 1.0) -> dict[str, object] | None:
+        """Return the next queued event.
+
+        Args:
+            timeout_seconds: Maximum blocking read duration in seconds.
+
+        Returns:
+            Next event or `None`.
+        """
+
+        if not self.events:
+            return None
+        return self.events.pop(0)
+
+    def close(self) -> None:
+        """Record that the subscription was closed."""
+
+        self.closed = True
+
+
+class FakeRealtimeSubscriberService:
+    """Fake realtime subscriber service for WebSocket tests."""
+
+    def __init__(self, subscription: FakeRealtimeSubscription | None) -> None:
+        """Initialize the fake subscriber service.
+
+        Args:
+            subscription: Subscription returned by `subscribe`.
+        """
+
+        self.subscription = subscription
+        self.subscribed_run_id: UUID | None = None
+        self.subscribed_topics: tuple[str, ...] | None = None
+
+    def subscribe(
+        self,
+        run_id: UUID,
+        topics: Sequence[str],
+    ) -> FakeRealtimeSubscription | None:
+        """Record subscription arguments and return the configured subscription.
+
+        Args:
+            run_id: Simulation run identifier.
+            topics: Requested realtime topics.
+
+        Returns:
+            Configured fake subscription.
+        """
+
+        self.subscribed_run_id = run_id
+        self.subscribed_topics = tuple(topics)
+        return self.subscription
 
 
 def create_test_client() -> TestClient:
@@ -74,6 +178,50 @@ def test_simulation_routes_create_and_step_run() -> None:
     list_response = client.get("/api/simulations")
     assert list_response.status_code == 200
     assert len(list_response.json()) == 1
+
+
+def test_configured_redis_url_publishes_api_step_fanout(monkeypatch) -> None:
+    """Verify API runtime wires configured Redis fanout into simulation steps."""
+
+    fake_redis = FakeRedisRuntime()
+    monkeypatch.setenv("TIKO_REDIS_URL", "redis://redis:6379/0")
+    monkeypatch.setattr(
+        realtime_services.redis.Redis,
+        "from_url",
+        lambda redis_url, decode_responses: fake_redis,
+    )
+    client = create_test_client()
+    run_id = client.post(
+        "/api/simulations",
+        json={"name": "redis-fanout-api", "symbols": ["BTCUSDT"]},
+        headers=OPERATOR_HEADERS,
+    ).json()["run_id"]
+
+    response = client.post(
+        f"/api/simulations/{run_id}/step",
+        json={"confidence": 0.7},
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert response.status_code == 200
+    topics = {
+        str(json.loads(message)["topic"]) for _channel, message in fake_redis.messages
+    }
+    assert topics == {
+        "agent.run",
+        "decision.created",
+        "fill.created",
+        "market.candle",
+        "order.updated",
+        "portfolio.updated",
+        "risk.reviewed",
+        "simulation.heartbeat",
+        "simulation.status",
+    }
+    assert all(
+        channel.startswith(f"tiko:realtime:{run_id}:")
+        for channel, _message in fake_redis.messages
+    )
 
 
 def test_comparison_routes_benchmark_and_compare_runs() -> None:
@@ -960,6 +1108,55 @@ def test_simulation_websocket_filters_subscription_topics() -> None:
     assert completion["type"] == "replay_complete"
 
 
+def test_simulation_websocket_streams_live_fanout_after_replay(monkeypatch) -> None:
+    """Verify live WebSocket mode streams fanout events after recovery replay."""
+
+    client = create_test_client()
+    run_id = client.post(
+        "/api/simulations",
+        json={"name": "ws-live-demo", "symbols": ["BTCUSDT"]},
+        headers=OPERATOR_HEADERS,
+    ).json()["run_id"]
+    client.post(
+        f"/api/simulations/{run_id}/step",
+        json={"confidence": 0.7},
+        headers=OPERATOR_HEADERS,
+    )
+    live_envelope = {
+        "event_id": "evt-live-decision",
+        "topic": "decision.created",
+        "run_id": run_id,
+        "simulated_time": "2026-01-01T01:00:00+00:00",
+        "payload": {"run_id": run_id, "decision_id": "decision-live"},
+    }
+    live_subscription = FakeRealtimeSubscription([live_envelope])
+    subscriber_service = FakeRealtimeSubscriberService(live_subscription)
+    monkeypatch.setattr(
+        websocket_routes,
+        "get_realtime_subscriber_service",
+        lambda: subscriber_service,
+    )
+
+    with client.websocket_connect(f"/ws/simulations/{run_id}") as websocket:
+        websocket.send_json(
+            {"type": "subscribe", "topics": ["decision.created"], "live": True}
+        )
+        snapshot = websocket.receive_json()
+        replay_event = websocket.receive_json()
+        replay_completion = websocket.receive_json()
+        live_event = websocket.receive_json()
+        websocket.send_json({"type": "close"})
+
+    assert snapshot["topics"] == ["decision.created"]
+    assert replay_event["type"] == "event"
+    assert replay_event["topic"] == "decision.created"
+    assert replay_completion["type"] == "replay_complete"
+    assert live_event == {"type": "event", **live_envelope}
+    assert subscriber_service.subscribed_run_id == UUID(run_id)
+    assert subscriber_service.subscribed_topics == ("decision.created",)
+    assert live_subscription.closed is True
+
+
 def test_simulation_websocket_accepts_empty_subscription() -> None:
     """Verify empty topic subscriptions only return snapshot and completion."""
 
@@ -982,6 +1179,40 @@ def test_simulation_websocket_accepts_empty_subscription() -> None:
 
     assert snapshot["topics"] == []
     assert completion["type"] == "replay_complete"
+
+
+def test_simulation_websocket_live_empty_subscription_skips_fanout(
+    monkeypatch,
+) -> None:
+    """Verify empty live subscriptions do not open fanout subscriptions."""
+
+    subscriber_service = FakeRealtimeSubscriberService(FakeRealtimeSubscription([]))
+    monkeypatch.setattr(
+        websocket_routes,
+        "get_realtime_subscriber_service",
+        lambda: subscriber_service,
+    )
+    client = create_test_client()
+    run_id = client.post(
+        "/api/simulations",
+        json={"name": "ws-empty-live-demo", "symbols": ["BTCUSDT"]},
+        headers=OPERATOR_HEADERS,
+    ).json()["run_id"]
+    client.post(
+        f"/api/simulations/{run_id}/step",
+        json={"confidence": 0.7},
+        headers=OPERATOR_HEADERS,
+    )
+
+    with client.websocket_connect(f"/ws/simulations/{run_id}") as websocket:
+        websocket.send_json({"type": "subscribe", "topics": [], "live": True})
+        snapshot = websocket.receive_json()
+        completion = websocket.receive_json()
+
+    assert snapshot["topics"] == []
+    assert completion["type"] == "replay_complete"
+    assert subscriber_service.subscribed_run_id is None
+    assert subscriber_service.subscribed_topics is None
 
 
 def test_configured_database_persists_api_state_after_cache_reset(

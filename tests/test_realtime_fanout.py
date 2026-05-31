@@ -1,12 +1,12 @@
 """Tests for Redis-compatible realtime fanout services."""
 
 import json
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
 from tiko.core.config import Settings
-from tiko.services import RealtimeFanoutService
+from tiko.services import RealtimeFanoutService, RealtimeFanoutSubscriberService
 
 
 class FakeRedisPublisher:
@@ -46,6 +46,76 @@ class FakeRedisPublisher:
 
         self.messages.append((channel, message))
         return self.subscriber_count
+
+
+class FakeRedisPubSub:
+    """Fake Redis Pub/Sub client that returns queued messages."""
+
+    def __init__(self, messages: list[dict[str, object]] | None = None) -> None:
+        """Initialize the fake Pub/Sub client.
+
+        Args:
+            messages: Messages returned by `get_message`.
+        """
+
+        self.messages = list(messages or [])
+        self.channels: list[str] = []
+        self.closed = False
+
+    def subscribe(self, *channels: str) -> None:
+        """Record subscribed channels.
+
+        Args:
+            channels: Redis Pub/Sub channels.
+        """
+
+        self.channels.extend(channels)
+
+    def get_message(
+        self,
+        ignore_subscribe_messages: bool = False,
+        timeout: float = 0.0,
+    ) -> dict[str, object] | None:
+        """Return the next queued message.
+
+        Args:
+            ignore_subscribe_messages: Whether subscription confirmations are skipped.
+            timeout: Maximum blocking read duration in seconds.
+
+        Returns:
+            Next queued message or `None`.
+        """
+
+        if not self.messages:
+            return None
+        return self.messages.pop(0)
+
+    def close(self) -> None:
+        """Record that the Pub/Sub connection was closed."""
+
+        self.closed = True
+
+
+class FakeRedisSubscriber:
+    """Fake Redis client that creates a configured Pub/Sub client."""
+
+    def __init__(self, pubsub: FakeRedisPubSub) -> None:
+        """Initialize the fake Redis subscriber.
+
+        Args:
+            pubsub: Pub/Sub client returned by `pubsub`.
+        """
+
+        self.pubsub_client = pubsub
+
+    def pubsub(self) -> FakeRedisPubSub:
+        """Return the configured fake Pub/Sub client.
+
+        Returns:
+            Fake Pub/Sub client.
+        """
+
+        return self.pubsub_client
 
 
 def create_realtime_envelope() -> dict[str, object]:
@@ -128,6 +198,50 @@ def test_realtime_fanout_publishes_multiple_envelopes_in_order() -> None:
         channel for channel, _message in client.messages
     )
     assert [json.loads(message) for _channel, message in client.messages] == envelopes
+
+
+def test_realtime_subscriber_decodes_pubsub_envelopes() -> None:
+    """Verify subscriber service decodes Redis Pub/Sub fanout messages."""
+
+    envelope = create_realtime_envelope()
+    run_id = UUID(str(envelope["run_id"]))
+    pubsub = FakeRedisPubSub(
+        messages=[
+            {"type": "subscribe", "channel": "tiko:test", "data": 1},
+            {"type": "message", "channel": "tiko:test", "data": json.dumps(envelope)},
+        ]
+    )
+    service = RealtimeFanoutSubscriberService(
+        client=FakeRedisSubscriber(pubsub),
+        channel_prefix="tiko:test",
+    )
+
+    subscription = service.subscribe(run_id, ["decision.created"])
+
+    assert service.is_configured() is True
+    assert subscription is not None
+    assert subscription.channels == (f"tiko:test:{run_id}:decision.created",)
+    assert pubsub.channels == [f"tiko:test:{run_id}:decision.created"]
+    assert subscription.next_event() is None
+    assert subscription.next_event() == envelope
+    subscription.close()
+    assert pubsub.closed is True
+
+
+def test_realtime_subscriber_returns_none_without_redis_or_topics() -> None:
+    """Verify subscriber service is disabled without Redis or topics."""
+
+    disabled_service = RealtimeFanoutSubscriberService(channel_prefix="tiko:test")
+    pubsub = FakeRedisPubSub()
+    configured_service = RealtimeFanoutSubscriberService(
+        client=FakeRedisSubscriber(pubsub),
+        channel_prefix="tiko:test",
+    )
+
+    assert disabled_service.is_configured() is False
+    assert disabled_service.subscribe(uuid4(), ["decision.created"]) is None
+    assert configured_service.subscribe(uuid4(), []) is None
+    assert pubsub.channels == []
 
 
 def test_settings_loads_redis_url_alias(monkeypatch: pytest.MonkeyPatch) -> None:
