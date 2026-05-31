@@ -4,18 +4,21 @@ import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 from tiko.core.config import Settings
 from tiko.domain.account import SimAccount
 from tiko.domain.market import Candle
 from tiko.domain.observation import Observation
+from tiko.domain.order import SimOrder
 from tiko.domain.reporting import Alert, ReportArtifact
 from tiko.domain.runtime import BackgroundJob
 from tiko.domain.simulation import SimulationRun
 from tiko.runtime.scheduler import RuntimeScheduler, run_scheduler_once
 from tiko.services.experiments import ExperimentService
 from tiko.services.runtime import (
+    MAX_OPEN_ORDER_AGE_SECONDS,
     MAX_RUNNING_JOB_AGE_SECONDS,
     MAX_STUCK_SIMULATION_SECONDS,
     RuntimeService,
@@ -141,6 +144,38 @@ def create_agent_observation() -> Observation:
     )
 
 
+def create_watchdog_order(
+    run: SimulationRun,
+    updated_at_sim_time: datetime,
+    status: Literal["open", "partially_filled", "filled", "expired"] = "open",
+) -> SimOrder:
+    """Create a simulated order payload for watchdog tests.
+
+    Args:
+        run: Simulation run associated with the order.
+        updated_at_sim_time: Simulated time of the last order update.
+        status: Simulated order lifecycle status.
+
+    Returns:
+        Simulated order domain model.
+    """
+
+    return SimOrder(
+        order_id=uuid4(),
+        run_id=run.run_id,
+        account_id=run.account.account_id,
+        decision_id=None,
+        symbol="BTCUSDT",
+        side="buy",
+        order_type="limit",
+        quantity=Decimal("1"),
+        limit_price=Decimal("100"),
+        status=status,
+        submitted_at_sim_time=updated_at_sim_time,
+        updated_at_sim_time=updated_at_sim_time,
+    )
+
+
 def test_scheduler_once_reports_queued_work_without_worker() -> None:
     """Verify one scheduler tick runs watchdog checks."""
 
@@ -189,6 +224,32 @@ def test_simulation_clock_scheduler_advances_due_running_runs() -> None:
     assert len(due_tick) == 1
     assert due_tick[0].run.current_sim_time == run_start + timedelta(hours=1)
     assert disabled_scheduler_tick == ()
+
+
+def test_scheduler_watchdog_includes_open_order_checks() -> None:
+    """Verify scheduler watchdog passes simulated orders into runtime checks."""
+
+    simulation_service = SimulationService(Settings())
+    start_time = datetime(2026, 1, 1, tzinfo=UTC)
+    current_time = start_time + timedelta(seconds=MAX_OPEN_ORDER_AGE_SECONDS + 1)
+    run = simulation_service.create_run(
+        name="scheduler-open-order",
+        symbols=["BTCUSDT"],
+        start_sim_time=start_time,
+    )
+    state = simulation_service._get_state(run.run_id)
+    state.run = run.model_copy(
+        update={"status": "running", "current_sim_time": current_time}
+    )
+    state.orders.append(create_watchdog_order(state.run, start_time))
+    scheduler = RuntimeScheduler(
+        service=RuntimeService(),
+        simulation_service=simulation_service,
+    )
+
+    report = scheduler.tick()
+
+    assert "open_order_stale" in {check.code for check in report.checks}
 
 
 def test_runtime_job_lifecycle_claims_only_eligible_jobs() -> None:
@@ -311,6 +372,41 @@ def test_watchdog_flags_stuck_simulations_and_abnormal_risk_alerts() -> None:
     codes = [check.code for check in report.checks]
     assert codes.count("simulation_stuck") == 1
     assert codes.count("abnormal_risk_state") == 1
+
+
+def test_watchdog_flags_stale_open_orders() -> None:
+    """Verify watchdog reports old non-terminal simulated orders."""
+
+    start_time = datetime(2026, 1, 1, tzinfo=UTC)
+    current_time = start_time + timedelta(seconds=MAX_OPEN_ORDER_AGE_SECONDS + 1)
+    run = create_rl_run().model_copy(
+        update={"status": "running", "current_sim_time": current_time}
+    )
+    unknown_run = create_rl_run()
+    stale_open_order = create_watchdog_order(run, start_time)
+    stale_partial_order = create_watchdog_order(
+        run,
+        start_time,
+        status="partially_filled",
+    )
+    recent_open_order = create_watchdog_order(run, current_time)
+    terminal_order = create_watchdog_order(run, start_time, status="filled")
+    unknown_run_order = create_watchdog_order(unknown_run, start_time)
+
+    report = RuntimeService().run_watchdog(
+        now=current_time,
+        simulation_runs=(run,),
+        orders=(
+            stale_open_order,
+            stale_partial_order,
+            recent_open_order,
+            terminal_order,
+            unknown_run_order,
+        ),
+    )
+
+    codes = [check.code for check in report.checks]
+    assert codes.count("open_order_stale") == 2
 
 
 def test_worker_process_roles_record_healthy_heartbeats() -> None:

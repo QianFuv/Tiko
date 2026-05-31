@@ -154,6 +154,7 @@ def run_runtime_watchdog(
     report = service.run_watchdog(
         simulation_runs=runs,
         alerts=list_watchdog_alerts(simulation_service),
+        orders=simulation_service.list_orders(),
     )
     audit_service.record(
         principal=principal,

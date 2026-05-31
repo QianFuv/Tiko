@@ -1,12 +1,17 @@
 """Tests for runtime job and watchdog control-plane APIs."""
 
 import csv
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 
-from tiko.api.dependencies import reset_simulation_service
+from tiko.api.dependencies import get_simulation_service, reset_simulation_service
 from tiko.api.main import create_app
+from tiko.domain.order import SimOrder
+from tiko.services.runtime import MAX_OPEN_ORDER_AGE_SECONDS
 
 ADMIN_HEADERS = {"X-Tiko-Role": "admin", "X-Tiko-User": "admin@example.test"}
 OPERATOR_HEADERS = {"X-Tiko-Role": "operator", "X-Tiko-User": "operator@example.test"}
@@ -55,6 +60,36 @@ def write_candle_csv(path: Path) -> None:
         writer = csv.DictWriter(file, fieldnames=list(row))
         writer.writeheader()
         writer.writerow(row)
+
+
+def create_stale_open_order(
+    run_id: UUID, account_id: UUID, updated_at: datetime
+) -> SimOrder:
+    """Create a stale open simulated order fixture.
+
+    Args:
+        run_id: Simulation run identifier.
+        account_id: Simulated account identifier.
+        updated_at: Last simulated order update time.
+
+    Returns:
+        Simulated open order.
+    """
+
+    return SimOrder(
+        order_id=uuid4(),
+        run_id=run_id,
+        account_id=account_id,
+        decision_id=None,
+        symbol="BTCUSDT",
+        side="buy",
+        order_type="limit",
+        quantity=Decimal("1"),
+        limit_price=Decimal("100"),
+        status="open",
+        submitted_at_sim_time=updated_at,
+        updated_at_sim_time=updated_at,
+    )
 
 
 def queue_experiment_run(client: TestClient, path: Path) -> str:
@@ -216,5 +251,36 @@ def test_runtime_watchdog_reports_abnormal_risk_alerts() -> None:
     assert alert_response.status_code == 200
     assert watchdog_response.status_code == 200
     assert "abnormal_risk_state" in {
+        check["code"] for check in watchdog_response.json()["checks"]
+    }
+
+
+def test_runtime_watchdog_reports_stale_open_orders() -> None:
+    """Verify runtime watchdog API includes simulated open-order checks."""
+
+    client = create_test_client()
+    simulation_service = get_simulation_service()
+    start_time = datetime(2026, 1, 1, tzinfo=UTC)
+    current_time = start_time + timedelta(seconds=MAX_OPEN_ORDER_AGE_SECONDS + 1)
+    run = simulation_service.create_run(
+        name="watchdog-open-order",
+        symbols=["BTCUSDT"],
+        start_sim_time=start_time,
+    )
+    state = simulation_service._get_state(run.run_id)
+    state.run = run.model_copy(
+        update={"status": "running", "current_sim_time": current_time}
+    )
+    state.orders.append(
+        create_stale_open_order(run.run_id, run.account.account_id, start_time)
+    )
+
+    watchdog_response = client.post(
+        "/api/runtime/watchdog",
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert watchdog_response.status_code == 200
+    assert "open_order_stale" in {
         check["code"] for check in watchdog_response.json()["checks"]
     }

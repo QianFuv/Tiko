@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+from tiko.domain.order import SimOrder
 from tiko.domain.reporting import Alert
 from tiko.domain.runtime import (
     BackgroundJob,
@@ -19,7 +20,9 @@ from tiko.domain.simulation import SimulationRun
 MAX_HEALTHY_QUEUE_DEPTH = 1000
 MAX_HEALTHY_CLOCK_LAG_MS = 60_000
 MAX_RUNNING_JOB_AGE_SECONDS = 3_600
+MAX_OPEN_ORDER_AGE_SECONDS = 3_600
 MAX_STUCK_SIMULATION_SECONDS = 900
+WATCHDOG_OPEN_ORDER_STATUSES = frozenset({"open", "partially_filled"})
 ABNORMAL_RISK_ALERT_CATEGORIES = frozenset(
     {
         "drawdown",
@@ -258,6 +261,7 @@ class RuntimeService:
         now: datetime | None = None,
         simulation_runs: Sequence[SimulationRun] = (),
         alerts: Sequence[Alert] = (),
+        orders: Sequence[SimOrder] = (),
     ) -> WatchdogReport:
         """Run deterministic runtime watchdog checks.
 
@@ -265,6 +269,7 @@ class RuntimeService:
             now: Optional evaluation time for deterministic checks.
             simulation_runs: Optional simulation runs to include in checks.
             alerts: Optional run alerts to include in risk-state checks.
+            orders: Optional simulated orders to include in stuck-open checks.
 
         Returns:
             Watchdog report over current process-local runtime state.
@@ -311,6 +316,7 @@ class RuntimeService:
         checks.extend(self._clock_lag_checks(heartbeats))
         checks.extend(self._running_job_checks(checked_at))
         checks.extend(self._stuck_simulation_checks(checked_at, simulation_runs))
+        checks.extend(self._open_order_checks(simulation_runs, orders))
         checks.extend(self._abnormal_risk_state_checks(alerts))
         if not checks:
             checks.append(
@@ -433,6 +439,49 @@ class RuntimeService:
                     message=(
                         f"Simulation {run.run_id} is running without advancing "
                         f"simulated time for {running_seconds} seconds."
+                    ),
+                )
+            )
+        return checks
+
+    def _open_order_checks(
+        self,
+        simulation_runs: Sequence[SimulationRun],
+        orders: Sequence[SimOrder],
+    ) -> list[WatchdogCheck]:
+        """Build watchdog checks for stale non-terminal simulated orders.
+
+        Args:
+            simulation_runs: Simulation runs used to resolve current simulated time.
+            orders: Simulated orders to inspect.
+
+        Returns:
+            Stale open-order watchdog checks.
+        """
+
+        current_times_by_run_id = {
+            run.run_id: run.current_sim_time for run in simulation_runs
+        }
+        checks: list[WatchdogCheck] = []
+        for order in orders:
+            if order.status not in WATCHDOG_OPEN_ORDER_STATUSES:
+                continue
+            current_sim_time = current_times_by_run_id.get(order.run_id)
+            if current_sim_time is None:
+                continue
+            open_seconds = int(
+                (current_sim_time - order.updated_at_sim_time).total_seconds()
+            )
+            if open_seconds <= MAX_OPEN_ORDER_AGE_SECONDS:
+                continue
+            checks.append(
+                WatchdogCheck(
+                    code="open_order_stale",
+                    severity="warning",
+                    message=(
+                        f"Order {order.order_id} for simulation {order.run_id} "
+                        f"has remained {order.status} for {open_seconds} "
+                        "simulated seconds."
                     ),
                 )
             )

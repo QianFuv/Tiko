@@ -41,6 +41,7 @@ class RuntimeScheduler:
         return self._service.run_watchdog(
             simulation_runs=runs,
             alerts=self._list_simulation_alerts(),
+            orders=self._simulation_service.list_orders(),
         )
 
     def _list_simulation_alerts(self) -> list[Alert]:
