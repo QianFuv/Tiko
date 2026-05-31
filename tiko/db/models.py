@@ -393,6 +393,9 @@ class OrderBookSnapshotRecord(Base):
     spread_bps: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
     depth_1pct_usd: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
     source: Mapped[str] = mapped_column(String(64), nullable=False)
+    sequence_number: Mapped[int | None] = mapped_column(nullable=True)
+    checksum: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    expected_checksum: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class FeatureSnapshotRecord(Base):

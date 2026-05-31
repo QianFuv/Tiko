@@ -3,9 +3,10 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import timedelta
+from decimal import Decimal
 from typing import Literal
 
-from tiko.domain.market import Candle
+from tiko.domain.market import Candle, OrderBookSnapshot
 
 ValidationSeverity = Literal["error", "warning"]
 TIMEFRAME_UNIT_DURATIONS = {
@@ -54,8 +55,46 @@ class MarketDataValidationReport:
         return sum(1 for issue in self.issues if issue.severity == "error")
 
 
+@dataclass(frozen=True)
+class OrderBookValidationIssue:
+    """Describe one order book validation finding."""
+
+    index: int
+    severity: ValidationSeverity
+    code: str
+    message: str
+    symbol: str
+    as_of: str
+
+
+@dataclass(frozen=True)
+class OrderBookValidationReport:
+    """Summarize validation findings for an order book snapshot sequence."""
+
+    total_records: int
+    issues: tuple[OrderBookValidationIssue, ...]
+
+    def has_errors(self) -> bool:
+        """Return whether the report contains at least one error.
+
+        Returns:
+            `True` when any issue severity is `error`.
+        """
+
+        return any(issue.severity == "error" for issue in self.issues)
+
+    def error_count(self) -> int:
+        """Return the number of error findings.
+
+        Returns:
+            Error count.
+        """
+
+        return sum(1 for issue in self.issues if issue.severity == "error")
+
+
 class MarketDataValidator:
-    """Validate normalized candle records for point-in-time safety."""
+    """Validate normalized market data records for point-in-time safety."""
 
     def validate_candles(self, candles: Sequence[Candle]) -> MarketDataValidationReport:
         """Validate a candle sequence.
@@ -96,6 +135,49 @@ class MarketDataValidator:
             previous_by_stream[stream_key] = candle
         return MarketDataValidationReport(
             total_records=len(candles), issues=tuple(issues)
+        )
+
+    def validate_orderbooks(
+        self, snapshots: Sequence[OrderBookSnapshot]
+    ) -> OrderBookValidationReport:
+        """Validate an order book snapshot sequence.
+
+        Args:
+            snapshots: Normalized order book snapshots.
+
+        Returns:
+            Validation report with errors and warnings.
+        """
+
+        issues: list[OrderBookValidationIssue] = []
+        previous_sequence_by_stream: dict[tuple[str, str], int] = {}
+        for index, snapshot in enumerate(snapshots):
+            issues.extend(self._validate_orderbook_levels(index, snapshot))
+            issues.extend(self._validate_orderbook_checksum(index, snapshot))
+            sequence_number = snapshot.sequence_number
+            if sequence_number is None:
+                continue
+            stream_key = (snapshot.symbol, snapshot.source)
+            previous_sequence = previous_sequence_by_stream.get(stream_key)
+            if (
+                previous_sequence is not None
+                and sequence_number != previous_sequence + 1
+            ):
+                issues.append(
+                    self._create_orderbook_issue(
+                        index=index,
+                        snapshot=snapshot,
+                        severity="warning",
+                        code="orderbook_sequence_gap",
+                        message=(
+                            "Order book sequence number is not contiguous within "
+                            "the symbol and source stream."
+                        ),
+                    )
+                )
+            previous_sequence_by_stream[stream_key] = sequence_number
+        return OrderBookValidationReport(
+            total_records=len(snapshots), issues=tuple(issues)
         )
 
     def _validate_candle(
@@ -293,4 +375,153 @@ class MarketDataValidator:
             message=message,
             symbol=candle.symbol,
             open_time=candle.open_time.isoformat(),
+        )
+
+    def _validate_orderbook_levels(
+        self, index: int, snapshot: OrderBookSnapshot
+    ) -> list[OrderBookValidationIssue]:
+        """Validate book sides, level values, and crossed-book state.
+
+        Args:
+            index: Snapshot index in the input sequence.
+            snapshot: Order book snapshot to validate.
+
+        Returns:
+            Validation issues for level structure.
+        """
+
+        issues: list[OrderBookValidationIssue] = []
+        if not snapshot.bids:
+            issues.append(
+                self._create_orderbook_issue(
+                    index=index,
+                    snapshot=snapshot,
+                    severity="warning",
+                    code="missing_orderbook_side",
+                    message="Order book snapshot has no bid levels.",
+                )
+            )
+        if not snapshot.asks:
+            issues.append(
+                self._create_orderbook_issue(
+                    index=index,
+                    snapshot=snapshot,
+                    severity="warning",
+                    code="missing_orderbook_side",
+                    message="Order book snapshot has no ask levels.",
+                )
+            )
+        issues.extend(self._validate_orderbook_side(index, snapshot, "bid"))
+        issues.extend(self._validate_orderbook_side(index, snapshot, "ask"))
+        valid_bids = [
+            price
+            for price, quantity in snapshot.bids
+            if price > Decimal("0") and quantity > Decimal("0")
+        ]
+        valid_asks = [
+            price
+            for price, quantity in snapshot.asks
+            if price > Decimal("0") and quantity > Decimal("0")
+        ]
+        if valid_bids and valid_asks and max(valid_bids) >= min(valid_asks):
+            issues.append(
+                self._create_orderbook_issue(
+                    index=index,
+                    snapshot=snapshot,
+                    severity="error",
+                    code="crossed_orderbook",
+                    message="Order book best bid must be below best ask.",
+                )
+            )
+        return issues
+
+    def _validate_orderbook_side(
+        self, index: int, snapshot: OrderBookSnapshot, side: Literal["bid", "ask"]
+    ) -> list[OrderBookValidationIssue]:
+        """Validate prices and quantities for one order book side.
+
+        Args:
+            index: Snapshot index in the input sequence.
+            snapshot: Order book snapshot to validate.
+            side: Order book side to validate.
+
+        Returns:
+            Validation issues for non-positive prices or quantities.
+        """
+
+        levels = snapshot.bids if side == "bid" else snapshot.asks
+        issues: list[OrderBookValidationIssue] = []
+        for price, quantity in levels:
+            if price <= Decimal("0") or quantity <= Decimal("0"):
+                issues.append(
+                    self._create_orderbook_issue(
+                        index=index,
+                        snapshot=snapshot,
+                        severity="error",
+                        code="invalid_orderbook_level",
+                        message=(
+                            f"Order book {side} levels must have positive price "
+                            "and quantity."
+                        ),
+                    )
+                )
+        return issues
+
+    def _validate_orderbook_checksum(
+        self, index: int, snapshot: OrderBookSnapshot
+    ) -> list[OrderBookValidationIssue]:
+        """Validate supported order book checksum metadata.
+
+        Args:
+            index: Snapshot index in the input sequence.
+            snapshot: Order book snapshot to validate.
+
+        Returns:
+            Validation issue when both checksums exist and differ.
+        """
+
+        if (
+            snapshot.checksum is None
+            or snapshot.expected_checksum is None
+            or snapshot.checksum == snapshot.expected_checksum
+        ):
+            return []
+        return [
+            self._create_orderbook_issue(
+                index=index,
+                snapshot=snapshot,
+                severity="error",
+                code="orderbook_checksum_mismatch",
+                message="Order book checksum does not match the expected checksum.",
+            )
+        ]
+
+    def _create_orderbook_issue(
+        self,
+        index: int,
+        snapshot: OrderBookSnapshot,
+        severity: ValidationSeverity,
+        code: str,
+        message: str,
+    ) -> OrderBookValidationIssue:
+        """Create a validation issue for an order book snapshot.
+
+        Args:
+            index: Snapshot index in the input sequence.
+            snapshot: Snapshot associated with the issue.
+            severity: Issue severity.
+            code: Stable validation code.
+            message: Human-readable validation message.
+
+        Returns:
+            Validation issue.
+        """
+
+        return OrderBookValidationIssue(
+            index=index,
+            severity=severity,
+            code=code,
+            message=message,
+            symbol=snapshot.symbol,
+            as_of=snapshot.as_of.isoformat(),
         )

@@ -2,6 +2,7 @@
 
 import csv
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -25,7 +26,7 @@ from tiko.domain.dataset import (
 )
 from tiko.domain.decision import DecisionReview
 from tiko.domain.experiment import ExperimentRecord
-from tiko.domain.market import Asset, Candle, MarketEvent
+from tiko.domain.market import Asset, Candle, MarketEvent, OrderBookSnapshot
 from tiko.domain.memory import MemoryEntry
 from tiko.domain.model import ModelRegistryEntry
 from tiko.domain.plugin import PluginManifest, PluginPermissions, PluginRegistryEntry
@@ -732,6 +733,32 @@ def test_repository_persists_successful_step_artifacts(
         result.portfolio_snapshot
     ]
     assert repository.list_metric_snapshots(run.run_id) == [result.metric_snapshot]
+
+
+def test_repository_persists_orderbook_feed_integrity_metadata(
+    repository: SimulationRepository,
+) -> None:
+    """Verify order book feed metadata round-trips through persistence."""
+
+    service = SimulationService(Settings())
+    run = service.create_run(
+        name="orderbook-metadata",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    result = service.step_run(run.run_id, confidence=0.7)
+    snapshot = OrderBookSnapshot.model_validate(
+        result.orderbook_snapshot.model_dump()
+        | {
+            "sequence_number": 17,
+            "checksum": "feed-checksum",
+            "expected_checksum": "feed-checksum",
+        }
+    )
+
+    repository.save_step_result(replace(result, orderbook_snapshot=snapshot))
+
+    assert repository.list_orderbook_snapshots(run.run_id) == [snapshot]
 
 
 def test_repository_persists_funding_ledger_entries(

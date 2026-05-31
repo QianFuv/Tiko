@@ -55,6 +55,9 @@ class OrderBookSnapshot(DomainModel):
     spread_bps: Decimal = Field(ge=Decimal("0"))
     depth_1pct_usd: Decimal = Field(ge=Decimal("0"))
     source: str = Field(min_length=1)
+    sequence_number: int | None = Field(default=None, ge=0)
+    checksum: str | None = Field(default=None, min_length=1)
+    expected_checksum: str | None = Field(default=None, min_length=1)
 
 
 class FeatureSnapshot(DomainModel):

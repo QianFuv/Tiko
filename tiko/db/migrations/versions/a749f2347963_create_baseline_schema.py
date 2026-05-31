@@ -375,6 +375,9 @@ def upgrade() -> None:
         sa.Column("spread_bps", tiko.db.models.ExactDecimal(), nullable=False),
         sa.Column("depth_1pct_usd", tiko.db.models.ExactDecimal(), nullable=False),
         sa.Column("source", sa.String(length=64), nullable=False),
+        sa.Column("sequence_number", sa.Integer(), nullable=True),
+        sa.Column("checksum", sa.String(length=255), nullable=True),
+        sa.Column("expected_checksum", sa.String(length=255), nullable=True),
         sa.ForeignKeyConstraint(
             ["run_id"],
             ["simulation_runs.run_id"],

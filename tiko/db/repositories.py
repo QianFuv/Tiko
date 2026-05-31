@@ -1505,6 +1505,9 @@ class SimulationRepository:
                 spread_bps=snapshot.spread_bps,
                 depth_1pct_usd=snapshot.depth_1pct_usd,
                 source=snapshot.source,
+                sequence_number=snapshot.sequence_number,
+                checksum=snapshot.checksum,
+                expected_checksum=snapshot.expected_checksum,
             )
         )
 
@@ -2312,6 +2315,9 @@ class SimulationRepository:
             spread_bps=record.spread_bps,
             depth_1pct_usd=record.depth_1pct_usd,
             source=record.source,
+            sequence_number=record.sequence_number,
+            checksum=record.checksum,
+            expected_checksum=record.expected_checksum,
         )
 
     def _to_feature_snapshot(self, record: FeatureSnapshotRecord) -> FeatureSnapshot:

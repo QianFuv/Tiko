@@ -18,7 +18,7 @@ from tiko.data import (
     normalize_candle_record,
     normalize_ccxt_ohlcv_row,
 )
-from tiko.domain.market import Candle
+from tiko.domain.market import Candle, OrderBookSnapshot
 
 
 def sample_candle_row() -> dict[str, str]:
@@ -80,6 +80,43 @@ def validation_candle(
         source="validator-test",
         as_of=close_time,
         created_at=close_time,
+    )
+
+
+def validation_orderbook(
+    as_of_offset: timedelta = timedelta(),
+    sequence_number: int | None = None,
+    checksum: str | None = None,
+    expected_checksum: str | None = None,
+    bids: list[tuple[Decimal, Decimal]] | None = None,
+    asks: list[tuple[Decimal, Decimal]] | None = None,
+) -> OrderBookSnapshot:
+    """Create an order book snapshot for validator tests.
+
+    Args:
+        as_of_offset: Offset from the validation base time for as_of.
+        sequence_number: Optional feed sequence number.
+        checksum: Optional received checksum.
+        expected_checksum: Optional expected checksum.
+        bids: Optional bid levels.
+        asks: Optional ask levels.
+
+    Returns:
+        Order book snapshot domain model.
+    """
+
+    return OrderBookSnapshot(
+        symbol="BTCUSDT",
+        as_of=datetime(2026, 1, 1, tzinfo=UTC) + as_of_offset,
+        bids=bids if bids is not None else [(Decimal("99"), Decimal("1"))],
+        asks=asks if asks is not None else [(Decimal("101"), Decimal("1"))],
+        mid_price=Decimal("100"),
+        spread_bps=Decimal("20"),
+        depth_1pct_usd=Decimal("10000"),
+        source="cryptofeed:test",
+        sequence_number=sequence_number,
+        checksum=checksum,
+        expected_checksum=expected_checksum,
     )
 
 
@@ -256,6 +293,64 @@ def test_validator_reports_timeframe_duration_issues() -> None:
     }
     assert {issue.code for issue in report.issues if issue.severity == "warning"} == {
         "unknown_timeframe"
+    }
+
+
+def test_validator_reports_orderbook_sequence_and_checksum_issues() -> None:
+    """Verify order book validator reports feed sequence and checksum issues."""
+
+    report = MarketDataValidator().validate_orderbooks(
+        [
+            validation_orderbook(
+                sequence_number=1,
+                checksum="expected",
+                expected_checksum="expected",
+            ),
+            validation_orderbook(
+                as_of_offset=timedelta(seconds=1),
+                sequence_number=3,
+                checksum="actual",
+                expected_checksum="expected",
+            ),
+        ]
+    )
+
+    assert report.has_errors()
+    assert report.error_count() == 1
+    assert {issue.code for issue in report.issues} == {
+        "orderbook_checksum_mismatch",
+        "orderbook_sequence_gap",
+    }
+    assert {issue.code for issue in report.issues if issue.severity == "warning"} == {
+        "orderbook_sequence_gap"
+    }
+
+
+def test_validator_reports_orderbook_structural_issues() -> None:
+    """Verify order book validator reports crossed books and invalid levels."""
+
+    report = MarketDataValidator().validate_orderbooks(
+        [
+            validation_orderbook(
+                bids=[(Decimal("101"), Decimal("1"))],
+                asks=[(Decimal("100"), Decimal("1"))],
+            ),
+            validation_orderbook(
+                as_of_offset=timedelta(seconds=1),
+                bids=[(Decimal("0"), Decimal("1"))],
+                asks=[],
+            ),
+        ]
+    )
+
+    assert report.error_count() == 2
+    assert {issue.code for issue in report.issues} == {
+        "crossed_orderbook",
+        "invalid_orderbook_level",
+        "missing_orderbook_side",
+    }
+    assert {issue.code for issue in report.issues if issue.severity == "warning"} == {
+        "missing_orderbook_side"
     }
 
 

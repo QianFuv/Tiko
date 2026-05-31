@@ -26,6 +26,8 @@ from tiko.data.validation import (
     MarketDataValidationIssue,
     MarketDataValidationReport,
     MarketDataValidator,
+    OrderBookValidationIssue,
+    OrderBookValidationReport,
 )
 
 __all__ = [
@@ -43,6 +45,8 @@ __all__ = [
     "MarketDataValidationIssue",
     "MarketDataValidationReport",
     "MarketDataValidator",
+    "OrderBookValidationIssue",
+    "OrderBookValidationReport",
     "ParquetCandleImporter",
     "ReadOnlyMarketDataConnector",
     "normalize_candle_record",

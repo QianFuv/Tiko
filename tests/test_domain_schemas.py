@@ -19,6 +19,7 @@ from tiko.domain import (
     DecisionTrace,
     ExperimentRecord,
     Fill,
+    OrderBookSnapshot,
     OrderRequest,
     PortfolioOrderPlan,
     Principal,
@@ -118,6 +119,58 @@ def test_candle_accepts_ingestion_metadata() -> None:
 
     assert candle.fetched_at == fetched_at
     assert candle.ingestion_run_id == ingestion_run_id
+
+
+def test_orderbook_accepts_optional_feed_integrity_metadata() -> None:
+    """Verify order book snapshots can carry optional feed metadata."""
+
+    snapshot = OrderBookSnapshot(
+        symbol="BTCUSDT",
+        as_of=current_time(),
+        bids=[(Decimal("99"), Decimal("1"))],
+        asks=[(Decimal("101"), Decimal("1"))],
+        mid_price=Decimal("100"),
+        spread_bps=Decimal("20"),
+        depth_1pct_usd=Decimal("10000"),
+        source="cryptofeed:test",
+        sequence_number=7,
+        checksum="book-checksum",
+        expected_checksum="book-checksum",
+    )
+    snapshot_without_metadata = OrderBookSnapshot(
+        symbol="BTCUSDT",
+        as_of=current_time(),
+        bids=[(Decimal("99"), Decimal("1"))],
+        asks=[(Decimal("101"), Decimal("1"))],
+        mid_price=Decimal("100"),
+        spread_bps=Decimal("20"),
+        depth_1pct_usd=Decimal("10000"),
+        source="synthetic",
+    )
+
+    assert snapshot.sequence_number == 7
+    assert snapshot.checksum == "book-checksum"
+    assert snapshot.expected_checksum == "book-checksum"
+    assert snapshot_without_metadata.sequence_number is None
+    assert snapshot_without_metadata.checksum is None
+    assert snapshot_without_metadata.expected_checksum is None
+
+
+def test_orderbook_rejects_negative_sequence_number() -> None:
+    """Verify order book sequence numbers cannot be negative."""
+
+    with pytest.raises(ValidationError):
+        OrderBookSnapshot(
+            symbol="BTCUSDT",
+            as_of=current_time(),
+            bids=[(Decimal("99"), Decimal("1"))],
+            asks=[(Decimal("101"), Decimal("1"))],
+            mid_price=Decimal("100"),
+            spread_bps=Decimal("20"),
+            depth_1pct_usd=Decimal("10000"),
+            source="cryptofeed:test",
+            sequence_number=-1,
+        )
 
 
 def test_trade_intent_rejects_unknown_action() -> None:
