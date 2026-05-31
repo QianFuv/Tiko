@@ -19,16 +19,27 @@ from tiko.db.models import (
     DecisionReviewRecord,
     ExperimentRegistryRecord,
     FillRecord,
+    LedgerEntryRecord,
     MarketEventRecord,
     MemoryEntryRecord,
+    MetricSnapshotRecord,
     ModelRegistryRecord,
     OrderRecord,
     PluginRegistryRecord,
+    PortfolioSnapshotRecord,
+    PositionRecord,
     ReportRecord,
     RiskReviewRecord,
     SimulationRunRecord,
 )
-from tiko.domain.account import SimAccount
+from tiko.domain.account import (
+    LedgerEntry,
+    LedgerEntryType,
+    MetricSnapshot,
+    PortfolioSnapshot,
+    Position,
+    SimAccount,
+)
 from tiko.domain.dataset import (
     DatasetQualityIssue,
     DatasetQualityReport,
@@ -66,6 +77,7 @@ SimulationMode = Literal[
     "historical_replay", "live_simulated_clock", "synthetic_market"
 ]
 AccountStatus = Literal["active", "paused", "liquidated", "stopped"]
+PositionSide = Literal["long", "short", "flat"]
 MarketEventType = Literal[
     "candle_closed",
     "tick",
@@ -145,6 +157,11 @@ class SimulationRepository:
                 self._merge_order(session, result.order)
             if result.fill is not None:
                 self._merge_fill(session, result.fill)
+            self._replace_positions(session, result.run.run_id, result.positions)
+            if result.ledger_entry is not None:
+                self._merge_ledger_entry(session, result.ledger_entry)
+            self._merge_portfolio_snapshot(session, result.portfolio_snapshot)
+            self._merge_metric_snapshot(session, result.metric_snapshot)
             session.commit()
 
     def get_run(self, run_id: UUID) -> SimulationRun | None:
@@ -437,6 +454,78 @@ class SimulationRepository:
             records = session.scalars(statement).all()
             return [self._to_fill(record) for record in records]
 
+    def list_positions(self, run_id: UUID) -> list[Position]:
+        """List persisted current positions for a simulation run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Persisted current positions.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(PositionRecord)
+                .where(PositionRecord.run_id == str(run_id))
+                .order_by(PositionRecord.symbol)
+            ).all()
+            return [self._to_position(record) for record in records]
+
+    def list_ledger_entries(self, run_id: UUID) -> list[LedgerEntry]:
+        """List persisted ledger entries for a simulation run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Ledger entries ordered by simulated time.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(LedgerEntryRecord)
+                .where(LedgerEntryRecord.run_id == str(run_id))
+                .order_by(LedgerEntryRecord.created_at_sim_time)
+            ).all()
+            return [self._to_ledger_entry(record) for record in records]
+
+    def list_portfolio_snapshots(self, run_id: UUID) -> list[PortfolioSnapshot]:
+        """List persisted portfolio snapshots for a simulation run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Portfolio snapshots ordered by simulated time.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(PortfolioSnapshotRecord)
+                .where(PortfolioSnapshotRecord.run_id == str(run_id))
+                .order_by(PortfolioSnapshotRecord.simulated_time)
+            ).all()
+            return [self._to_portfolio_snapshot(record) for record in records]
+
+    def list_metric_snapshots(self, run_id: UUID) -> list[MetricSnapshot]:
+        """List persisted metric snapshots for a simulation run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Metric snapshots ordered by simulated time.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(MetricSnapshotRecord)
+                .where(MetricSnapshotRecord.run_id == str(run_id))
+                .order_by(MetricSnapshotRecord.simulated_time)
+            ).all()
+            return [self._to_metric_snapshot(record) for record in records]
+
     def get_latest_risk_review(self, run_id: UUID) -> RiskReview | None:
         """Load the latest persisted risk review for a simulation run.
 
@@ -716,6 +805,40 @@ class SimulationRepository:
                 max_drawdown=account.max_drawdown,
                 status=account.status,
             )
+        )
+
+    def _replace_positions(
+        self, session: Session, run_id: UUID, positions: tuple[Position, ...]
+    ) -> None:
+        """Replace current positions for a simulation run.
+
+        Args:
+            session: Active SQLAlchemy session.
+            run_id: Simulation run identifier.
+            positions: Current net simulated positions.
+        """
+
+        session.execute(
+            delete(PositionRecord).where(PositionRecord.run_id == str(run_id))
+        )
+        session.add_all(
+            PositionRecord(
+                position_id=str(position.position_id),
+                run_id=str(run_id),
+                account_id=str(position.account_id),
+                symbol=position.symbol,
+                side=position.side,
+                quantity=position.quantity,
+                avg_entry_price=position.avg_entry_price,
+                mark_price=position.mark_price,
+                notional=position.notional,
+                leverage=position.leverage,
+                unrealized_pnl=position.unrealized_pnl,
+                realized_pnl=position.realized_pnl,
+                liquidation_price=position.liquidation_price,
+                updated_at_sim_time=position.updated_at_sim_time,
+            )
+            for position in positions
         )
 
     def _merge_dataset(self, session: Session, dataset: DatasetRecord) -> None:
@@ -1115,6 +1238,80 @@ class SimulationRepository:
             )
         )
 
+    def _merge_ledger_entry(self, session: Session, entry: LedgerEntry) -> None:
+        """Merge a simulated ledger entry into the active session.
+
+        Args:
+            session: Active SQLAlchemy session.
+            entry: Ledger entry to merge.
+        """
+
+        session.merge(
+            LedgerEntryRecord(
+                ledger_entry_id=str(entry.ledger_entry_id),
+                run_id=str(entry.run_id),
+                account_id=str(entry.account_id),
+                fill_id=str(entry.fill_id) if entry.fill_id else None,
+                entry_type=entry.entry_type,
+                symbol=entry.symbol,
+                quantity=entry.quantity,
+                price=entry.price,
+                notional=entry.notional,
+                cash_delta=entry.cash_delta,
+                fee=entry.fee,
+                realized_pnl_delta=entry.realized_pnl_delta,
+                created_at_sim_time=entry.created_at_sim_time,
+                created_at=entry.created_at,
+            )
+        )
+
+    def _merge_portfolio_snapshot(
+        self, session: Session, snapshot: PortfolioSnapshot
+    ) -> None:
+        """Merge a portfolio snapshot into the active session.
+
+        Args:
+            session: Active SQLAlchemy session.
+            snapshot: Portfolio snapshot to merge.
+        """
+
+        session.merge(
+            PortfolioSnapshotRecord(
+                snapshot_id=str(snapshot.snapshot_id),
+                run_id=str(snapshot.run_id),
+                account_id=str(snapshot.account_id),
+                simulated_time=snapshot.simulated_time,
+                cash_balance=snapshot.cash_balance,
+                total_equity=snapshot.total_equity,
+                realized_pnl=snapshot.realized_pnl,
+                unrealized_pnl=snapshot.unrealized_pnl,
+                max_drawdown=snapshot.max_drawdown,
+                gross_exposure=snapshot.gross_exposure,
+                net_exposure=snapshot.net_exposure,
+                created_at=snapshot.created_at,
+            )
+        )
+
+    def _merge_metric_snapshot(
+        self, session: Session, snapshot: MetricSnapshot
+    ) -> None:
+        """Merge a metric snapshot into the active session.
+
+        Args:
+            session: Active SQLAlchemy session.
+            snapshot: Metric snapshot to merge.
+        """
+
+        session.merge(
+            MetricSnapshotRecord(
+                snapshot_id=str(snapshot.snapshot_id),
+                run_id=str(snapshot.run_id),
+                simulated_time=snapshot.simulated_time,
+                metrics=snapshot.metrics,
+                created_at=snapshot.created_at,
+            )
+        )
+
     def _require_account(self, session: Session, account_id: str) -> AccountRecord:
         """Load an account or fail when persisted run state is inconsistent.
 
@@ -1204,6 +1401,32 @@ class SimulationRepository:
             unrealized_pnl=record.unrealized_pnl,
             max_drawdown=record.max_drawdown,
             status=cast(AccountStatus, record.status),
+        )
+
+    def _to_position(self, record: PositionRecord) -> Position:
+        """Convert a position row to a domain model.
+
+        Args:
+            record: Persisted position row.
+
+        Returns:
+            Position domain model.
+        """
+
+        return Position(
+            position_id=UUID(record.position_id),
+            account_id=UUID(record.account_id),
+            symbol=record.symbol,
+            side=cast(PositionSide, record.side),
+            quantity=record.quantity,
+            avg_entry_price=record.avg_entry_price,
+            mark_price=record.mark_price,
+            notional=record.notional,
+            leverage=record.leverage,
+            unrealized_pnl=record.unrealized_pnl,
+            realized_pnl=record.realized_pnl,
+            liquidation_price=record.liquidation_price,
+            updated_at_sim_time=self._aware_datetime(record.updated_at_sim_time),
         )
 
     def _to_dataset(self, record: DatasetMetadataRecord) -> DatasetRecord:
@@ -1581,6 +1804,78 @@ class SimulationRepository:
             fee=record.fee,
             slippage_bps=record.slippage_bps,
             filled_at_sim_time=self._aware_datetime(record.filled_at_sim_time),
+        )
+
+    def _to_ledger_entry(self, record: LedgerEntryRecord) -> LedgerEntry:
+        """Convert a ledger entry row to a domain model.
+
+        Args:
+            record: Persisted ledger entry row.
+
+        Returns:
+            Ledger entry domain model.
+        """
+
+        return LedgerEntry(
+            ledger_entry_id=UUID(record.ledger_entry_id),
+            run_id=UUID(record.run_id),
+            account_id=UUID(record.account_id),
+            fill_id=UUID(record.fill_id) if record.fill_id else None,
+            entry_type=cast(LedgerEntryType, record.entry_type),
+            symbol=record.symbol,
+            quantity=record.quantity,
+            price=record.price,
+            notional=record.notional,
+            cash_delta=record.cash_delta,
+            fee=record.fee,
+            realized_pnl_delta=record.realized_pnl_delta,
+            created_at_sim_time=self._aware_datetime(record.created_at_sim_time),
+            created_at=self._aware_datetime(record.created_at),
+        )
+
+    def _to_portfolio_snapshot(
+        self, record: PortfolioSnapshotRecord
+    ) -> PortfolioSnapshot:
+        """Convert a portfolio snapshot row to a domain model.
+
+        Args:
+            record: Persisted portfolio snapshot row.
+
+        Returns:
+            Portfolio snapshot domain model.
+        """
+
+        return PortfolioSnapshot(
+            snapshot_id=UUID(record.snapshot_id),
+            run_id=UUID(record.run_id),
+            account_id=UUID(record.account_id),
+            simulated_time=self._aware_datetime(record.simulated_time),
+            cash_balance=record.cash_balance,
+            total_equity=record.total_equity,
+            realized_pnl=record.realized_pnl,
+            unrealized_pnl=record.unrealized_pnl,
+            max_drawdown=record.max_drawdown,
+            gross_exposure=record.gross_exposure,
+            net_exposure=record.net_exposure,
+            created_at=self._aware_datetime(record.created_at),
+        )
+
+    def _to_metric_snapshot(self, record: MetricSnapshotRecord) -> MetricSnapshot:
+        """Convert a metric snapshot row to a domain model.
+
+        Args:
+            record: Persisted metric snapshot row.
+
+        Returns:
+            Metric snapshot domain model.
+        """
+
+        return MetricSnapshot(
+            snapshot_id=UUID(record.snapshot_id),
+            run_id=UUID(record.run_id),
+            simulated_time=self._aware_datetime(record.simulated_time),
+            metrics=dict(record.metrics),
+            created_at=self._aware_datetime(record.created_at),
         )
 
     def _optional_aware_datetime(self, value: datetime | None) -> datetime | None:

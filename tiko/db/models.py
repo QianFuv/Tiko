@@ -110,6 +110,29 @@ class AccountRecord(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
 
 
+class PositionRecord(Base):
+    """Persist the current simulated position for an account and symbol."""
+
+    __tablename__ = "positions"
+
+    position_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("simulation_runs.run_id"))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.account_id"))
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    side: Mapped[str] = mapped_column(String(16), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    avg_entry_price: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    mark_price: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    notional: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    leverage: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    unrealized_pnl: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    realized_pnl: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    liquidation_price: Mapped[Decimal | None] = mapped_column(ExactDecimal())
+    updated_at_sim_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class SimulationRunRecord(Base):
     """Persist the lifecycle and current clock state of a simulation run."""
 
@@ -468,5 +491,69 @@ class FillRecord(Base):
     fee: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
     slippage_bps: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
     filled_at_sim_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class LedgerEntryRecord(Base):
+    """Persist a simulated ledger entry produced by internal fills."""
+
+    __tablename__ = "ledger_entries"
+
+    ledger_entry_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("simulation_runs.run_id"))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.account_id"))
+    fill_id: Mapped[str | None] = mapped_column(ForeignKey("fills.fill_id"))
+    entry_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    symbol: Mapped[str | None] = mapped_column(String(32))
+    quantity: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    price: Mapped[Decimal | None] = mapped_column(ExactDecimal())
+    notional: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    cash_delta: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    fee: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    realized_pnl_delta: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    created_at_sim_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class PortfolioSnapshotRecord(Base):
+    """Persist point-in-time simulated portfolio state."""
+
+    __tablename__ = "portfolio_snapshots"
+
+    snapshot_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("simulation_runs.run_id"))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.account_id"))
+    simulated_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    cash_balance: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    total_equity: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    realized_pnl: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    unrealized_pnl: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    max_drawdown: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    gross_exposure: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    net_exposure: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class MetricSnapshotRecord(Base):
+    """Persist point-in-time simulated metrics."""
+
+    __tablename__ = "metric_snapshots"
+
+    snapshot_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("simulation_runs.run_id"))
+    simulated_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    metrics: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

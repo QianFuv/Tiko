@@ -1,6 +1,13 @@
 """Domain schemas for the Tiko simulation architecture."""
 
-from tiko.domain.account import Position, SimAccount
+from tiko.domain.account import (
+    LedgerEntry,
+    LedgerEntryType,
+    MetricSnapshot,
+    PortfolioSnapshot,
+    Position,
+    SimAccount,
+)
 from tiko.domain.agent import (
     AgentMessage,
     AgentMessageRole,
@@ -83,9 +90,12 @@ __all__ = [
     "FileSystemAccess",
     "JobStatus",
     "JobType",
+    "LedgerEntry",
+    "LedgerEntryType",
     "MarketEvent",
     "MemoryEntry",
     "MemoryType",
+    "MetricSnapshot",
     "ModelRegistryEntry",
     "ModelStatus",
     "ModelType",
@@ -98,6 +108,7 @@ __all__ = [
     "PluginRegistryEntry",
     "PluginStatus",
     "PluginType",
+    "PortfolioSnapshot",
     "Position",
     "Principal",
     "RiskLimits",

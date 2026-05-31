@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 
+from tiko.domain.account import LedgerEntry, MetricSnapshot, PortfolioSnapshot, Position
 from tiko.domain.decision import DecisionReview, TradeIntent
 from tiko.domain.market import Candle, MarketEvent
 from tiko.domain.memory import MemoryEntry
@@ -30,6 +31,10 @@ class SimulationState:
     risk_reviews: list[RiskReview] = field(default_factory=list)
     orders: list[SimOrder] = field(default_factory=list)
     fills: list[Fill] = field(default_factory=list)
+    positions: list[Position] = field(default_factory=list)
+    ledger_entries: list[LedgerEntry] = field(default_factory=list)
+    portfolio_snapshots: list[PortfolioSnapshot] = field(default_factory=list)
+    metric_snapshots: list[MetricSnapshot] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -43,3 +48,7 @@ class SimulationStepResult:
     risk_review: RiskReview
     order: SimOrder | None
     fill: Fill | None
+    positions: tuple[Position, ...]
+    ledger_entry: LedgerEntry | None
+    portfolio_snapshot: PortfolioSnapshot
+    metric_snapshot: MetricSnapshot

@@ -71,9 +71,17 @@ def test_simulation_step_creates_internal_order_and_fill() -> None:
     assert result.risk_review.status == "approved"
     assert result.order is not None
     assert result.fill is not None
+    assert result.ledger_entry is not None
+    assert len(result.positions) == 1
+    assert result.portfolio_snapshot.gross_exposure > Decimal("0")
+    assert result.metric_snapshot.metrics["fill_count"] == 1
     assert result.run.account.realized_pnl < Decimal("0")
     assert len(service.list_orders()) == 1
     assert len(service.list_fills()) == 1
+    assert service.list_positions(run.run_id) == list(result.positions)
+    assert service.list_ledger_entries(run.run_id) == [result.ledger_entry]
+    assert service.list_portfolio_snapshots(run.run_id) == [result.portfolio_snapshot]
+    assert service.list_metric_snapshots(run.run_id) == [result.metric_snapshot]
 
 
 def test_simulation_step_is_deterministic_for_observable_market_values() -> None:
@@ -112,8 +120,13 @@ def test_low_confidence_intent_is_rejected_without_order() -> None:
     assert result.risk_review.status == "rejected"
     assert result.order is None
     assert result.fill is None
+    assert result.ledger_entry is None
+    assert result.positions == ()
+    assert result.metric_snapshot.metrics["fill_count"] == 0
     assert service.list_orders() == []
     assert service.list_fills() == []
+    assert service.list_ledger_entries(run.run_id) == []
+    assert service.list_portfolio_snapshots(run.run_id) == [result.portfolio_snapshot]
 
 
 def test_repository_backed_service_persists_created_run_and_step() -> None:
@@ -133,11 +146,18 @@ def test_repository_backed_service_persists_created_run_and_step() -> None:
 
     assert result.order is not None
     assert result.fill is not None
+    assert result.ledger_entry is not None
     assert repository.get_run(run.run_id) == result.run
     assert repository.list_decisions(run.run_id) == [result.decision]
     assert repository.get_latest_risk_review(run.run_id) == result.risk_review
     assert repository.list_orders(run.run_id) == [result.order]
     assert repository.list_fills(run.run_id) == [result.fill]
+    assert repository.list_positions(run.run_id) == list(result.positions)
+    assert repository.list_ledger_entries(run.run_id) == [result.ledger_entry]
+    assert repository.list_portfolio_snapshots(run.run_id) == [
+        result.portfolio_snapshot
+    ]
+    assert repository.list_metric_snapshots(run.run_id) == [result.metric_snapshot]
 
 
 def test_service_creates_decision_reviews_and_memory_entries() -> None:

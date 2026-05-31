@@ -81,6 +81,7 @@ def get_portfolio_summary(
         raise HTTPException(
             status_code=404, detail="Simulation run not found."
         ) from error
+    positions = service.list_positions(run_id)
     return PortfolioSummaryResponse(
         run_id=run_id,
         base_currency=run.account.base_currency,
@@ -89,7 +90,7 @@ def get_portfolio_summary(
         realized_pnl=run.account.realized_pnl,
         unrealized_pnl=run.account.unrealized_pnl,
         max_drawdown=run.account.max_drawdown,
-        gross_exposure=Decimal("0"),
+        gross_exposure=sum((position.notional for position in positions), Decimal("0")),
     )
 
 
@@ -138,21 +139,22 @@ def list_portfolio_snapshots(
     """
 
     try:
-        run = service.get_run(run_id)
+        snapshots = service.list_portfolio_snapshots(run_id)
     except KeyError as error:
         raise HTTPException(
             status_code=404, detail="Simulation run not found."
         ) from error
     return [
         PortfolioSnapshotResponse(
-            run_id=run_id,
-            simulated_time=run.current_sim_time,
-            cash_balance=run.account.cash_balance,
-            total_equity=run.account.total_equity,
-            realized_pnl=run.account.realized_pnl,
-            unrealized_pnl=run.account.unrealized_pnl,
-            max_drawdown=run.account.max_drawdown,
+            run_id=snapshot.run_id,
+            simulated_time=snapshot.simulated_time,
+            cash_balance=snapshot.cash_balance,
+            total_equity=snapshot.total_equity,
+            realized_pnl=snapshot.realized_pnl,
+            unrealized_pnl=snapshot.unrealized_pnl,
+            max_drawdown=snapshot.max_drawdown,
         )
+        for snapshot in snapshots
     ]
 
 

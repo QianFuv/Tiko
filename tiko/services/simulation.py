@@ -10,7 +10,13 @@ from tiko.agents import AgentRuntime, RuleBasedTraderAgent
 from tiko.analysis import build_run_benchmark, compare_run_benchmarks
 from tiko.core.config import Settings
 from tiko.db.repositories import SimulationRepository
-from tiko.domain.account import Position, SimAccount
+from tiko.domain.account import (
+    LedgerEntry,
+    MetricSnapshot,
+    PortfolioSnapshot,
+    Position,
+    SimAccount,
+)
 from tiko.domain.agent import AgentMessage, AgentMessageRole, AgentRun, DecisionTrace
 from tiko.domain.comparison import RunBenchmark, RunComparison
 from tiko.domain.decision import DecisionReview, TradeIntent
@@ -33,7 +39,8 @@ from tiko.services.risk import RiskService
 from tiko.simulation.broker import SimBroker
 from tiko.simulation.clock import advance_simulated_time
 from tiko.simulation.event_bus import EventBus
-from tiko.simulation.ledger import apply_fill_to_account
+from tiko.simulation.ledger import LedgerUpdate, apply_fill_to_ledger
+from tiko.simulation.metrics import MetricsEngine
 from tiko.simulation.replay import MarketReplay, MarketReplayExhausted
 from tiko.simulation.state import SimulationState, SimulationStepResult
 from tiko.simulation.synthetic import generate_synthetic_candle
@@ -59,6 +66,7 @@ class SimulationService:
         self._broker = SimBroker()
         self._event_bus = EventBus()
         self._observation_builder = ObservationBuilder()
+        self._metrics_engine = MetricsEngine()
 
     def create_run(
         self,
@@ -350,9 +358,11 @@ class SimulationService:
             reference_price=candle.close,
         )
         account = state.run.account
+        ledger_update: LedgerUpdate | None = None
         if order_request is not None:
             order, fill = self._broker.submit_market_order(order_request, candle.close)
-            account = apply_fill_to_account(account, fill)
+            ledger_update = apply_fill_to_ledger(account, fill)
+            account = ledger_update.account
             state.orders.append(order)
             state.fills.append(fill)
         updated_run = state.run.model_copy(
@@ -368,6 +378,23 @@ class SimulationService:
         state.events.append(event)
         state.decisions.append(intent)
         state.risk_reviews.append(risk_review)
+        positions = tuple(self._derive_positions(state))
+        state.positions = list(positions)
+        ledger_entry = (
+            self._build_ledger_entry(updated_run, fill, ledger_update)
+            if fill is not None and ledger_update is not None
+            else None
+        )
+        if ledger_entry is not None:
+            state.ledger_entries.append(ledger_entry)
+        portfolio_snapshot = self._build_portfolio_snapshot(
+            updated_run, positions, event.event_id
+        )
+        metric_snapshot = self._build_metric_snapshot(
+            updated_run, state.orders, state.fills, event.event_id
+        )
+        state.portfolio_snapshots.append(portfolio_snapshot)
+        state.metric_snapshots.append(metric_snapshot)
         result = SimulationStepResult(
             run=updated_run,
             candle=candle,
@@ -376,6 +403,10 @@ class SimulationService:
             risk_review=risk_review,
             order=order,
             fill=fill,
+            positions=positions,
+            ledger_entry=ledger_entry,
+            portfolio_snapshot=portfolio_snapshot,
+            metric_snapshot=metric_snapshot,
         )
         if self._repository is not None:
             self._repository.save_step_result(result)
@@ -790,6 +821,66 @@ class SimulationService:
         """
 
         state = self._states[run_id]
+        if state.positions or not state.fills:
+            return list(state.positions)
+        state.positions = self._derive_positions(state)
+        return list(state.positions)
+
+    def list_ledger_entries(self, run_id: UUID) -> list[LedgerEntry]:
+        """List simulated ledger entries for a run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Ledger entries for the run.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        return list(self._states[run_id].ledger_entries)
+
+    def list_portfolio_snapshots(self, run_id: UUID) -> list[PortfolioSnapshot]:
+        """List portfolio snapshots for a run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Portfolio snapshots for the run.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        return list(self._states[run_id].portfolio_snapshots)
+
+    def list_metric_snapshots(self, run_id: UUID) -> list[MetricSnapshot]:
+        """List metric snapshots for a run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Metric snapshots for the run.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        return list(self._states[run_id].metric_snapshots)
+
+    def _derive_positions(self, state: SimulationState) -> list[Position]:
+        """Derive net simulated positions from state fills.
+
+        Args:
+            state: Simulation state containing fills and account state.
+
+        Returns:
+            Net simulated positions.
+        """
+
         quantities_by_symbol: dict[str, Decimal] = {}
         notionals_by_symbol: dict[str, Decimal] = {}
         latest_time_by_symbol: dict[str, datetime] = {}
@@ -814,7 +905,7 @@ class SimulationService:
             mark_price = abs(notional) / absolute_quantity
             positions.append(
                 Position(
-                    position_id=uuid5(NAMESPACE_URL, f"{run_id}:{symbol}"),
+                    position_id=uuid5(NAMESPACE_URL, f"{state.run.run_id}:{symbol}"),
                     account_id=state.run.account.account_id,
                     symbol=symbol,
                     side="long" if quantity > Decimal("0") else "short",
@@ -830,6 +921,116 @@ class SimulationService:
                 )
             )
         return positions
+
+    def _build_ledger_entry(
+        self,
+        run: SimulationRun,
+        fill: Fill,
+        ledger_update: LedgerUpdate,
+    ) -> LedgerEntry:
+        """Build a durable ledger entry from one simulated fill.
+
+        Args:
+            run: Updated simulation run.
+            fill: Simulated fill that changed account state.
+            ledger_update: Ledger metadata for the fill.
+
+        Returns:
+            Ledger entry domain model.
+        """
+
+        return LedgerEntry(
+            ledger_entry_id=uuid5(NAMESPACE_URL, f"ledger-entry:{fill.fill_id}"),
+            run_id=run.run_id,
+            account_id=run.account.account_id,
+            fill_id=fill.fill_id,
+            entry_type="fill",
+            symbol=fill.symbol,
+            quantity=fill.quantity,
+            price=fill.price,
+            notional=ledger_update.notional,
+            cash_delta=ledger_update.cash_delta,
+            fee=ledger_update.fee,
+            realized_pnl_delta=-ledger_update.fee,
+            created_at_sim_time=fill.filled_at_sim_time,
+            created_at=datetime.now(UTC),
+        )
+
+    def _build_portfolio_snapshot(
+        self,
+        run: SimulationRun,
+        positions: tuple[Position, ...],
+        source_event_id: UUID,
+    ) -> PortfolioSnapshot:
+        """Build a portfolio snapshot from current run and position state.
+
+        Args:
+            run: Updated simulation run.
+            positions: Current derived positions.
+            source_event_id: Source event identifier for deterministic snapshot IDs.
+
+        Returns:
+            Portfolio snapshot domain model.
+        """
+
+        gross_exposure = sum(
+            (position.notional for position in positions), Decimal("0")
+        )
+        net_exposure = sum(
+            (
+                position.notional if position.side == "long" else -position.notional
+                for position in positions
+            ),
+            Decimal("0"),
+        )
+        return PortfolioSnapshot(
+            snapshot_id=uuid5(NAMESPACE_URL, f"portfolio-snapshot:{source_event_id}"),
+            run_id=run.run_id,
+            account_id=run.account.account_id,
+            simulated_time=run.current_sim_time,
+            cash_balance=run.account.cash_balance,
+            total_equity=run.account.total_equity,
+            realized_pnl=run.account.realized_pnl,
+            unrealized_pnl=run.account.unrealized_pnl,
+            max_drawdown=run.account.max_drawdown,
+            gross_exposure=gross_exposure,
+            net_exposure=net_exposure,
+            created_at=datetime.now(UTC),
+        )
+
+    def _build_metric_snapshot(
+        self,
+        run: SimulationRun,
+        orders: list[SimOrder],
+        fills: list[Fill],
+        source_event_id: UUID,
+    ) -> MetricSnapshot:
+        """Build a metric snapshot from current execution artifacts.
+
+        Args:
+            run: Updated simulation run.
+            orders: Current simulated orders for the run.
+            fills: Current simulated fills for the run.
+            source_event_id: Source event identifier for deterministic snapshot IDs.
+
+        Returns:
+            Metric snapshot domain model.
+        """
+
+        metrics = self._metrics_engine.summarize_execution(run, orders, fills)
+        return MetricSnapshot(
+            snapshot_id=uuid5(NAMESPACE_URL, f"metric-snapshot:{source_event_id}"),
+            run_id=run.run_id,
+            simulated_time=run.current_sim_time,
+            metrics={
+                "order_count": metrics.order_count,
+                "fill_count": metrics.fill_count,
+                "total_fees": str(metrics.total_fees),
+                "traded_notional": str(metrics.traded_notional),
+                "realized_return": str(metrics.realized_return),
+            },
+            created_at=datetime.now(UTC),
+        )
 
     def create_decision_review(
         self,

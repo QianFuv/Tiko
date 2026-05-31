@@ -211,11 +211,15 @@ def test_metadata_creates_expected_tables(sqlite_engine: Engine) -> None:
         "decisions",
         "experiments",
         "fills",
+        "ledger_entries",
         "market_events",
         "memory_entries",
+        "metric_snapshots",
         "model_registry",
         "orders",
         "plugin_registry",
+        "portfolio_snapshots",
+        "positions",
         "risk_reviews",
         "reports",
         "simulation_runs",
@@ -395,6 +399,7 @@ def test_repository_persists_successful_step_artifacts(
 
     assert result.order is not None
     assert result.fill is not None
+    assert result.ledger_entry is not None
     assert repository.get_run(run.run_id) == result.run
     assert repository.list_candles(run.run_id) == [result.candle]
     assert repository.list_market_events(run.run_id) == [result.event]
@@ -402,6 +407,12 @@ def test_repository_persists_successful_step_artifacts(
     assert repository.get_latest_risk_review(run.run_id) == result.risk_review
     assert repository.list_orders(run.run_id) == [result.order]
     assert repository.list_fills(run.run_id) == [result.fill]
+    assert repository.list_positions(run.run_id) == list(result.positions)
+    assert repository.list_ledger_entries(run.run_id) == [result.ledger_entry]
+    assert repository.list_portfolio_snapshots(run.run_id) == [
+        result.portfolio_snapshot
+    ]
+    assert repository.list_metric_snapshots(run.run_id) == [result.metric_snapshot]
 
 
 def test_repository_persists_decision_reviews_and_memory_entries(
@@ -562,3 +573,9 @@ def test_repository_persists_rejected_step_without_order_or_fill(
     assert repository.get_latest_risk_review(run.run_id) == result.risk_review
     assert repository.list_orders(run.run_id) == []
     assert repository.list_fills(run.run_id) == []
+    assert repository.list_positions(run.run_id) == []
+    assert repository.list_ledger_entries(run.run_id) == []
+    assert repository.list_portfolio_snapshots(run.run_id) == [
+        result.portfolio_snapshot
+    ]
+    assert repository.list_metric_snapshots(run.run_id) == [result.metric_snapshot]
