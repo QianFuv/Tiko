@@ -277,12 +277,19 @@ def test_openrouter_agent_builds_scoped_trade_intent() -> None:
             ]
         }
 
-    client = OpenRouterClient(api_key="test-key", transport=transport)
+    client = OpenRouterClient(
+        api_key="test-key",
+        temperature=0.2,
+        max_tokens=1234,
+        transport=transport,
+    )
     intent = AgentRuntime(OpenRouterTraderAgent(client)).evaluate(observation)
 
     request_payload = captured_payload["payload"]
     assert isinstance(request_payload, dict)
     assert request_payload["model"] == "liquid/lfm-2.5-1.2b-instruct:free"
+    assert request_payload["temperature"] == 0.2
+    assert request_payload["max_tokens"] == 1234
     assert "response_format" in request_payload
     messages = request_payload["messages"]
     assert isinstance(messages, list)

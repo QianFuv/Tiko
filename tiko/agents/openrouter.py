@@ -93,6 +93,8 @@ class OpenRouterClient:
         model: str = OPENROUTER_DEFAULT_MODEL,
         endpoint: str = OPENROUTER_CHAT_COMPLETIONS_URL,
         timeout_seconds: int = 60,
+        temperature: float = 0.1,
+        max_tokens: int = 4096,
         transport: OpenRouterTransport | None = None,
         allow_json_object_fallback: bool = True,
     ) -> None:
@@ -103,6 +105,8 @@ class OpenRouterClient:
             model: OpenRouter model or router slug.
             endpoint: Chat completions endpoint.
             timeout_seconds: Request timeout in seconds.
+            temperature: Sampling temperature for generation.
+            max_tokens: Maximum generated tokens.
             transport: Optional fake transport for tests.
             allow_json_object_fallback: Whether to retry with JSON mode when schema
                 mode fails.
@@ -110,10 +114,18 @@ class OpenRouterClient:
 
         if not api_key:
             raise OpenRouterAgentError("OpenRouter API key is required.")
+        if temperature < 0 or temperature > 2:
+            raise OpenRouterAgentError(
+                "OpenRouter temperature must be between 0 and 2."
+            )
+        if max_tokens < 1:
+            raise OpenRouterAgentError("OpenRouter max_tokens must be at least 1.")
         self._api_key = api_key
         self._model = model
         self._endpoint = endpoint
         self._timeout_seconds = timeout_seconds
+        self._temperature = temperature
+        self._max_tokens = max_tokens
         self._transport = transport or self._default_transport
         self._allow_json_object_fallback = allow_json_object_fallback
 
@@ -178,8 +190,8 @@ class OpenRouterClient:
         return {
             "model": self._model,
             "messages": messages,
-            "temperature": 0.1,
-            "max_tokens": 2000,
+            "temperature": self._temperature,
+            "max_tokens": self._max_tokens,
             "response_format": response_format,
         }
 

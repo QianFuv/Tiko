@@ -57,6 +57,21 @@ class Settings(BaseSettings):
             "TIKO_OPENROUTER_TIMEOUT_SECONDS", "OPENROUTER_TIMEOUT_SECONDS"
         ),
     )
+    openrouter_temperature: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=2.0,
+        validation_alias=AliasChoices(
+            "TIKO_OPENROUTER_TEMPERATURE", "OPENROUTER_TEMPERATURE"
+        ),
+    )
+    openrouter_max_tokens: int = Field(
+        default=4096,
+        ge=1,
+        validation_alias=AliasChoices(
+            "TIKO_OPENROUTER_MAX_TOKENS", "OPENROUTER_MAX_TOKENS"
+        ),
+    )
     default_base_currency: str = "USDT"
     default_initial_equity: int = Field(default=100_000, ge=1)
     minimum_trade_confidence: float = Field(default=0.55, ge=0.0, le=1.0)

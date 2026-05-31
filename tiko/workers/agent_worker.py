@@ -143,6 +143,8 @@ def _build_agent(agent_type: str) -> TradingAgent:
         model=settings.openrouter_model,
         endpoint=settings.openrouter_chat_endpoint,
         timeout_seconds=settings.openrouter_timeout_seconds,
+        temperature=settings.openrouter_temperature,
+        max_tokens=settings.openrouter_max_tokens,
     )
     return OpenRouterTraderAgent(client)
 
