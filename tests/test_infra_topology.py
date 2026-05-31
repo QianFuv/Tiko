@@ -156,3 +156,19 @@ def test_postgresql_driver_dependency_matches_compose_url() -> None:
 
     assert any(dependency.startswith("psycopg[binary]") for dependency in dependencies)
     assert str(api_environment["TIKO_DATABASE_URL"]).startswith("postgresql+psycopg://")
+
+
+def test_redis_driver_dependency_matches_compose_url() -> None:
+    """Verify Redis compose URL has a matching Python driver."""
+
+    with Path("pyproject.toml").open("rb") as file:
+        project = tomllib.load(file)
+    dependencies = require_string_list(
+        require_mapping(project["project"])["dependencies"]
+    )
+    compose = load_compose_file()
+
+    assert any(dependency.startswith("redis") for dependency in dependencies)
+    for service_name in PROCESS_SERVICES:
+        environment = require_mapping(get_service(compose, service_name)["environment"])
+        assert str(environment["TIKO_REDIS_URL"]).startswith("redis://")

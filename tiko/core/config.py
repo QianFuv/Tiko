@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     allow_private_exchange_methods: bool = False
     allow_trading_credentials: bool = False
     database_url: str | None = None
+    redis_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("TIKO_REDIS_URL", "REDIS_URL"),
+    )
     object_store_endpoint: str | None = None
     artifact_root: str = ".tiko/artifacts"
     openrouter_api_key: SecretStr | None = Field(

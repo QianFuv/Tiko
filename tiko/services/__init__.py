@@ -7,6 +7,7 @@ from tiko.services.experiments import ExperimentService
 from tiko.services.models import ModelRegistryService
 from tiko.services.plugins import PluginRegistryService
 from tiko.services.portfolio import PortfolioService
+from tiko.services.realtime import RealtimeFanoutReceipt, RealtimeFanoutService
 from tiko.services.reports import ReportRenderService
 from tiko.services.risk import RiskService
 from tiko.services.runtime import RuntimeService
@@ -22,6 +23,8 @@ __all__ = [
     "PortfolioService",
     "PluginRegistryService",
     "ReportArtifactStore",
+    "RealtimeFanoutReceipt",
+    "RealtimeFanoutService",
     "ReportRenderService",
     "RiskService",
     "RuntimeService",
