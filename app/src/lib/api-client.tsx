@@ -430,17 +430,22 @@ export async function fetchMarketCandles(
 }
 
 /**
- * Fetch read-only order book policy data for a symbol.
+ * Fetch read-only order book data for a symbol.
  *
  * @param symbol - Market symbol.
+ * @param runId - Optional simulation run identifier.
  * @returns Order book data from the backend or demo fallback data.
  */
 export async function fetchMarketOrderBook(
   symbol: string,
+  runId?: string,
 ): Promise<ApiData<MarketOrderBook>> {
-  return fetchApiData(
-    `/api/market/orderbook?symbol=${encodeURIComponent(symbol)}`,
-    () => buildDemoOrderBook(symbol),
+  const params = new URLSearchParams({ symbol });
+  if (runId !== undefined) {
+    params.set("run_id", runId);
+  }
+  return fetchApiData(`/api/market/orderbook?${params.toString()}`, () =>
+    buildDemoOrderBook(symbol),
   );
 }
 
@@ -474,7 +479,7 @@ export async function fetchRunMarketData(
     await Promise.all([
       fetchMarketSymbols(),
       fetchMarketCandles(runId),
-      fetchMarketOrderBook(primarySymbol),
+      fetchMarketOrderBook(primarySymbol, runId),
       fetchMarketEvents(runId),
     ]);
   return {

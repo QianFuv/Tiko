@@ -4,7 +4,7 @@ import { RunNavigation } from "@/components/layout/RunNavigation";
 import { MetricCard } from "@/components/metric/MetricCard";
 import { fetchRunMarketData } from "@/lib/api-client";
 import { formatDateTime, formatNumber, shortId } from "@/lib/format";
-import type { Candle, MarketEvent, Metric } from "@/lib/types";
+import type { Candle, MarketEvent, MarketOrderBook, Metric } from "@/lib/types";
 
 /**
  * Render market replay and read-only market data for a simulation run.
@@ -64,12 +64,7 @@ export default async function MarketPage({
         <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
           <CandleTable candles={data.candles} />
           <div className="grid content-start gap-6">
-            <OrderBookPanel
-              symbol={data.orderBook.symbol}
-              bids={data.orderBook.bids}
-              asks={data.orderBook.asks}
-              policy={data.orderBook.data_policy}
-            />
+            <OrderBookPanel orderBook={data.orderBook} />
             <MarketEventList events={data.events} />
           </div>
         </div>
@@ -140,27 +135,67 @@ function CandleTable({ candles }: { candles: Candle[] }): ReactElement {
  * @returns Order book panel element.
  */
 function OrderBookPanel({
-  symbol,
-  bids,
-  asks,
-  policy,
+  orderBook,
 }: {
-  symbol: string;
-  bids: [string, string][];
-  asks: [string, string][];
-  policy: string;
+  orderBook: MarketOrderBook;
 }): ReactElement {
+  const metadata = [
+    {
+      label: "As of",
+      value: orderBook.as_of === null ? "N/A" : formatDateTime(orderBook.as_of),
+    },
+    {
+      label: "Mid",
+      value:
+        orderBook.mid_price === null
+          ? "N/A"
+          : formatNumber(orderBook.mid_price),
+    },
+    {
+      label: "Spread",
+      value:
+        orderBook.spread_bps === null
+          ? "N/A"
+          : `${formatNumber(orderBook.spread_bps)} bps`,
+    },
+    {
+      label: "Depth 1%",
+      value:
+        orderBook.depth_1pct_usd === null
+          ? "N/A"
+          : formatNumber(orderBook.depth_1pct_usd),
+    },
+    {
+      label: "Source",
+      value: orderBook.source ?? "N/A",
+    },
+  ];
+
   return (
     <div>
       <h2 className="text-xl font-semibold">Order Book</h2>
       <div className="mt-3 rounded-lg border border-[#d8dee4] bg-white p-5">
         <div className="flex items-center justify-between gap-3 text-sm">
-          <span className="font-medium text-[#17201b]">{symbol}</span>
-          <span className="text-[#5f6b66]">{policy}</span>
+          <span className="font-medium text-[#17201b]">{orderBook.symbol}</span>
+          <span className="break-words text-right text-[#5f6b66]">
+            {orderBook.data_policy}
+          </span>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          {metadata.map((item) => (
+            <div key={item.label} className="border-b border-[#edf0f2] pb-2">
+              <p className="text-xs font-medium uppercase text-[#6c7671]">
+                {item.label}
+              </p>
+              <p className="mt-1 text-sm font-semibold text-[#17201b]">
+                {item.value}
+              </p>
+            </div>
+          ))}
         </div>
         <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <BookSide title="Bids" rows={bids} />
-          <BookSide title="Asks" rows={asks} />
+          <BookSide title="Bids" rows={orderBook.bids} />
+          <BookSide title="Asks" rows={orderBook.asks} />
         </div>
       </div>
     </div>
