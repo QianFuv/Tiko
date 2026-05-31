@@ -701,7 +701,7 @@ def test_simulation_websocket_replays_default_subscription() -> None:
 
     with client.websocket_connect(f"/ws/simulations/{run_id}") as websocket:
         snapshot = websocket.receive_json()
-        messages = [websocket.receive_json() for _index in range(9)]
+        messages = [websocket.receive_json() for _index in range(10)]
 
     assert snapshot["type"] == "snapshot"
     assert snapshot["run_id"] == run_id
@@ -717,8 +717,20 @@ def test_simulation_websocket_replays_default_subscription() -> None:
         "order.updated",
         "portfolio.updated",
         "risk.reviewed",
+        "simulation.heartbeat",
         "simulation.status",
     }
+    heartbeat = next(
+        message
+        for message in messages
+        if message.get("topic") == "simulation.heartbeat"
+    )
+    assert heartbeat["payload"]["run_id"] == run_id
+    assert heartbeat["payload"]["simulated_time"] == heartbeat["simulated_time"]
+    assert heartbeat["payload"]["clock_lag_ms"] == 0
+    assert heartbeat["payload"]["event_queue_depth"] == 0
+    assert heartbeat["payload"]["worker_status"] == "healthy"
+    assert isinstance(heartbeat["payload"]["wall_time"], str)
     assert messages[-1]["type"] == "replay_complete"
 
 

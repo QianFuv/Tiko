@@ -12,6 +12,7 @@ export const SIMULATION_STREAM_TOPICS = [
   "portfolio.updated",
   "alert.created",
   "simulation.status",
+  "simulation.heartbeat",
 ] as const;
 
 export type SimulationStreamTopic = (typeof SIMULATION_STREAM_TOPICS)[number];

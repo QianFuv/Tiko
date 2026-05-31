@@ -1,7 +1,7 @@
 """WebSocket routes for simulation realtime replay streams."""
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -23,6 +23,7 @@ SimulationStreamTopic = Literal[
     "portfolio.updated",
     "alert.created",
     "simulation.status",
+    "simulation.heartbeat",
 ]
 SUPPORTED_TOPICS: tuple[SimulationStreamTopic, ...] = (
     "market.candle",
@@ -34,6 +35,7 @@ SUPPORTED_TOPICS: tuple[SimulationStreamTopic, ...] = (
     "portfolio.updated",
     "alert.created",
     "simulation.status",
+    "simulation.heartbeat",
 )
 
 
@@ -137,6 +139,24 @@ def _build_replay_events(
                     "status": run.status,
                     "current_sim_time": run.current_sim_time.isoformat(),
                     "speed_multiplier": str(run.speed_multiplier),
+                },
+            )
+        )
+    if "simulation.heartbeat" in topics:
+        run = service.get_run(run_id)
+        replay_events.append(
+            _build_stream_event(
+                topic="simulation.heartbeat",
+                run_id=run_id,
+                simulated_time=run.current_sim_time,
+                payload={
+                    "run_id": str(run.run_id),
+                    "wall_time": datetime.now(UTC).isoformat(),
+                    "simulated_time": run.current_sim_time.isoformat(),
+                    "status": run.status,
+                    "clock_lag_ms": 0,
+                    "event_queue_depth": 0,
+                    "worker_status": "healthy",
                 },
             )
         )
