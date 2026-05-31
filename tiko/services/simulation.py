@@ -20,7 +20,7 @@ from tiko.domain.account import (
 from tiko.domain.agent import AgentMessage, AgentMessageRole, AgentRun, DecisionTrace
 from tiko.domain.comparison import RunBenchmark, RunComparison
 from tiko.domain.decision import DecisionReview, TradeIntent
-from tiko.domain.market import Candle, MarketEvent
+from tiko.domain.market import Candle, FeatureSnapshot, MarketEvent, OrderBookSnapshot
 from tiko.domain.memory import MemoryEntry, MemoryType
 from tiko.domain.observation import Observation
 from tiko.domain.order import Fill, SimOrder
@@ -341,6 +341,11 @@ class SimulationService:
             source="synthetic",
             confidence=1.0,
         )
+        previous_candle = state.candles[-1] if state.candles else None
+        orderbook_snapshot = self._build_orderbook_snapshot(candle)
+        feature_snapshot = self._build_feature_snapshot(
+            run_id, candle, previous_candle, event.event_id
+        )
         self._event_bus.publish(event)
         intent = self._create_trade_intent(
             run_id=run_id,
@@ -375,6 +380,8 @@ class SimulationService:
         state.run = updated_run
         state.step_index += 1
         state.candles.append(candle)
+        state.orderbook_snapshots.append(orderbook_snapshot)
+        state.feature_snapshots.append(feature_snapshot)
         state.events.append(event)
         observation = self._observation_builder.build(
             run=updated_run,
@@ -411,6 +418,8 @@ class SimulationService:
         result = SimulationStepResult(
             run=updated_run,
             candle=candle,
+            orderbook_snapshot=orderbook_snapshot,
+            feature_snapshot=feature_snapshot,
             event=event,
             observation=observation,
             agent_run=agent_run,
@@ -446,6 +455,69 @@ class SimulationService:
         next_time = advance_simulated_time(state.run.current_sim_time, 3600)
         return generate_synthetic_candle(
             state.run.symbols[0], state.step_index, next_time
+        )
+
+    def _build_orderbook_snapshot(self, candle: Candle) -> OrderBookSnapshot:
+        """Build a synthetic order book snapshot from candle close data.
+
+        Args:
+            candle: Candle used as the point-in-time price reference.
+
+        Returns:
+            Synthetic order book snapshot.
+        """
+
+        spread_bps = Decimal("2")
+        half_spread = candle.close * spread_bps / Decimal("20000")
+        bid_price = candle.close - half_spread
+        ask_price = candle.close + half_spread
+        depth_quantity = max(candle.volume, Decimal("1"))
+        return OrderBookSnapshot(
+            symbol=candle.symbol,
+            as_of=candle.as_of,
+            bids=[(bid_price, depth_quantity)],
+            asks=[(ask_price, depth_quantity)],
+            mid_price=candle.close,
+            spread_bps=spread_bps,
+            depth_1pct_usd=candle.close * depth_quantity,
+            source="synthetic_orderbook",
+        )
+
+    def _build_feature_snapshot(
+        self,
+        run_id: UUID,
+        candle: Candle,
+        previous_candle: Candle | None,
+        source_event_id: UUID,
+    ) -> FeatureSnapshot:
+        """Build a deterministic feature snapshot from candle data.
+
+        Args:
+            run_id: Simulation run identifier.
+            candle: Current candle.
+            previous_candle: Previous candle for one-step return calculation.
+            source_event_id: Source event identifier for deterministic snapshot IDs.
+
+        Returns:
+            Feature snapshot.
+        """
+
+        one_step_return = (
+            (candle.close - previous_candle.close) / previous_candle.close
+            if previous_candle is not None and previous_candle.close > Decimal("0")
+            else Decimal("0")
+        )
+        return FeatureSnapshot(
+            snapshot_id=uuid5(NAMESPACE_URL, f"feature-snapshot:{source_event_id}"),
+            run_id=run_id,
+            symbol=candle.symbol,
+            as_of=candle.as_of,
+            features={
+                "close": str(candle.close),
+                "volume": str(candle.volume),
+                "one_step_return": str(one_step_return),
+            },
+            source="synthetic_feature_engine",
         )
 
     def list_orders(self) -> list[SimOrder]:
@@ -747,6 +819,36 @@ class SimulationService:
         """
 
         return list(self._states[run_id].candles)
+
+    def list_orderbook_snapshots(self, run_id: UUID) -> list[OrderBookSnapshot]:
+        """List order book snapshots observed by a simulation run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Order book snapshots observed by the run.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        return list(self._states[run_id].orderbook_snapshots)
+
+    def list_feature_snapshots(self, run_id: UUID) -> list[FeatureSnapshot]:
+        """List feature snapshots generated for a simulation run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Feature snapshots generated for the run.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        return list(self._states[run_id].feature_snapshots)
 
     def inject_market_event(
         self,

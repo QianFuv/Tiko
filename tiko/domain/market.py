@@ -55,6 +55,17 @@ class OrderBookSnapshot(DomainModel):
     source: str = Field(min_length=1)
 
 
+class FeatureSnapshot(DomainModel):
+    """Represent derived point-in-time market features."""
+
+    snapshot_id: UUID
+    run_id: UUID
+    symbol: str = Field(min_length=1)
+    as_of: datetime
+    features: dict[str, object]
+    source: str = Field(min_length=1)
+
+
 class MarketEvent(DomainModel):
     """Represent a simulation event emitted from market data or synthetic input."""
 

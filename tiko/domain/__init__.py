@@ -25,7 +25,13 @@ from tiko.domain.dataset import (
 )
 from tiko.domain.decision import DecisionReview, TradeIntent
 from tiko.domain.experiment import ExperimentKind, ExperimentRecord, ExperimentStatus
-from tiko.domain.market import Asset, Candle, MarketEvent, OrderBookSnapshot
+from tiko.domain.market import (
+    Asset,
+    Candle,
+    FeatureSnapshot,
+    MarketEvent,
+    OrderBookSnapshot,
+)
 from tiko.domain.memory import MemoryEntry, MemoryType
 from tiko.domain.model import ModelRegistryEntry, ModelStatus, ModelType
 from tiko.domain.observation import Observation
@@ -86,6 +92,7 @@ __all__ = [
     "ExperimentKind",
     "ExperimentRecord",
     "ExperimentStatus",
+    "FeatureSnapshot",
     "Fill",
     "FileSystemAccess",
     "JobStatus",

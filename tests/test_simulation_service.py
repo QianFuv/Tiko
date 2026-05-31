@@ -69,6 +69,8 @@ def test_simulation_step_creates_internal_order_and_fill() -> None:
     assert result.run.current_sim_time == start_time + timedelta(hours=1)
     assert result.candle.close == Decimal("50035")
     assert result.risk_review.status == "approved"
+    assert result.orderbook_snapshot.symbol == "BTCUSDT"
+    assert result.feature_snapshot.features["one_step_return"] == "0"
     assert result.observation.symbol == "BTCUSDT"
     assert result.agent_run.decision_id == result.decision.decision_id
     assert [message.role for message in result.agent_messages] == [
@@ -85,6 +87,8 @@ def test_simulation_step_creates_internal_order_and_fill() -> None:
     assert result.run.account.realized_pnl < Decimal("0")
     assert len(service.list_orders()) == 1
     assert len(service.list_fills()) == 1
+    assert service.list_orderbook_snapshots(run.run_id) == [result.orderbook_snapshot]
+    assert service.list_feature_snapshots(run.run_id) == [result.feature_snapshot]
     assert service.list_observation_snapshots(run.run_id) == [result.observation]
     assert service.list_agent_runs() == [result.agent_run]
     assert service.list_agent_messages(result.agent_run.agent_run_id) == list(
@@ -163,6 +167,10 @@ def test_repository_backed_service_persists_created_run_and_step() -> None:
     assert result.fill is not None
     assert result.ledger_entry is not None
     assert repository.get_run(run.run_id) == result.run
+    assert repository.list_orderbook_snapshots(run.run_id) == [
+        result.orderbook_snapshot
+    ]
+    assert repository.list_feature_snapshots(run.run_id) == [result.feature_snapshot]
     assert repository.list_observation_snapshots(run.run_id) == [result.observation]
     assert repository.list_agent_runs(run.run_id) == [result.agent_run]
     assert repository.list_agent_messages(result.agent_run.agent_run_id) == list(

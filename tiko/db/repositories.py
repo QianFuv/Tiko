@@ -1,6 +1,7 @@
 """Repository mappings between ORM rows and simulation domain models."""
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Literal, cast
 from uuid import UUID
 
@@ -12,6 +13,7 @@ from tiko.db.models import (
     AgentMessageRecord,
     AgentRunRecord,
     AlertRecord,
+    AssetRecord,
     AuditLogRecord,
     CandleRecord,
     DatasetCandleRecord,
@@ -20,6 +22,7 @@ from tiko.db.models import (
     DecisionRecord,
     DecisionReviewRecord,
     ExperimentRegistryRecord,
+    FeatureSnapshotRecord,
     FillRecord,
     LedgerEntryRecord,
     MarketEventRecord,
@@ -27,6 +30,7 @@ from tiko.db.models import (
     MetricSnapshotRecord,
     ModelRegistryRecord,
     ObservationSnapshotRecord,
+    OrderBookSnapshotRecord,
     OrderRecord,
     PluginRegistryRecord,
     PortfolioSnapshotRecord,
@@ -58,7 +62,13 @@ from tiko.domain.dataset import (
 )
 from tiko.domain.decision import DecisionReview, TradeIntent
 from tiko.domain.experiment import ExperimentKind, ExperimentRecord, ExperimentStatus
-from tiko.domain.market import Candle, MarketEvent
+from tiko.domain.market import (
+    Asset,
+    Candle,
+    FeatureSnapshot,
+    MarketEvent,
+    OrderBookSnapshot,
+)
 from tiko.domain.memory import MemoryEntry
 from tiko.domain.model import ModelRegistryEntry, ModelStatus, ModelType
 from tiko.domain.observation import Observation
@@ -160,6 +170,10 @@ class SimulationRepository:
         with self._session_factory() as session:
             self._merge_run(session, result.run)
             self._add_candle(session, result.run.run_id, result.candle)
+            self._add_orderbook_snapshot(
+                session, result.run.run_id, result.orderbook_snapshot
+            )
+            self._merge_feature_snapshot(session, result.feature_snapshot)
             self._merge_market_event(session, result.run.run_id, result.event)
             self._merge_observation_snapshot(session, result.observation)
             self._merge_decision(session, result.decision)
@@ -245,6 +259,30 @@ class SimulationRepository:
                 select(AuditLogRecord).order_by(AuditLogRecord.created_at)
             ).all()
             return [self._to_audit_log_entry(record) for record in records]
+
+    def save_asset(self, asset: Asset) -> None:
+        """Persist market instrument metadata.
+
+        Args:
+            asset: Asset metadata to persist.
+        """
+
+        with self._session_factory() as session:
+            self._merge_asset(session, asset)
+            session.commit()
+
+    def list_assets(self) -> list[Asset]:
+        """List persisted market instruments.
+
+        Returns:
+            Asset metadata ordered by symbol.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(AssetRecord).order_by(AssetRecord.symbol)
+            ).all()
+            return [self._to_asset(record) for record in records]
 
     def save_dataset(
         self,
@@ -396,6 +434,42 @@ class SimulationRepository:
                 .order_by(CandleRecord.close_time)
             ).all()
             return [self._to_candle(record) for record in records]
+
+    def list_orderbook_snapshots(self, run_id: UUID) -> list[OrderBookSnapshot]:
+        """List order book snapshots persisted for a simulation run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Order book snapshots ordered by `as_of`.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(OrderBookSnapshotRecord)
+                .where(OrderBookSnapshotRecord.run_id == str(run_id))
+                .order_by(OrderBookSnapshotRecord.as_of)
+            ).all()
+            return [self._to_orderbook_snapshot(record) for record in records]
+
+    def list_feature_snapshots(self, run_id: UUID) -> list[FeatureSnapshot]:
+        """List feature snapshots persisted for a simulation run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Feature snapshots ordered by `as_of`.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(FeatureSnapshotRecord)
+                .where(FeatureSnapshotRecord.run_id == str(run_id))
+                .order_by(FeatureSnapshotRecord.as_of)
+            ).all()
+            return [self._to_feature_snapshot(record) for record in records]
 
     def list_market_events(self, run_id: UUID) -> list[MarketEvent]:
         """List market events persisted for a simulation run.
@@ -876,6 +950,28 @@ class SimulationRepository:
             )
         )
 
+    def _merge_asset(self, session: Session, asset: Asset) -> None:
+        """Merge asset metadata into the active session.
+
+        Args:
+            session: Active SQLAlchemy session.
+            asset: Asset metadata to merge.
+        """
+
+        session.merge(
+            AssetRecord(
+                symbol=asset.symbol,
+                base_asset=asset.base_asset,
+                quote_asset=asset.quote_asset,
+                market_type=asset.market_type,
+                tick_size=asset.tick_size,
+                lot_size=asset.lot_size,
+                min_notional=asset.min_notional,
+                fee_tier=asset.fee_tier,
+                is_active=asset.is_active,
+            )
+        )
+
     def _replace_positions(
         self, session: Session, run_id: UUID, positions: tuple[Position, ...]
     ) -> None:
@@ -1043,6 +1139,52 @@ class SimulationRepository:
                 source=candle.source,
                 as_of=candle.as_of,
                 created_at=candle.created_at,
+            )
+        )
+
+    def _add_orderbook_snapshot(
+        self, session: Session, run_id: UUID, snapshot: OrderBookSnapshot
+    ) -> None:
+        """Add an order book snapshot row for a simulation run.
+
+        Args:
+            session: Active SQLAlchemy session.
+            run_id: Simulation run identifier.
+            snapshot: Order book snapshot to persist.
+        """
+
+        session.add(
+            OrderBookSnapshotRecord(
+                run_id=str(run_id),
+                symbol=snapshot.symbol,
+                as_of=snapshot.as_of,
+                bids=[[str(price), str(quantity)] for price, quantity in snapshot.bids],
+                asks=[[str(price), str(quantity)] for price, quantity in snapshot.asks],
+                mid_price=snapshot.mid_price,
+                spread_bps=snapshot.spread_bps,
+                depth_1pct_usd=snapshot.depth_1pct_usd,
+                source=snapshot.source,
+            )
+        )
+
+    def _merge_feature_snapshot(
+        self, session: Session, snapshot: FeatureSnapshot
+    ) -> None:
+        """Merge a feature snapshot into the active session.
+
+        Args:
+            session: Active SQLAlchemy session.
+            snapshot: Feature snapshot to merge.
+        """
+
+        session.merge(
+            FeatureSnapshotRecord(
+                snapshot_id=str(snapshot.snapshot_id),
+                run_id=str(snapshot.run_id),
+                symbol=snapshot.symbol,
+                as_of=snapshot.as_of,
+                features=snapshot.features,
+                source=snapshot.source,
             )
         )
 
@@ -1531,6 +1673,28 @@ class SimulationRepository:
             status=cast(AccountStatus, record.status),
         )
 
+    def _to_asset(self, record: AssetRecord) -> Asset:
+        """Convert an asset row to a domain model.
+
+        Args:
+            record: Persisted asset row.
+
+        Returns:
+            Asset domain model.
+        """
+
+        return Asset(
+            symbol=record.symbol,
+            base_asset=record.base_asset,
+            quote_asset=record.quote_asset,
+            market_type=cast(MarketType, record.market_type),
+            tick_size=record.tick_size,
+            lot_size=record.lot_size,
+            min_notional=record.min_notional,
+            fee_tier=record.fee_tier,
+            is_active=record.is_active,
+        )
+
     def _to_position(self, record: PositionRecord) -> Position:
         """Convert a position row to a domain model.
 
@@ -1654,6 +1818,52 @@ class SimulationRepository:
             source=record.source,
             as_of=self._aware_datetime(record.as_of),
             created_at=self._aware_datetime(record.created_at),
+        )
+
+    def _to_orderbook_snapshot(
+        self, record: OrderBookSnapshotRecord
+    ) -> OrderBookSnapshot:
+        """Convert an order book snapshot row to a domain model.
+
+        Args:
+            record: Persisted order book snapshot row.
+
+        Returns:
+            Order book snapshot domain model.
+        """
+
+        return OrderBookSnapshot(
+            symbol=record.symbol,
+            as_of=self._aware_datetime(record.as_of),
+            bids=[
+                (Decimal(price), Decimal(quantity)) for price, quantity in record.bids
+            ],
+            asks=[
+                (Decimal(price), Decimal(quantity)) for price, quantity in record.asks
+            ],
+            mid_price=record.mid_price,
+            spread_bps=record.spread_bps,
+            depth_1pct_usd=record.depth_1pct_usd,
+            source=record.source,
+        )
+
+    def _to_feature_snapshot(self, record: FeatureSnapshotRecord) -> FeatureSnapshot:
+        """Convert a feature snapshot row to a domain model.
+
+        Args:
+            record: Persisted feature snapshot row.
+
+        Returns:
+            Feature snapshot domain model.
+        """
+
+        return FeatureSnapshot(
+            snapshot_id=UUID(record.snapshot_id),
+            run_id=UUID(record.run_id),
+            symbol=record.symbol,
+            as_of=self._aware_datetime(record.as_of),
+            features=dict(record.features),
+            source=record.source,
         )
 
     def _to_experiment(self, record: ExperimentRegistryRecord) -> ExperimentRecord:

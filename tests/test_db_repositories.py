@@ -20,7 +20,7 @@ from tiko.db import (
 from tiko.domain.dataset import DatasetQualityIssue, DatasetQualityReport, DatasetRecord
 from tiko.domain.decision import DecisionReview
 from tiko.domain.experiment import ExperimentRecord
-from tiko.domain.market import Candle
+from tiko.domain.market import Asset, Candle
 from tiko.domain.memory import MemoryEntry
 from tiko.domain.model import ModelRegistryEntry
 from tiko.domain.plugin import PluginManifest, PluginPermissions, PluginRegistryEntry
@@ -86,6 +86,26 @@ def sample_candle() -> Candle:
         source="fixture",
         as_of=datetime(2026, 1, 1, 1, 0, tzinfo=UTC),
         created_at=datetime(2026, 1, 1, 1, 0, tzinfo=UTC),
+    )
+
+
+def sample_asset() -> Asset:
+    """Create an asset fixture.
+
+    Returns:
+        Asset domain model.
+    """
+
+    return Asset(
+        symbol="BTCUSDT",
+        base_asset="BTC",
+        quote_asset="USDT",
+        market_type="synthetic",
+        tick_size=Decimal("0.01"),
+        lot_size=Decimal("0.000001"),
+        min_notional=Decimal("5"),
+        fee_tier="simulated",
+        is_active=True,
     )
 
 
@@ -204,6 +224,7 @@ def test_metadata_creates_expected_tables(sqlite_engine: Engine) -> None:
         "agent_messages",
         "agent_runs",
         "alerts",
+        "assets",
         "audit_logs",
         "candles",
         "dataset_candles",
@@ -212,6 +233,7 @@ def test_metadata_creates_expected_tables(sqlite_engine: Engine) -> None:
         "decision_reviews",
         "decisions",
         "experiments",
+        "feature_snapshots",
         "fills",
         "ledger_entries",
         "market_events",
@@ -220,6 +242,7 @@ def test_metadata_creates_expected_tables(sqlite_engine: Engine) -> None:
         "model_registry",
         "orders",
         "observation_snapshots",
+        "orderbook_snapshots",
         "plugin_registry",
         "portfolio_snapshots",
         "positions",
@@ -266,6 +289,16 @@ def test_audit_service_writes_through_repository(
 
     assert service.list_entries() == [entry]
     assert repository.list_audit_log_entries() == [entry]
+
+
+def test_repository_persists_assets(repository: SimulationRepository) -> None:
+    """Verify asset metadata round-trips through the repository."""
+
+    asset = sample_asset()
+
+    repository.save_asset(asset)
+
+    assert repository.list_assets() == [asset]
 
 
 def test_repository_persists_datasets(
@@ -405,6 +438,10 @@ def test_repository_persists_successful_step_artifacts(
     assert result.ledger_entry is not None
     assert repository.get_run(run.run_id) == result.run
     assert repository.list_candles(run.run_id) == [result.candle]
+    assert repository.list_orderbook_snapshots(run.run_id) == [
+        result.orderbook_snapshot
+    ]
+    assert repository.list_feature_snapshots(run.run_id) == [result.feature_snapshot]
     assert repository.list_market_events(run.run_id) == [result.event]
     assert repository.list_observation_snapshots(run.run_id) == [result.observation]
     assert repository.list_agent_runs(run.run_id) == [result.agent_run]
@@ -578,6 +615,10 @@ def test_repository_persists_rejected_step_without_order_or_fill(
     repository.save_step_result(result)
 
     assert repository.list_decisions(run.run_id) == [result.decision]
+    assert repository.list_orderbook_snapshots(run.run_id) == [
+        result.orderbook_snapshot
+    ]
+    assert repository.list_feature_snapshots(run.run_id) == [result.feature_snapshot]
     assert repository.list_observation_snapshots(run.run_id) == [result.observation]
     assert repository.list_agent_runs(run.run_id) == [result.agent_run]
     assert repository.list_agent_messages(result.agent_run.agent_run_id) == list(

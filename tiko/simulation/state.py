@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from tiko.domain.account import LedgerEntry, MetricSnapshot, PortfolioSnapshot, Position
 from tiko.domain.agent import AgentMessage, AgentRun
 from tiko.domain.decision import DecisionReview, TradeIntent
-from tiko.domain.market import Candle, MarketEvent
+from tiko.domain.market import Candle, FeatureSnapshot, MarketEvent, OrderBookSnapshot
 from tiko.domain.memory import MemoryEntry
 from tiko.domain.observation import Observation
 from tiko.domain.order import Fill, SimOrder
@@ -24,6 +24,8 @@ class SimulationState:
     step_index: int = 0
     market_replay: MarketReplay | None = None
     candles: list[Candle] = field(default_factory=list)
+    orderbook_snapshots: list[OrderBookSnapshot] = field(default_factory=list)
+    feature_snapshots: list[FeatureSnapshot] = field(default_factory=list)
     events: list[MarketEvent] = field(default_factory=list)
     observations: list[Observation] = field(default_factory=list)
     agent_runs: list[AgentRun] = field(default_factory=list)
@@ -48,6 +50,8 @@ class SimulationStepResult:
 
     run: SimulationRun
     candle: Candle
+    orderbook_snapshot: OrderBookSnapshot
+    feature_snapshot: FeatureSnapshot
     event: MarketEvent
     observation: Observation
     agent_run: AgentRun

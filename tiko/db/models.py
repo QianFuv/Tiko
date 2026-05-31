@@ -93,6 +93,22 @@ class AuditLogRecord(Base):
     )
 
 
+class AssetRecord(Base):
+    """Persist market instrument reference metadata."""
+
+    __tablename__ = "assets"
+
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    base_asset: Mapped[str] = mapped_column(String(32), nullable=False)
+    quote_asset: Mapped[str] = mapped_column(String(32), nullable=False)
+    market_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    tick_size: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    lot_size: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    min_notional: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    fee_tier: Mapped[str] = mapped_column(String(64), nullable=False)
+    is_active: Mapped[bool] = mapped_column(nullable=False)
+
+
 class AccountRecord(Base):
     """Persist a simulated account that is never linked to a real exchange."""
 
@@ -277,6 +293,36 @@ class ObservationSnapshotRecord(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
+
+
+class OrderBookSnapshotRecord(Base):
+    """Persist a synthetic or read-only order book snapshot."""
+
+    __tablename__ = "orderbook_snapshots"
+
+    snapshot_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("simulation_runs.run_id"))
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    bids: Mapped[list[list[str]]] = mapped_column(JSON, nullable=False)
+    asks: Mapped[list[list[str]]] = mapped_column(JSON, nullable=False)
+    mid_price: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    spread_bps: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    depth_1pct_usd: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class FeatureSnapshotRecord(Base):
+    """Persist derived point-in-time market features."""
+
+    __tablename__ = "feature_snapshots"
+
+    snapshot_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("simulation_runs.run_id"))
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    features: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
 class AgentRunRecord(Base):
