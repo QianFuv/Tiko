@@ -278,14 +278,19 @@ def test_service_create_run_accepts_configured_simulation_fields() -> None:
         speed_multiplier=Decimal("3"),
         timeframe="15m",
         decision_interval="30m",
+        initial_equity=Decimal("250000"),
     )
     result = service.step_run(run.run_id, confidence=0.7)
 
     assert run.mode == "live_simulated_clock"
     assert run.end_sim_time == end_time
     assert run.speed_multiplier == Decimal("3")
+    assert run.account.initial_equity == Decimal("250000")
+    assert run.account.cash_balance == Decimal("250000")
+    assert run.account.total_equity == Decimal("250000")
     assert run.config["timeframe"] == "15m"
     assert run.config["decision_interval"] == "30m"
+    assert run.config["initial_equity"] == "250000"
     assert result.run.status == "completed"
 
     with pytest.raises(ValueError, match="end_sim_time"):
@@ -294,6 +299,13 @@ def test_service_create_run_accepts_configured_simulation_fields() -> None:
             symbols=["BTCUSDT"],
             start_sim_time=start_time,
             end_sim_time=start_time,
+        )
+    with pytest.raises(ValueError, match="initial_equity"):
+        service.create_run(
+            name="invalid-equity",
+            symbols=["BTCUSDT"],
+            start_sim_time=start_time,
+            initial_equity=Decimal("0"),
         )
 
 

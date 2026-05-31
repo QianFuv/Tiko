@@ -108,6 +108,7 @@ class SimulationService:
         speed_multiplier: Decimal = Decimal("1"),
         timeframe: str = "1h",
         decision_interval: str = "1h",
+        initial_equity: Decimal | None = None,
     ) -> SimulationRun:
         """Create a new process-local simulation run.
 
@@ -121,6 +122,7 @@ class SimulationService:
             speed_multiplier: Simulated clock speed multiplier.
             timeframe: Primary market data timeframe label.
             decision_interval: Decision cadence label.
+            initial_equity: Optional initial simulated account equity.
 
         Returns:
             Created simulation run.
@@ -135,6 +137,13 @@ class SimulationService:
             raise ValueError("timeframe must be non-empty.")
         if not decision_interval:
             raise ValueError("decision_interval must be non-empty.")
+        initial_equity_value = (
+            initial_equity
+            if initial_equity is not None
+            else Decimal(self._settings.default_initial_equity)
+        )
+        if initial_equity_value <= Decimal("0"):
+            raise ValueError("initial_equity must be greater than zero.")
         run_id = uuid4()
         market_replay = (
             MarketReplay(replay_candles, symbols)
@@ -144,9 +153,9 @@ class SimulationService:
         account = SimAccount(
             account_id=uuid4(),
             name=f"{name}-account",
-            initial_equity=Decimal(self._settings.default_initial_equity),
-            cash_balance=Decimal(self._settings.default_initial_equity),
-            total_equity=Decimal(self._settings.default_initial_equity),
+            initial_equity=initial_equity_value,
+            cash_balance=initial_equity_value,
+            total_equity=initial_equity_value,
             realized_pnl=Decimal("0"),
             unrealized_pnl=Decimal("0"),
             max_drawdown=Decimal("0"),
@@ -178,6 +187,7 @@ class SimulationService:
                 "data_source": "replay" if market_replay is not None else "synthetic",
                 "timeframe": timeframe,
                 "decision_interval": decision_interval,
+                "initial_equity": str(initial_equity_value),
             },
             created_at=datetime.now(UTC),
         )

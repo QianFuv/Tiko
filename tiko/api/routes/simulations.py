@@ -43,6 +43,7 @@ class SimulationCreateRequest(BaseModel):
     speed_multiplier: Decimal = Field(default=Decimal("1"), gt=Decimal("0"))
     timeframe: str = Field(default="1h", min_length=1)
     decision_interval: str = Field(default="1h", min_length=1)
+    initial_equity: Decimal | None = Field(default=None, gt=Decimal("0"))
 
 
 class SimulationStepRequest(BaseModel):
@@ -111,6 +112,7 @@ def create_simulation(
             speed_multiplier=request.speed_multiplier,
             timeframe=request.timeframe,
             decision_interval=request.decision_interval,
+            initial_equity=request.initial_equity,
         )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error

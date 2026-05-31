@@ -372,6 +372,7 @@ def test_simulation_create_accepts_configured_run_fields() -> None:
             "speed_multiplier": "4",
             "timeframe": "15m",
             "decision_interval": "30m",
+            "initial_equity": "250000",
         },
         headers=OPERATOR_HEADERS,
     )
@@ -385,16 +386,30 @@ def test_simulation_create_accepts_configured_run_fields() -> None:
         },
         headers=OPERATOR_HEADERS,
     )
+    invalid_equity_response = client.post(
+        "/api/simulations",
+        json={
+            "name": "invalid-equity",
+            "symbols": ["BTCUSDT"],
+            "initial_equity": "0",
+        },
+        headers=OPERATOR_HEADERS,
+    )
 
     assert create_response.status_code == 200
     payload = create_response.json()
     assert payload["mode"] == "live_simulated_clock"
     assert payload["speed_multiplier"] == "4"
     assert payload["end_sim_time"].startswith("2026-01-01T01:00:00")
+    assert payload["account"]["initial_equity"] == "250000"
+    assert payload["account"]["cash_balance"] == "250000"
+    assert payload["account"]["total_equity"] == "250000"
     assert payload["config"]["timeframe"] == "15m"
     assert payload["config"]["decision_interval"] == "30m"
+    assert payload["config"]["initial_equity"] == "250000"
     assert invalid_response.status_code == 422
     assert "end_sim_time" in invalid_response.json()["detail"]
+    assert invalid_equity_response.status_code == 422
 
 
 def test_risk_limit_update_requires_operator_and_affects_reviews() -> None:
