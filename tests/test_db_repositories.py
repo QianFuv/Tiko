@@ -1,9 +1,11 @@
 """Tests for SQLAlchemy simulation repositories."""
 
+import csv
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import uuid4
+from pathlib import Path
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import Engine, inspect
@@ -15,14 +17,22 @@ from tiko.db import (
     create_database_engine,
     create_session_factory,
 )
+from tiko.domain.dataset import DatasetQualityIssue, DatasetQualityReport, DatasetRecord
 from tiko.domain.decision import DecisionReview
+from tiko.domain.experiment import ExperimentRecord
+from tiko.domain.market import Candle
 from tiko.domain.memory import MemoryEntry
 from tiko.domain.model import ModelRegistryEntry
 from tiko.domain.plugin import PluginManifest, PluginPermissions, PluginRegistryEntry
 from tiko.domain.reporting import Alert, ReportArtifact
 from tiko.domain.security import AuditLogEntry, Principal
 from tiko.plugins import validate_plugin_manifest
-from tiko.services import AuditService, SimulationService
+from tiko.services import (
+    AuditService,
+    DatasetService,
+    ExperimentService,
+    SimulationService,
+)
 
 
 @pytest.fixture
@@ -55,6 +65,135 @@ def repository(sqlite_engine: Engine) -> SimulationRepository:
     return SimulationRepository(create_session_factory(sqlite_engine))
 
 
+def sample_candle() -> Candle:
+    """Create a normalized candle fixture.
+
+    Returns:
+        Candle domain model.
+    """
+
+    return Candle(
+        symbol="BTCUSDT",
+        timeframe="1h",
+        open_time=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+        close_time=datetime(2026, 1, 1, 1, 0, tzinfo=UTC),
+        open=Decimal("100"),
+        high=Decimal("110"),
+        low=Decimal("90"),
+        close=Decimal("105"),
+        volume=Decimal("2.5"),
+        quote_volume=Decimal("262.5"),
+        source="fixture",
+        as_of=datetime(2026, 1, 1, 1, 0, tzinfo=UTC),
+        created_at=datetime(2026, 1, 1, 1, 0, tzinfo=UTC),
+    )
+
+
+def sample_dataset(dataset_id: UUID | None = None) -> DatasetRecord:
+    """Create a dataset metadata fixture.
+
+    Args:
+        dataset_id: Optional dataset identifier.
+
+    Returns:
+        Dataset record domain model.
+    """
+
+    return DatasetRecord(
+        dataset_id=dataset_id or uuid4(),
+        name="fixture candles",
+        source="csv",
+        source_uri="memory://fixture.csv",
+        symbols=["BTCUSDT"],
+        timeframes=["1h"],
+        candle_count=1,
+        status="validated",
+        start_time=datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+        end_time=datetime(2026, 1, 1, 1, 0, tzinfo=UTC),
+        created_at=datetime(2026, 1, 1, 1, 0, tzinfo=UTC),
+    )
+
+
+def sample_quality_report(dataset_id: UUID) -> DatasetQualityReport:
+    """Create a dataset quality report fixture.
+
+    Args:
+        dataset_id: Dataset identifier.
+
+    Returns:
+        Dataset quality report domain model.
+    """
+
+    return DatasetQualityReport(
+        dataset_id=dataset_id,
+        total_records=1,
+        error_count=0,
+        warning_count=1,
+        has_errors=False,
+        issues=[
+            DatasetQualityIssue(
+                index=0,
+                severity="warning",
+                code="fixture_warning",
+                message="Fixture warning.",
+                symbol="BTCUSDT",
+                open_time="2026-01-01T00:00:00Z",
+            )
+        ],
+    )
+
+
+def sample_experiment(dataset_id: UUID) -> ExperimentRecord:
+    """Create an experiment fixture.
+
+    Args:
+        dataset_id: Dataset identifier.
+
+    Returns:
+        Experiment record domain model.
+    """
+
+    return ExperimentRecord(
+        experiment_id=uuid4(),
+        name="baseline walk-forward",
+        kind="walk_forward",
+        hypothesis="Momentum survives validation splits.",
+        dataset_id=dataset_id,
+        parameters={"splits": 3},
+        status="draft",
+        metrics={},
+        created_at=datetime(2026, 1, 1, 2, 0, tzinfo=UTC),
+    )
+
+
+def write_candle_csv(path: Path) -> None:
+    """Write a one-row candle CSV fixture.
+
+    Args:
+        path: Destination CSV path.
+    """
+
+    row = {
+        "symbol": "BTCUSDT",
+        "timeframe": "1h",
+        "open_time": "2026-01-01T00:00:00Z",
+        "close_time": "2026-01-01T01:00:00Z",
+        "open": "100",
+        "high": "110",
+        "low": "90",
+        "close": "105",
+        "volume": "2.5",
+        "quote_volume": "262.5",
+        "source": "fixture",
+        "as_of": "2026-01-01T01:00:00Z",
+        "created_at": "2026-01-01T01:00:00Z",
+    }
+    with path.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=list(row))
+        writer.writeheader()
+        writer.writerow(row)
+
+
 def test_metadata_creates_expected_tables(sqlite_engine: Engine) -> None:
     """Verify ORM metadata creates the current architecture tables."""
 
@@ -65,8 +204,12 @@ def test_metadata_creates_expected_tables(sqlite_engine: Engine) -> None:
         "alerts",
         "audit_logs",
         "candles",
+        "dataset_candles",
+        "dataset_quality_reports",
+        "datasets",
         "decision_reviews",
         "decisions",
+        "experiments",
         "fills",
         "market_events",
         "memory_entries",
@@ -116,6 +259,97 @@ def test_audit_service_writes_through_repository(
 
     assert service.list_entries() == [entry]
     assert repository.list_audit_log_entries() == [entry]
+
+
+def test_repository_persists_datasets(
+    repository: SimulationRepository,
+) -> None:
+    """Verify dataset metadata, candles, and quality reports round-trip."""
+
+    dataset = sample_dataset()
+    candle = sample_candle()
+    quality_report = sample_quality_report(dataset.dataset_id)
+
+    repository.save_dataset(dataset, (candle,), quality_report)
+
+    assert repository.get_dataset(dataset.dataset_id) == dataset
+    assert repository.list_datasets() == [dataset]
+    assert repository.get_dataset_quality_report(dataset.dataset_id) == quality_report
+    assert repository.list_dataset_candles(dataset.dataset_id, limit=10) == [candle]
+    assert repository.list_dataset_candles(dataset.dataset_id, limit=0) == []
+
+
+def test_repository_persists_experiments(
+    repository: SimulationRepository,
+) -> None:
+    """Verify research experiments round-trip through the repository."""
+
+    dataset = sample_dataset()
+    experiment = sample_experiment(dataset.dataset_id)
+    repository.save_dataset(
+        dataset, (sample_candle(),), sample_quality_report(dataset.dataset_id)
+    )
+
+    repository.save_experiment(experiment)
+
+    assert repository.get_experiment(experiment.experiment_id) == experiment
+    assert repository.list_experiments() == [experiment]
+
+
+def test_dataset_service_writes_through_repository(
+    repository: SimulationRepository, tmp_path: Path
+) -> None:
+    """Verify repository-backed dataset service persists uploads and validation."""
+
+    path = tmp_path / "candles.csv"
+    write_candle_csv(path)
+    service = DatasetService(repository=repository)
+
+    dataset = service.upload_dataset("BTC fixture", str(path))
+    persisted_service = DatasetService(repository=repository)
+    quality_report = persisted_service.validate_dataset(dataset.dataset_id)
+
+    assert persisted_service.list_datasets() == [
+        dataset.model_copy(update={"status": "validated"})
+    ]
+    assert persisted_service.get_dataset(dataset.dataset_id).name == "BTC fixture"
+    assert persisted_service.get_quality_report(dataset.dataset_id) == quality_report
+    assert persisted_service.list_candles(dataset.dataset_id, limit=1)[0].symbol == (
+        "BTCUSDT"
+    )
+
+
+def test_experiment_service_writes_through_repository(
+    repository: SimulationRepository,
+) -> None:
+    """Verify repository-backed experiment service persists lifecycle and reports."""
+
+    dataset = sample_dataset()
+    repository.save_dataset(
+        dataset, (sample_candle(),), sample_quality_report(dataset.dataset_id)
+    )
+    service = ExperimentService(repository)
+    experiment = service.create_experiment(
+        name="baseline walk-forward",
+        kind="walk_forward",
+        hypothesis="Momentum survives validation splits.",
+        dataset_id=dataset.dataset_id,
+        parameters={"splits": 3},
+    )
+    persisted_service = ExperimentService(repository)
+
+    queued = persisted_service.queue_run(experiment.experiment_id, job_id=uuid4())
+    report = persisted_service.create_experiment_report(experiment.experiment_id)
+
+    assert persisted_service.list_experiments() == [queued]
+    assert persisted_service.get_experiment(experiment.experiment_id) == queued
+    assert queued.status == "queued"
+    assert queued.metrics["queued"] is True
+    assert persisted_service.list_experiment_reports(experiment.experiment_id) == [
+        report
+    ]
+    assert persisted_service.get_report(report.report_id) == report
+    assert repository.get_report(report.report_id) == report
 
 
 def test_repository_round_trips_run_and_updates_account(

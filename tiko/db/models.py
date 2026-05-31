@@ -137,6 +137,67 @@ class SimulationRunRecord(Base):
     )
 
 
+class DatasetMetadataRecord(Base):
+    """Persist imported dataset metadata for research workflows."""
+
+    __tablename__ = "datasets"
+
+    dataset_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_uri: Mapped[str] = mapped_column(Text, nullable=False)
+    symbols: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    timeframes: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    candle_count: Mapped[int] = mapped_column(nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    start_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class DatasetQualityReportRecord(Base):
+    """Persist the latest validation report for an imported dataset."""
+
+    __tablename__ = "dataset_quality_reports"
+
+    dataset_id: Mapped[str] = mapped_column(
+        ForeignKey("datasets.dataset_id"), primary_key=True
+    )
+    total_records: Mapped[int] = mapped_column(nullable=False)
+    error_count: Mapped[int] = mapped_column(nullable=False)
+    warning_count: Mapped[int] = mapped_column(nullable=False)
+    has_errors: Mapped[bool] = mapped_column(nullable=False)
+    issues: Mapped[list[dict[str, object]]] = mapped_column(JSON, nullable=False)
+
+
+class DatasetCandleRecord(Base):
+    """Persist normalized candles owned by an imported dataset."""
+
+    __tablename__ = "dataset_candles"
+
+    candle_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.dataset_id"))
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    timeframe: Mapped[str] = mapped_column(String(32), nullable=False)
+    open_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    close_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    open: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    high: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    low: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    close: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    volume: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    quote_volume: Mapped[Decimal | None] = mapped_column(ExactDecimal())
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class CandleRecord(Base):
     """Persist a point-in-time candle emitted by a simulation run."""
 
@@ -296,6 +357,27 @@ class ModelRegistryRecord(Base):
     )
 
 
+class ExperimentRegistryRecord(Base):
+    """Persist research experiment metadata and lifecycle state."""
+
+    __tablename__ = "experiments"
+
+    experiment_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    hypothesis: Mapped[str] = mapped_column(Text, nullable=False)
+    dataset_id: Mapped[str] = mapped_column(ForeignKey("datasets.dataset_id"))
+    model_id: Mapped[str | None] = mapped_column(String(36))
+    parameters: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    metrics: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class PluginRegistryRecord(Base):
     """Persist plugin manifests and sandbox validation results."""
 
@@ -316,7 +398,7 @@ class ReportRecord(Base):
     __tablename__ = "reports"
 
     report_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    run_id: Mapped[str] = mapped_column(ForeignKey("simulation_runs.run_id"))
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False)
     report_type: Mapped[str] = mapped_column(String(32), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     summary: Mapped[str] = mapped_column(Text, nullable=False)

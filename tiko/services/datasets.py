@@ -11,6 +11,7 @@ from tiko.data import (
     MarketDataValidator,
     ParquetCandleImporter,
 )
+from tiko.db.repositories import SimulationRepository
 from tiko.domain.dataset import (
     DatasetQualityIssue,
     DatasetQualityReport,
@@ -26,16 +27,22 @@ class DatasetServiceError(ValueError):
 
 
 class DatasetService:
-    """Manage process-local imported datasets."""
+    """Manage imported datasets with optional repository persistence."""
 
-    def __init__(self, validator: MarketDataValidator | None = None) -> None:
+    def __init__(
+        self,
+        validator: MarketDataValidator | None = None,
+        repository: SimulationRepository | None = None,
+    ) -> None:
         """Initialize the dataset service.
 
         Args:
             validator: Optional market data validator.
+            repository: Optional persistence repository.
         """
 
         self._validator = validator or MarketDataValidator()
+        self._repository = repository
         self._csv_importer = CsvCandleImporter(self._validator)
         self._parquet_importer = ParquetCandleImporter(self._validator)
         self._datasets: dict[UUID, DatasetRecord] = {}
@@ -91,6 +98,8 @@ class DatasetService:
         self._datasets[dataset_id] = record
         self._candles[dataset_id] = result.candles
         self._quality_reports[dataset_id] = quality_report
+        if self._repository is not None:
+            self._repository.save_dataset(record, result.candles, quality_report)
         return record
 
     def list_datasets(self) -> list[DatasetRecord]:
@@ -100,6 +109,8 @@ class DatasetService:
             Dataset records sorted by creation time.
         """
 
+        if self._repository is not None:
+            return self._repository.list_datasets()
         return sorted(self._datasets.values(), key=lambda dataset: dataset.created_at)
 
     def get_dataset(self, dataset_id: UUID) -> DatasetRecord:
@@ -115,6 +126,11 @@ class DatasetService:
             KeyError: If the dataset does not exist.
         """
 
+        if self._repository is not None:
+            dataset = self._repository.get_dataset(dataset_id)
+            if dataset is None:
+                raise KeyError(dataset_id)
+            return dataset
         return self._datasets[dataset_id]
 
     def validate_dataset(self, dataset_id: UUID) -> DatasetQualityReport:
@@ -130,13 +146,16 @@ class DatasetService:
             KeyError: If the dataset does not exist.
         """
 
-        candles = self._candles[dataset_id]
+        dataset = self.get_dataset(dataset_id)
+        candles = self._get_candles_for_validation(dataset_id)
         validation_report = self._validator.validate_candles(candles)
         quality_report = self._build_quality_report(dataset_id, validation_report)
-        dataset = self._datasets[dataset_id]
         status: DatasetStatus = "invalid" if quality_report.has_errors else "validated"
-        self._datasets[dataset_id] = dataset.model_copy(update={"status": status})
+        updated_dataset = dataset.model_copy(update={"status": status})
+        self._datasets[dataset_id] = updated_dataset
         self._quality_reports[dataset_id] = quality_report
+        if self._repository is not None:
+            self._repository.save_dataset(updated_dataset, candles, quality_report)
         return quality_report
 
     def get_quality_report(self, dataset_id: UUID) -> DatasetQualityReport:
@@ -152,6 +171,11 @@ class DatasetService:
             KeyError: If the dataset does not exist.
         """
 
+        if self._repository is not None:
+            report = self._repository.get_dataset_quality_report(dataset_id)
+            if report is None:
+                raise KeyError(dataset_id)
+            return report
         return self._quality_reports[dataset_id]
 
     def list_candles(self, dataset_id: UUID, limit: int) -> list[Candle]:
@@ -168,7 +192,27 @@ class DatasetService:
             KeyError: If the dataset does not exist.
         """
 
+        if self._repository is not None:
+            self.get_dataset(dataset_id)
+            return self._repository.list_dataset_candles(dataset_id, limit)
         return list(self._candles[dataset_id][:limit])
+
+    def _get_candles_for_validation(self, dataset_id: UUID) -> tuple[Candle, ...]:
+        """Load candles for dataset validation.
+
+        Args:
+            dataset_id: Dataset identifier.
+
+        Returns:
+            Dataset candles.
+
+        Raises:
+            KeyError: If the dataset does not exist.
+        """
+
+        if self._repository is not None:
+            return tuple(self._repository.list_dataset_candles(dataset_id))
+        return self._candles[dataset_id]
 
     def _source_from_path(self, path: Path) -> DatasetSource:
         """Resolve a dataset source from a file extension.

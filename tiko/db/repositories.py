@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Literal, cast
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from tiko.db.models import (
@@ -12,8 +12,12 @@ from tiko.db.models import (
     AlertRecord,
     AuditLogRecord,
     CandleRecord,
+    DatasetCandleRecord,
+    DatasetMetadataRecord,
+    DatasetQualityReportRecord,
     DecisionRecord,
     DecisionReviewRecord,
+    ExperimentRegistryRecord,
     FillRecord,
     MarketEventRecord,
     MemoryEntryRecord,
@@ -25,7 +29,15 @@ from tiko.db.models import (
     SimulationRunRecord,
 )
 from tiko.domain.account import SimAccount
+from tiko.domain.dataset import (
+    DatasetQualityIssue,
+    DatasetQualityReport,
+    DatasetRecord,
+    DatasetSource,
+    DatasetStatus,
+)
 from tiko.domain.decision import DecisionReview, TradeIntent
+from tiko.domain.experiment import ExperimentKind, ExperimentRecord, ExperimentStatus
 from tiko.domain.market import Candle, MarketEvent
 from tiko.domain.memory import MemoryEntry
 from tiko.domain.model import ModelRegistryEntry, ModelStatus, ModelType
@@ -202,6 +214,139 @@ class SimulationRepository:
                 select(AuditLogRecord).order_by(AuditLogRecord.created_at)
             ).all()
             return [self._to_audit_log_entry(record) for record in records]
+
+    def save_dataset(
+        self,
+        dataset: DatasetRecord,
+        candles: tuple[Candle, ...],
+        quality_report: DatasetQualityReport,
+    ) -> None:
+        """Persist imported dataset metadata, candles, and quality details.
+
+        Args:
+            dataset: Dataset metadata to persist.
+            candles: Normalized candles owned by the dataset.
+            quality_report: Latest dataset validation summary.
+        """
+
+        with self._session_factory() as session:
+            self._merge_dataset(session, dataset)
+            self._replace_dataset_candles(session, dataset.dataset_id, candles)
+            self._merge_dataset_quality_report(session, quality_report)
+            session.commit()
+
+    def get_dataset(self, dataset_id: UUID) -> DatasetRecord | None:
+        """Load one imported dataset by ID.
+
+        Args:
+            dataset_id: Dataset identifier.
+
+        Returns:
+            Dataset record or `None`.
+        """
+
+        with self._session_factory() as session:
+            record = session.get(DatasetMetadataRecord, str(dataset_id))
+            if record is None:
+                return None
+            return self._to_dataset(record)
+
+    def list_datasets(self) -> list[DatasetRecord]:
+        """List imported datasets ordered by creation time.
+
+        Returns:
+            Persisted dataset records.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(DatasetMetadataRecord).order_by(DatasetMetadataRecord.created_at)
+            ).all()
+            return [self._to_dataset(record) for record in records]
+
+    def get_dataset_quality_report(
+        self, dataset_id: UUID
+    ) -> DatasetQualityReport | None:
+        """Load the latest validation report for one dataset.
+
+        Args:
+            dataset_id: Dataset identifier.
+
+        Returns:
+            Dataset quality report or `None`.
+        """
+
+        with self._session_factory() as session:
+            record = session.get(DatasetQualityReportRecord, str(dataset_id))
+            if record is None:
+                return None
+            return self._to_dataset_quality_report(record)
+
+    def list_dataset_candles(
+        self, dataset_id: UUID, limit: int | None = None
+    ) -> list[Candle]:
+        """List imported candles for one dataset.
+
+        Args:
+            dataset_id: Dataset identifier.
+            limit: Optional maximum candles to return.
+
+        Returns:
+            Persisted dataset candles ordered by close time.
+        """
+
+        with self._session_factory() as session:
+            statement = (
+                select(DatasetCandleRecord)
+                .where(DatasetCandleRecord.dataset_id == str(dataset_id))
+                .order_by(DatasetCandleRecord.close_time)
+            )
+            if limit is not None:
+                statement = statement.limit(limit)
+            records = session.scalars(statement).all()
+            return [self._to_dataset_candle(record) for record in records]
+
+    def save_experiment(self, experiment: ExperimentRecord) -> None:
+        """Persist a research experiment.
+
+        Args:
+            experiment: Experiment metadata and lifecycle state to persist.
+        """
+
+        with self._session_factory() as session:
+            self._merge_experiment(session, experiment)
+            session.commit()
+
+    def get_experiment(self, experiment_id: UUID) -> ExperimentRecord | None:
+        """Load one research experiment by ID.
+
+        Args:
+            experiment_id: Experiment identifier.
+
+        Returns:
+            Experiment record or `None`.
+        """
+
+        with self._session_factory() as session:
+            record = session.get(ExperimentRegistryRecord, str(experiment_id))
+            if record is None:
+                return None
+            return self._to_experiment(record)
+
+    def list_experiments(self) -> list[ExperimentRecord]:
+        """List research experiments ordered by creation time.
+
+        Returns:
+            Persisted experiment records.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(ExperimentRegistryRecord).order_by(
+                    ExperimentRegistryRecord.created_at
+                )
+            ).all()
+            return [self._to_experiment(record) for record in records]
 
     def list_candles(self, run_id: UUID) -> list[Candle]:
         """List candles persisted for a simulation run.
@@ -461,6 +606,22 @@ class SimulationRepository:
             self._merge_report(session, report)
             session.commit()
 
+    def get_report(self, report_id: UUID) -> ReportArtifact | None:
+        """Load one structured report by ID.
+
+        Args:
+            report_id: Report identifier.
+
+        Returns:
+            Report artifact or `None`.
+        """
+
+        with self._session_factory() as session:
+            record = session.get(ReportRecord, str(report_id))
+            if record is None:
+                return None
+            return self._to_report(record)
+
     def list_reports(self, run_id: UUID) -> list[ReportArtifact]:
         """List reports for a simulation run.
 
@@ -554,6 +715,114 @@ class SimulationRepository:
                 unrealized_pnl=account.unrealized_pnl,
                 max_drawdown=account.max_drawdown,
                 status=account.status,
+            )
+        )
+
+    def _merge_dataset(self, session: Session, dataset: DatasetRecord) -> None:
+        """Merge dataset metadata into the active session.
+
+        Args:
+            session: Active SQLAlchemy session.
+            dataset: Dataset metadata to merge.
+        """
+
+        session.merge(
+            DatasetMetadataRecord(
+                dataset_id=str(dataset.dataset_id),
+                name=dataset.name,
+                source=dataset.source,
+                source_uri=dataset.source_uri,
+                symbols=dataset.symbols,
+                timeframes=dataset.timeframes,
+                candle_count=dataset.candle_count,
+                status=dataset.status,
+                start_time=dataset.start_time,
+                end_time=dataset.end_time,
+                created_at=dataset.created_at,
+            )
+        )
+
+    def _replace_dataset_candles(
+        self, session: Session, dataset_id: UUID, candles: tuple[Candle, ...]
+    ) -> None:
+        """Replace all normalized candles for one dataset.
+
+        Args:
+            session: Active SQLAlchemy session.
+            dataset_id: Dataset identifier.
+            candles: Replacement candle sequence.
+        """
+
+        session.execute(
+            delete(DatasetCandleRecord).where(
+                DatasetCandleRecord.dataset_id == str(dataset_id)
+            )
+        )
+        session.add_all(
+            DatasetCandleRecord(
+                dataset_id=str(dataset_id),
+                symbol=candle.symbol,
+                timeframe=candle.timeframe,
+                open_time=candle.open_time,
+                close_time=candle.close_time,
+                open=candle.open,
+                high=candle.high,
+                low=candle.low,
+                close=candle.close,
+                volume=candle.volume,
+                quote_volume=candle.quote_volume,
+                source=candle.source,
+                as_of=candle.as_of,
+                created_at=candle.created_at,
+            )
+            for candle in candles
+        )
+
+    def _merge_dataset_quality_report(
+        self, session: Session, report: DatasetQualityReport
+    ) -> None:
+        """Merge a dataset validation report into the active session.
+
+        Args:
+            session: Active SQLAlchemy session.
+            report: Dataset quality report to merge.
+        """
+
+        session.merge(
+            DatasetQualityReportRecord(
+                dataset_id=str(report.dataset_id),
+                total_records=report.total_records,
+                error_count=report.error_count,
+                warning_count=report.warning_count,
+                has_errors=report.has_errors,
+                issues=[issue.model_dump(mode="json") for issue in report.issues],
+            )
+        )
+
+    def _merge_experiment(self, session: Session, experiment: ExperimentRecord) -> None:
+        """Merge a research experiment into the active session.
+
+        Args:
+            session: Active SQLAlchemy session.
+            experiment: Experiment record to merge.
+        """
+
+        session.merge(
+            ExperimentRegistryRecord(
+                experiment_id=str(experiment.experiment_id),
+                name=experiment.name,
+                kind=experiment.kind,
+                hypothesis=experiment.hypothesis,
+                dataset_id=str(experiment.dataset_id),
+                model_id=str(experiment.model_id)
+                if experiment.model_id is not None
+                else None,
+                parameters=experiment.parameters,
+                status=experiment.status,
+                metrics=experiment.metrics,
+                created_at=experiment.created_at,
+                queued_at=experiment.queued_at,
+                completed_at=experiment.completed_at,
             )
         )
 
@@ -937,6 +1206,79 @@ class SimulationRepository:
             status=cast(AccountStatus, record.status),
         )
 
+    def _to_dataset(self, record: DatasetMetadataRecord) -> DatasetRecord:
+        """Convert a dataset metadata row to a domain model.
+
+        Args:
+            record: Persisted dataset row.
+
+        Returns:
+            Dataset domain model.
+        """
+
+        return DatasetRecord(
+            dataset_id=UUID(record.dataset_id),
+            name=record.name,
+            source=cast(DatasetSource, record.source),
+            source_uri=record.source_uri,
+            symbols=list(record.symbols),
+            timeframes=list(record.timeframes),
+            candle_count=record.candle_count,
+            status=cast(DatasetStatus, record.status),
+            start_time=self._optional_aware_datetime(record.start_time),
+            end_time=self._optional_aware_datetime(record.end_time),
+            created_at=self._aware_datetime(record.created_at),
+        )
+
+    def _to_dataset_quality_report(
+        self, record: DatasetQualityReportRecord
+    ) -> DatasetQualityReport:
+        """Convert a dataset quality report row to a domain model.
+
+        Args:
+            record: Persisted dataset quality report row.
+
+        Returns:
+            Dataset quality report domain model.
+        """
+
+        return DatasetQualityReport(
+            dataset_id=UUID(record.dataset_id),
+            total_records=record.total_records,
+            error_count=record.error_count,
+            warning_count=record.warning_count,
+            has_errors=record.has_errors,
+            issues=[
+                DatasetQualityIssue.model_validate(issue) for issue in record.issues
+            ],
+        )
+
+    def _to_dataset_candle(self, record: DatasetCandleRecord) -> Candle:
+        """Convert a dataset candle row to a domain model.
+
+        Args:
+            record: Persisted dataset candle row.
+
+        Returns:
+            Candle domain model.
+        """
+
+        return Candle(
+            symbol=record.symbol,
+            timeframe=record.timeframe,
+            open_time=self._aware_datetime(record.open_time),
+            close_time=self._aware_datetime(record.close_time),
+            open=record.open,
+            high=record.high,
+            low=record.low,
+            close=record.close,
+            volume=record.volume,
+            quote_volume=record.quote_volume,
+            source=record.source,
+            as_of=self._aware_datetime(record.as_of),
+            created_at=self._aware_datetime(record.created_at),
+        )
+
     def _to_candle(self, record: CandleRecord) -> Candle:
         """Convert a candle row to a domain model.
 
@@ -961,6 +1303,31 @@ class SimulationRepository:
             source=record.source,
             as_of=self._aware_datetime(record.as_of),
             created_at=self._aware_datetime(record.created_at),
+        )
+
+    def _to_experiment(self, record: ExperimentRegistryRecord) -> ExperimentRecord:
+        """Convert an experiment row to a domain model.
+
+        Args:
+            record: Persisted experiment row.
+
+        Returns:
+            Experiment domain model.
+        """
+
+        return ExperimentRecord(
+            experiment_id=UUID(record.experiment_id),
+            name=record.name,
+            kind=cast(ExperimentKind, record.kind),
+            hypothesis=record.hypothesis,
+            dataset_id=UUID(record.dataset_id),
+            model_id=UUID(record.model_id) if record.model_id else None,
+            parameters=dict(record.parameters),
+            status=cast(ExperimentStatus, record.status),
+            metrics=dict(record.metrics),
+            created_at=self._aware_datetime(record.created_at),
+            queued_at=self._optional_aware_datetime(record.queued_at),
+            completed_at=self._optional_aware_datetime(record.completed_at),
         )
 
     def _to_market_event(self, record: MarketEventRecord) -> MarketEvent:

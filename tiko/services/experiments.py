@@ -3,16 +3,22 @@
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+from tiko.db.repositories import SimulationRepository
 from tiko.domain.experiment import ExperimentKind, ExperimentRecord
 from tiko.domain.reporting import ReportArtifact
 
 
 class ExperimentService:
-    """Manage process-local research experiments."""
+    """Manage research experiments with optional repository persistence."""
 
-    def __init__(self) -> None:
-        """Initialize the experiment service."""
+    def __init__(self, repository: SimulationRepository | None = None) -> None:
+        """Initialize the experiment service.
 
+        Args:
+            repository: Optional persistence repository.
+        """
+
+        self._repository = repository
         self._experiments: dict[UUID, ExperimentRecord] = {}
         self._reports: dict[UUID, list[ReportArtifact]] = {}
 
@@ -52,6 +58,8 @@ class ExperimentService:
             created_at=datetime.now(UTC),
         )
         self._experiments[experiment.experiment_id] = experiment
+        if self._repository is not None:
+            self._repository.save_experiment(experiment)
         return experiment
 
     def list_experiments(self) -> list[ExperimentRecord]:
@@ -61,6 +69,8 @@ class ExperimentService:
             Experiment records sorted by creation time.
         """
 
+        if self._repository is not None:
+            return self._repository.list_experiments()
         return sorted(
             self._experiments.values(), key=lambda experiment: experiment.created_at
         )
@@ -78,6 +88,11 @@ class ExperimentService:
             KeyError: If the experiment does not exist.
         """
 
+        if self._repository is not None:
+            experiment = self._repository.get_experiment(experiment_id)
+            if experiment is None:
+                raise KeyError(experiment_id)
+            return experiment
         return self._experiments[experiment_id]
 
     def queue_run(
@@ -96,7 +111,7 @@ class ExperimentService:
             KeyError: If the experiment does not exist.
         """
 
-        experiment = self._experiments[experiment_id]
+        experiment = self.get_experiment(experiment_id)
         metrics = experiment.metrics | {"queued": True}
         if job_id is not None:
             metrics["job_id"] = str(job_id)
@@ -108,6 +123,8 @@ class ExperimentService:
             }
         )
         self._experiments[experiment_id] = queued_experiment
+        if self._repository is not None:
+            self._repository.save_experiment(queued_experiment)
         return queued_experiment
 
     def create_experiment_report(self, experiment_id: UUID) -> ReportArtifact:
@@ -123,7 +140,7 @@ class ExperimentService:
             KeyError: If the experiment does not exist.
         """
 
-        experiment = self._experiments[experiment_id]
+        experiment = self.get_experiment(experiment_id)
         created_at = datetime.now(UTC)
         report = ReportArtifact(
             report_id=uuid4(),
@@ -147,6 +164,8 @@ class ExperimentService:
             created_at=created_at,
         )
         self._reports.setdefault(experiment_id, []).append(report)
+        if self._repository is not None:
+            self._repository.save_report(report)
         return report
 
     def list_experiment_reports(self, experiment_id: UUID) -> list[ReportArtifact]:
@@ -163,6 +182,12 @@ class ExperimentService:
         """
 
         self.get_experiment(experiment_id)
+        if self._repository is not None:
+            return [
+                report
+                for report in self._repository.list_reports(experiment_id)
+                if report.report_type == "experiment"
+            ]
         return list(self._reports.get(experiment_id, []))
 
     def get_report(self, report_id: UUID) -> ReportArtifact:
@@ -178,6 +203,11 @@ class ExperimentService:
             KeyError: If the report does not exist.
         """
 
+        if self._repository is not None:
+            report = self._repository.get_report(report_id)
+            if report is not None and report.report_type == "experiment":
+                return report
+            raise KeyError(report_id)
         for reports in self._reports.values():
             for report in reports:
                 if report.report_id == report_id:
