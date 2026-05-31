@@ -77,6 +77,12 @@ def test_query_routes_expose_simulated_state() -> None:
     assert len(client.get("/api/decisions").json()) == 1
     assert len(client.get("/api/orders").json()) == 1
     assert len(client.get("/api/fills").json()) == 1
+    assert len(client.get(f"/api/simulations/{run_id}/events").json()) == 1
+    observation_response = client.get(f"/api/simulations/{run_id}/observations/BTCUSDT")
+    assert observation_response.status_code == 200
+    observation_payload = observation_response.json()
+    assert observation_payload["symbol"] == "BTCUSDT"
+    assert len(observation_payload["candles"]) == 1
     assert client.get(f"/api/portfolio/{run_id}/summary").json()["run_id"] == run_id
     assert (
         client.get(f"/api/risk/{run_id}/limits").json()["live_trading_allowed"] is False
@@ -84,6 +90,47 @@ def test_query_routes_expose_simulated_state() -> None:
     assert (
         client.get(f"/api/risk/{run_id}/reviews/latest").json()["status"] == "approved"
     )
+
+
+def test_agent_routes_evaluate_rule_based_agent() -> None:
+    """Verify agent routes expose deterministic structured intent."""
+
+    client = create_test_client()
+    run_id = client.post(
+        "/api/simulations",
+        json={"name": "agent-demo", "symbols": ["BTCUSDT"]},
+    ).json()["run_id"]
+    client.post(f"/api/simulations/{run_id}/step", json={"confidence": 0.7})
+    observation = client.get(f"/api/simulations/{run_id}/observations/BTCUSDT").json()
+
+    agents_response = client.get("/api/agents")
+    intent_response = client.post("/api/agents/rule-based/evaluate", json=observation)
+
+    assert agents_response.status_code == 200
+    assert agents_response.json()[0]["live_trading_allowed"] is False
+    assert intent_response.status_code == 200
+    intent_payload = intent_response.json()
+    assert intent_payload["run_id"] == run_id
+    assert intent_payload["symbol"] == "BTCUSDT"
+    assert intent_payload["action"] == "hold"
+
+
+def test_simulation_websocket_returns_event_snapshot() -> None:
+    """Verify WebSocket route returns current simulation events."""
+
+    client = create_test_client()
+    run_id = client.post(
+        "/api/simulations",
+        json={"name": "ws-demo", "symbols": ["BTCUSDT"]},
+    ).json()["run_id"]
+    client.post(f"/api/simulations/{run_id}/step", json={"confidence": 0.7})
+
+    with client.websocket_connect(f"/ws/simulations/{run_id}") as websocket:
+        payload = websocket.receive_json()
+
+    assert payload["type"] == "snapshot"
+    assert payload["run_id"] == run_id
+    assert len(payload["events"]) == 1
 
 
 def test_run_specific_routes_return_404_for_unknown_run() -> None:

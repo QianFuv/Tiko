@@ -8,6 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from tiko.api.dependencies import get_simulation_service
+from tiko.domain.market import MarketEvent
+from tiko.domain.observation import Observation
 from tiko.domain.simulation import SimulationRun
 from tiko.services import SimulationService
 from tiko.simulation.state import SimulationStepResult
@@ -86,6 +88,60 @@ def get_simulation(
 
     try:
         return service.get_run(run_id)
+    except KeyError as error:
+        raise HTTPException(
+            status_code=404, detail="Simulation run not found."
+        ) from error
+
+
+@router.get("/{run_id}/events", response_model=list[MarketEvent])
+def list_simulation_events(
+    run_id: UUID,
+    service: SimulationServiceDep,
+) -> list[MarketEvent]:
+    """List market events emitted by a simulation run.
+
+    Args:
+        run_id: Simulation run identifier.
+        service: Simulation service dependency.
+
+    Returns:
+        Market events for the run.
+
+    Raises:
+        HTTPException: If the run does not exist.
+    """
+
+    try:
+        return service.list_events(run_id)
+    except KeyError as error:
+        raise HTTPException(
+            status_code=404, detail="Simulation run not found."
+        ) from error
+
+
+@router.get("/{run_id}/observations/{symbol}", response_model=Observation)
+def get_simulation_observation(
+    run_id: UUID,
+    symbol: str,
+    service: SimulationServiceDep,
+) -> Observation:
+    """Build a point-in-time observation for a run and symbol.
+
+    Args:
+        run_id: Simulation run identifier.
+        symbol: Symbol to observe.
+        service: Simulation service dependency.
+
+    Returns:
+        Point-in-time observation.
+
+    Raises:
+        HTTPException: If the run does not exist.
+    """
+
+    try:
+        return service.build_observation(run_id, symbol)
     except KeyError as error:
         raise HTTPException(
             status_code=404, detail="Simulation run not found."

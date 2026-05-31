@@ -3,6 +3,7 @@
 from fastapi import FastAPI
 
 from tiko.api.routes import (
+    agents,
     decisions,
     health,
     market,
@@ -10,6 +11,7 @@ from tiko.api.routes import (
     portfolio,
     risk,
     simulations,
+    websocket,
 )
 from tiko.core.config import get_settings
 
@@ -25,11 +27,13 @@ def create_app() -> FastAPI:
     application = FastAPI(title=settings.app_name)
     application.include_router(health.router, prefix=settings.api_prefix)
     application.include_router(market.router, prefix=settings.api_prefix)
+    application.include_router(agents.router, prefix=settings.api_prefix)
     application.include_router(simulations.router, prefix=settings.api_prefix)
     application.include_router(decisions.router, prefix=settings.api_prefix)
     application.include_router(portfolio.router, prefix=settings.api_prefix)
     application.include_router(orders.router, prefix=settings.api_prefix)
     application.include_router(risk.router, prefix=settings.api_prefix)
+    application.include_router(websocket.router)
     return application
 
 

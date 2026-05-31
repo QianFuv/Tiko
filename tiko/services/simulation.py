@@ -10,9 +10,11 @@ from tiko.db.repositories import SimulationRepository
 from tiko.domain.account import SimAccount
 from tiko.domain.decision import TradeIntent
 from tiko.domain.market import Candle, MarketEvent
+from tiko.domain.observation import Observation
 from tiko.domain.order import Fill, SimOrder
 from tiko.domain.risk import RiskReview
 from tiko.domain.simulation import SimulationRun
+from tiko.observation import ObservationBuilder
 from tiko.services.portfolio import PortfolioService
 from tiko.services.risk import RiskService
 from tiko.simulation.broker import SimBroker
@@ -49,6 +51,7 @@ class SimulationService:
         self._portfolio_service = PortfolioService()
         self._broker = SimBroker()
         self._event_bus = EventBus()
+        self._observation_builder = ObservationBuilder()
 
     def create_run(
         self,
@@ -264,6 +267,44 @@ class SimulationService:
         return [
             decision for state in self._states.values() for decision in state.decisions
         ]
+
+    def list_events(self, run_id: UUID) -> list[MarketEvent]:
+        """List market events for a simulation run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Market events for the run.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        return list(self._states[run_id].events)
+
+    def build_observation(self, run_id: UUID, symbol: str) -> Observation:
+        """Build a point-in-time observation for a run and symbol.
+
+        Args:
+            run_id: Simulation run identifier.
+            symbol: Symbol to observe.
+
+        Returns:
+            Point-in-time observation.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        state = self._states[run_id]
+        return self._observation_builder.build(
+            run=state.run,
+            symbol=symbol,
+            as_of=state.run.current_sim_time,
+            candles=state.candles,
+            events=state.events,
+        )
 
     def get_latest_risk_review(self, run_id: UUID) -> RiskReview | None:
         """Return the latest risk review for a run.
