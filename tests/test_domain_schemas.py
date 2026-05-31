@@ -7,11 +7,13 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
+from tiko.core.auth import ROLE_PERMISSIONS, has_permission
 from tiko.domain import (
     Asset,
     Candle,
     Fill,
     OrderRequest,
+    Principal,
     RiskReview,
     SimAccount,
     SimOrder,
@@ -205,3 +207,22 @@ def test_risk_review_and_simulation_run_are_validated() -> None:
                 "created_at_sim_time": current_time(),
             }
         )
+
+
+def test_security_roles_preserve_read_only_viewer_boundary() -> None:
+    """Verify security schemas keep viewers read-only and reject unknown roles."""
+
+    viewer = Principal(user_id="viewer@example.test", role="viewer")
+
+    assert has_permission(viewer, "observe") is True
+    assert has_permission(viewer, "manage_simulations") is False
+    assert "manage_simulations" not in ROLE_PERMISSIONS["viewer"]
+    assert {
+        permission
+        for permissions in ROLE_PERMISSIONS.values()
+        for permission in permissions
+        if "trading" in permission
+    } == set()
+
+    with pytest.raises(ValidationError):
+        Principal.model_validate({"user_id": "invalid@example.test", "role": "trader"})

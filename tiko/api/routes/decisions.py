@@ -7,12 +7,21 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from tiko.api.dependencies import get_simulation_service
+from tiko.api.dependencies import (
+    get_audit_service,
+    get_simulation_service,
+    require_permission,
+)
 from tiko.domain.decision import DecisionReview, TradeIntent
-from tiko.services import SimulationService
+from tiko.domain.security import Principal
+from tiko.services import AuditService, SimulationService
 
 router = APIRouter(prefix="/decisions", tags=["decisions"])
 SimulationServiceDep = Annotated[SimulationService, Depends(get_simulation_service)]
+AuditServiceDep = Annotated[AuditService, Depends(get_audit_service)]
+ManageResearchPrincipalDep = Annotated[
+    Principal, Depends(require_permission("manage_research"))
+]
 
 
 class DecisionReviewCreateRequest(BaseModel):
@@ -46,6 +55,8 @@ def create_decision_review(
     decision_id: UUID,
     request: DecisionReviewCreateRequest,
     service: SimulationServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManageResearchPrincipalDep,
 ) -> DecisionReview:
     """Create posterior review metrics for a decision.
 
@@ -53,6 +64,8 @@ def create_decision_review(
         decision_id: Trade intent identifier.
         request: Review creation payload.
         service: Simulation service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
 
     Returns:
         Created decision review.
@@ -62,7 +75,7 @@ def create_decision_review(
     """
 
     try:
-        return service.create_decision_review(
+        review = service.create_decision_review(
             decision_id=decision_id,
             horizon=request.horizon,
             realized_return=request.realized_return,
@@ -72,6 +85,14 @@ def create_decision_review(
             error_tags=request.error_tags,
             reviewer_summary=request.reviewer_summary,
         )
+        audit_service.record(
+            principal=principal,
+            action="decision.review.create",
+            resource_type="decision_review",
+            resource_id=str(review.review_id),
+            metadata={"decision_id": str(decision_id), "horizon": review.horizon},
+        )
+        return review
     except KeyError as error:
         raise HTTPException(status_code=404, detail="Decision not found.") from error
 

@@ -7,16 +7,28 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from tiko.api.dependencies import get_simulation_service
+from tiko.api.dependencies import (
+    get_audit_service,
+    get_simulation_service,
+    require_permission,
+)
 from tiko.domain.market import MarketEvent
 from tiko.domain.memory import MemoryEntry, MemoryType
 from tiko.domain.observation import Observation
+from tiko.domain.security import Principal
 from tiko.domain.simulation import SimulationRun
-from tiko.services import SimulationService
+from tiko.services import AuditService, SimulationService
 from tiko.simulation.state import SimulationStepResult
 
 router = APIRouter(prefix="/simulations", tags=["simulations"])
 SimulationServiceDep = Annotated[SimulationService, Depends(get_simulation_service)]
+AuditServiceDep = Annotated[AuditService, Depends(get_audit_service)]
+ManageSimulationPrincipalDep = Annotated[
+    Principal, Depends(require_permission("manage_simulations"))
+]
+ManageResearchPrincipalDep = Annotated[
+    Principal, Depends(require_permission("manage_research"))
+]
 
 
 class SimulationCreateRequest(BaseModel):
@@ -62,22 +74,34 @@ def list_simulations(service: SimulationServiceDep) -> list[SimulationRun]:
 def create_simulation(
     request: SimulationCreateRequest,
     service: SimulationServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManageSimulationPrincipalDep,
 ) -> SimulationRun:
     """Create an in-memory simulation run.
 
     Args:
         request: Simulation creation request.
         service: Simulation service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
 
     Returns:
         Created simulation run.
     """
 
-    return service.create_run(
+    run = service.create_run(
         name=request.name,
         symbols=request.symbols,
         start_sim_time=request.start_sim_time,
     )
+    audit_service.record(
+        principal=principal,
+        action="simulation.create",
+        resource_type="simulation_run",
+        resource_id=str(run.run_id),
+        metadata={"name": run.name, "symbols": run.symbols},
+    )
+    return run
 
 
 @router.get("/{run_id}", response_model=SimulationRun)
@@ -191,6 +215,8 @@ def create_simulation_memory(
     run_id: UUID,
     request: MemoryEntryCreateRequest,
     service: SimulationServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManageResearchPrincipalDep,
 ) -> MemoryEntry:
     """Create an auxiliary memory entry for a run.
 
@@ -198,6 +224,8 @@ def create_simulation_memory(
         run_id: Simulation run identifier.
         request: Memory creation request.
         service: Simulation service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
 
     Returns:
         Created memory entry.
@@ -207,7 +235,7 @@ def create_simulation_memory(
     """
 
     try:
-        return service.create_memory_entry(
+        entry = service.create_memory_entry(
             run_id=run_id,
             memory_type=request.memory_type,
             summary=request.summary,
@@ -216,6 +244,14 @@ def create_simulation_memory(
             available_at_sim_time=request.available_at_sim_time,
             decision_id=request.decision_id,
         )
+        audit_service.record(
+            principal=principal,
+            action="simulation.memory.create",
+            resource_type="memory_entry",
+            resource_id=str(entry.memory_id),
+            metadata={"run_id": str(run_id), "memory_type": entry.memory_type},
+        )
+        return entry
     except KeyError as error:
         raise HTTPException(
             status_code=404, detail="Simulation run not found."
@@ -228,6 +264,8 @@ def create_simulation_memory(
 def step_simulation(
     run_id: UUID,
     service: SimulationServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManageSimulationPrincipalDep,
     request: SimulationStepRequest | None = None,
 ) -> SimulationStepResult:
     """Advance one simulation run by one step.
@@ -236,6 +274,8 @@ def step_simulation(
         run_id: Simulation run identifier.
         request: Optional simulation step request.
         service: Simulation service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
 
     Returns:
         Simulation step result.
@@ -246,7 +286,18 @@ def step_simulation(
 
     confidence = request.confidence if request is not None else 0.7
     try:
-        return service.step_run(run_id, confidence=confidence)
+        result = service.step_run(run_id, confidence=confidence)
+        audit_service.record(
+            principal=principal,
+            action="simulation.step",
+            resource_type="simulation_run",
+            resource_id=str(run_id),
+            metadata={
+                "confidence": confidence,
+                "decision_id": str(result.decision.decision_id),
+            },
+        )
+        return result
     except KeyError as error:
         raise HTTPException(
             status_code=404, detail="Simulation run not found."

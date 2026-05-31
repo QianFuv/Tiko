@@ -5,6 +5,14 @@ from fastapi.testclient import TestClient
 from tiko.api.dependencies import reset_simulation_service
 from tiko.api.main import create_app
 
+ADMIN_HEADERS = {"X-Tiko-Role": "admin", "X-Tiko-User": "admin@example.test"}
+OPERATOR_HEADERS = {"X-Tiko-Role": "operator", "X-Tiko-User": "operator@example.test"}
+RESEARCHER_HEADERS = {
+    "X-Tiko-Role": "researcher",
+    "X-Tiko-User": "researcher@example.test",
+}
+VIEWER_HEADERS = {"X-Tiko-Role": "viewer", "X-Tiko-User": "viewer@example.test"}
+
 
 def create_test_client() -> TestClient:
     """Create a FastAPI test client with fresh in-memory state.
@@ -43,6 +51,7 @@ def test_simulation_routes_create_and_step_run() -> None:
             "symbols": ["BTCUSDT"],
             "start_sim_time": "2026-01-01T00:00:00Z",
         },
+        headers=OPERATOR_HEADERS,
     )
     assert create_response.status_code == 200
     run_id = create_response.json()["run_id"]
@@ -50,6 +59,7 @@ def test_simulation_routes_create_and_step_run() -> None:
     step_response = client.post(
         f"/api/simulations/{run_id}/step",
         json={"confidence": 0.7},
+        headers=OPERATOR_HEADERS,
     )
 
     assert step_response.status_code == 200
@@ -74,6 +84,7 @@ def test_comparison_routes_benchmark_and_compare_runs() -> None:
             "symbols": ["BTCUSDT"],
             "start_sim_time": "2026-01-01T00:00:00Z",
         },
+        headers=OPERATOR_HEADERS,
     ).json()["run_id"]
     second_run_id = client.post(
         "/api/simulations",
@@ -82,9 +93,18 @@ def test_comparison_routes_benchmark_and_compare_runs() -> None:
             "symbols": ["BTCUSDT"],
             "start_sim_time": "2026-01-01T00:00:00Z",
         },
+        headers=OPERATOR_HEADERS,
     ).json()["run_id"]
-    client.post(f"/api/simulations/{first_run_id}/step", json={"confidence": 0.7})
-    client.post(f"/api/simulations/{second_run_id}/step", json={"confidence": 0.7})
+    client.post(
+        f"/api/simulations/{first_run_id}/step",
+        json={"confidence": 0.7},
+        headers=OPERATOR_HEADERS,
+    )
+    client.post(
+        f"/api/simulations/{second_run_id}/step",
+        json={"confidence": 0.7},
+        headers=OPERATOR_HEADERS,
+    )
 
     benchmark_response = client.get(f"/api/comparisons/runs/{first_run_id}/benchmark")
     comparison_response = client.post(
@@ -93,6 +113,7 @@ def test_comparison_routes_benchmark_and_compare_runs() -> None:
             "baseline_run_id": first_run_id,
             "candidate_run_id": second_run_id,
         },
+        headers=RESEARCHER_HEADERS,
     )
 
     assert benchmark_response.status_code == 200
@@ -108,8 +129,13 @@ def test_query_routes_expose_simulated_state() -> None:
     run_id = client.post(
         "/api/simulations",
         json={"name": "query-demo", "symbols": ["BTCUSDT"]},
+        headers=OPERATOR_HEADERS,
     ).json()["run_id"]
-    client.post(f"/api/simulations/{run_id}/step", json={"confidence": 0.7})
+    client.post(
+        f"/api/simulations/{run_id}/step",
+        json={"confidence": 0.7},
+        headers=OPERATOR_HEADERS,
+    )
 
     assert client.get("/api/market/symbols").json()["private_methods_allowed"] is False
     assert len(client.get("/api/decisions").json()) == 1
@@ -128,7 +154,10 @@ def test_query_routes_expose_simulated_state() -> None:
     assert (
         client.get(f"/api/risk/{run_id}/reviews/latest").json()["status"] == "approved"
     )
-    report_response = client.post(f"/api/reports/simulations/{run_id}")
+    report_response = client.post(
+        f"/api/reports/simulations/{run_id}",
+        headers=OPERATOR_HEADERS,
+    )
     alert_response = client.post(
         f"/api/risk/{run_id}/alerts",
         json={
@@ -136,6 +165,7 @@ def test_query_routes_expose_simulated_state() -> None:
             "severity": "warning",
             "message": "Drawdown near threshold.",
         },
+        headers=OPERATOR_HEADERS,
     )
 
     assert report_response.status_code == 200
@@ -148,6 +178,7 @@ def test_query_routes_expose_simulated_state() -> None:
         client.post(
             f"/api/risk/{run_id}/alerts/{alert_id}/status",
             json={"status": "acknowledged"},
+            headers=OPERATOR_HEADERS,
         ).json()["status"]
         == "acknowledged"
     )
@@ -163,6 +194,7 @@ def test_query_routes_expose_simulated_state() -> None:
             "error_tags": [],
             "reviewer_summary": "Decision remained directionally correct.",
         },
+        headers=RESEARCHER_HEADERS,
     )
     memory_response = client.post(
         f"/api/simulations/{run_id}/memory",
@@ -173,6 +205,7 @@ def test_query_routes_expose_simulated_state() -> None:
             "tags": ["posterior_review"],
             "decision_id": decision_id,
         },
+        headers=RESEARCHER_HEADERS,
     )
 
     assert review_response.status_code == 200
@@ -194,8 +227,13 @@ def test_agent_routes_evaluate_rule_based_agent() -> None:
     run_id = client.post(
         "/api/simulations",
         json={"name": "agent-demo", "symbols": ["BTCUSDT"]},
+        headers=OPERATOR_HEADERS,
     ).json()["run_id"]
-    client.post(f"/api/simulations/{run_id}/step", json={"confidence": 0.7})
+    client.post(
+        f"/api/simulations/{run_id}/step",
+        json={"confidence": 0.7},
+        headers=OPERATOR_HEADERS,
+    )
     observation = client.get(f"/api/simulations/{run_id}/observations/BTCUSDT").json()
 
     agents_response = client.get("/api/agents")
@@ -230,6 +268,7 @@ def test_model_registry_routes_manage_research_models() -> None:
             "artifact_uri": "memory://baseline-rl",
             "status": "draft",
         },
+        headers=RESEARCHER_HEADERS,
     )
 
     assert create_response.status_code == 200
@@ -240,6 +279,7 @@ def test_model_registry_routes_manage_research_models() -> None:
     status_response = client.post(
         f"/api/models/{model_id}/status",
         json={"status": "validated"},
+        headers=RESEARCHER_HEADERS,
     )
 
     assert status_response.status_code == 200
@@ -265,7 +305,11 @@ def test_plugin_registry_routes_validate_sandbox_policy() -> None:
         "tests": ["test_schema_valid"],
     }
 
-    create_response = client.post("/api/plugins", json=safe_manifest)
+    create_response = client.post(
+        "/api/plugins",
+        json=safe_manifest,
+        headers=RESEARCHER_HEADERS,
+    )
 
     assert create_response.status_code == 200
     plugin_id = create_response.json()["plugin_id"]
@@ -275,6 +319,7 @@ def test_plugin_registry_routes_validate_sandbox_policy() -> None:
         client.post(
             f"/api/plugins/{plugin_id}/status",
             json={"status": "enabled"},
+            headers=RESEARCHER_HEADERS,
         ).json()["status"]
         == "enabled"
     )
@@ -282,7 +327,11 @@ def test_plugin_registry_routes_validate_sandbox_policy() -> None:
     unsafe_manifest = safe_manifest | {
         "permissions": {"write_market_events": True, "write_orders": True}
     }
-    unsafe_response = client.post("/api/plugins", json=unsafe_manifest)
+    unsafe_response = client.post(
+        "/api/plugins",
+        json=unsafe_manifest,
+        headers=RESEARCHER_HEADERS,
+    )
 
     assert unsafe_response.status_code == 422
     assert "write_orders" in unsafe_response.json()["detail"]
@@ -295,8 +344,13 @@ def test_simulation_websocket_returns_event_snapshot() -> None:
     run_id = client.post(
         "/api/simulations",
         json={"name": "ws-demo", "symbols": ["BTCUSDT"]},
+        headers=OPERATOR_HEADERS,
     ).json()["run_id"]
-    client.post(f"/api/simulations/{run_id}/step", json={"confidence": 0.7})
+    client.post(
+        f"/api/simulations/{run_id}/step",
+        json={"confidence": 0.7},
+        headers=OPERATOR_HEADERS,
+    )
 
     with client.websocket_connect(f"/ws/simulations/{run_id}") as websocket:
         payload = websocket.receive_json()
@@ -325,12 +379,18 @@ def test_memory_route_rejects_cross_run_decision_reference() -> None:
     first_run_id = client.post(
         "/api/simulations",
         json={"name": "first", "symbols": ["BTCUSDT"]},
+        headers=OPERATOR_HEADERS,
     ).json()["run_id"]
     second_run_id = client.post(
         "/api/simulations",
         json={"name": "second", "symbols": ["ETHUSDT"]},
+        headers=OPERATOR_HEADERS,
     ).json()["run_id"]
-    client.post(f"/api/simulations/{first_run_id}/step", json={"confidence": 0.7})
+    client.post(
+        f"/api/simulations/{first_run_id}/step",
+        json={"confidence": 0.7},
+        headers=OPERATOR_HEADERS,
+    )
     decision_id = client.get("/api/decisions").json()[0]["decision_id"]
 
     response = client.post(
@@ -342,7 +402,61 @@ def test_memory_route_rejects_cross_run_decision_reference() -> None:
             "tags": [],
             "decision_id": decision_id,
         },
+        headers=RESEARCHER_HEADERS,
     )
 
     assert response.status_code == 422
     assert "must belong to the run" in response.json()["detail"]
+
+
+def test_rbac_rejects_viewer_default_and_invalid_role_mutations() -> None:
+    """Verify unsafe roles cannot mutate control-plane simulation state."""
+
+    client = create_test_client()
+    payload = {"name": "blocked", "symbols": ["BTCUSDT"]}
+
+    default_role_response = client.post("/api/simulations", json=payload)
+    viewer_response = client.post(
+        "/api/simulations",
+        json=payload,
+        headers=VIEWER_HEADERS,
+    )
+    invalid_role_response = client.post(
+        "/api/simulations",
+        json=payload,
+        headers={"X-Tiko-Role": "trader", "X-Tiko-User": "invalid@example.test"},
+    )
+
+    assert default_role_response.status_code == 403
+    assert viewer_response.status_code == 403
+    assert invalid_role_response.status_code == 401
+
+
+def test_audit_logs_authorized_control_plane_mutations() -> None:
+    """Verify successful protected mutations are available to audit readers."""
+
+    client = create_test_client()
+    create_response = client.post(
+        "/api/simulations",
+        json={"name": "audit-demo", "symbols": ["BTCUSDT"]},
+        headers=OPERATOR_HEADERS,
+    )
+    run_id = create_response.json()["run_id"]
+    client.post(
+        f"/api/simulations/{run_id}/step",
+        json={"confidence": 0.7},
+        headers=OPERATOR_HEADERS,
+    )
+
+    viewer_response = client.get("/api/audit/logs", headers=VIEWER_HEADERS)
+    admin_response = client.get("/api/audit/logs", headers=ADMIN_HEADERS)
+
+    assert viewer_response.status_code == 403
+    assert admin_response.status_code == 200
+    entries = admin_response.json()
+    assert [entry["action"] for entry in entries] == [
+        "simulation.create",
+        "simulation.step",
+    ]
+    assert {entry["role"] for entry in entries} == {"operator"}
+    assert {entry["user_id"] for entry in entries} == {"operator@example.test"}

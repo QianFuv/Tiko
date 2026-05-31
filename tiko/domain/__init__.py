@@ -27,6 +27,7 @@ from tiko.domain.reporting import (
 )
 from tiko.domain.risk import RiskReview
 from tiko.domain.rl import EnvironmentStep, RewardBreakdown, RewardComponents, RlAction
+from tiko.domain.security import AuditLogEntry, Permission, Principal, Role
 from tiko.domain.simulation import SimulationRun
 
 __all__ = [
@@ -35,6 +36,7 @@ __all__ = [
     "AlertCategory",
     "AlertSeverity",
     "AlertStatus",
+    "AuditLogEntry",
     "Candle",
     "DecisionReview",
     "EnvironmentStep",
@@ -49,18 +51,21 @@ __all__ = [
     "Observation",
     "OrderBookSnapshot",
     "OrderRequest",
+    "Permission",
     "PluginManifest",
     "PluginPermissions",
     "PluginRegistryEntry",
     "PluginStatus",
     "PluginType",
     "Position",
+    "Principal",
     "RiskReview",
     "ReportArtifact",
     "ReportType",
     "RewardBreakdown",
     "RewardComponents",
     "RlAction",
+    "Role",
     "RunBenchmark",
     "RunComparison",
     "SandboxResult",

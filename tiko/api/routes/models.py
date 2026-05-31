@@ -6,13 +6,22 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from tiko.api.dependencies import get_model_registry_service
+from tiko.api.dependencies import (
+    get_audit_service,
+    get_model_registry_service,
+    require_permission,
+)
 from tiko.domain.model import ModelRegistryEntry, ModelStatus, ModelType
-from tiko.services import ModelRegistryService
+from tiko.domain.security import Principal
+from tiko.services import AuditService, ModelRegistryService
 
 router = APIRouter(prefix="/models", tags=["models"])
 ModelRegistryServiceDep = Annotated[
     ModelRegistryService, Depends(get_model_registry_service)
+]
+AuditServiceDep = Annotated[AuditService, Depends(get_audit_service)]
+ManageResearchPrincipalDep = Annotated[
+    Principal, Depends(require_permission("manage_research"))
 ]
 
 
@@ -54,18 +63,22 @@ def list_models(service: ModelRegistryServiceDep) -> list[ModelRegistryEntry]:
 def register_model(
     request: ModelRegisterRequest,
     service: ModelRegistryServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManageResearchPrincipalDep,
 ) -> ModelRegistryEntry:
     """Register a model artifact for simulated research use.
 
     Args:
         request: Model registration payload.
         service: Model registry service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
 
     Returns:
         Registered model entry.
     """
 
-    return service.register_model(
+    entry = service.register_model(
         name=request.name,
         version=request.version,
         model_type=request.model_type,
@@ -76,6 +89,14 @@ def register_model(
         artifact_uri=request.artifact_uri,
         status=request.status,
     )
+    audit_service.record(
+        principal=principal,
+        action="model.register",
+        resource_type="model",
+        resource_id=str(entry.model_id),
+        metadata={"name": entry.name, "version": entry.version},
+    )
+    return entry
 
 
 @router.get("/{model_id}", response_model=ModelRegistryEntry)
@@ -107,6 +128,8 @@ def update_model_status(
     model_id: UUID,
     request: ModelStatusUpdateRequest,
     service: ModelRegistryServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManageResearchPrincipalDep,
 ) -> ModelRegistryEntry:
     """Update one model registry status.
 
@@ -114,6 +137,8 @@ def update_model_status(
         model_id: Model identifier.
         request: Status update payload.
         service: Model registry service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
 
     Returns:
         Updated model registry entry.
@@ -123,6 +148,14 @@ def update_model_status(
     """
 
     try:
-        return service.update_status(model_id, request.status)
+        entry = service.update_status(model_id, request.status)
+        audit_service.record(
+            principal=principal,
+            action="model.status.update",
+            resource_type="model",
+            resource_id=str(model_id),
+            metadata={"status": entry.status},
+        )
+        return entry
     except KeyError as error:
         raise HTTPException(status_code=404, detail="Model not found.") from error

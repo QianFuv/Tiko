@@ -7,14 +7,23 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from tiko.api.dependencies import get_simulation_service
+from tiko.api.dependencies import (
+    get_audit_service,
+    get_simulation_service,
+    require_permission,
+)
 from tiko.core.config import get_settings
 from tiko.domain.reporting import Alert, AlertCategory, AlertSeverity, AlertStatus
 from tiko.domain.risk import RiskReview
-from tiko.services import SimulationService
+from tiko.domain.security import Principal
+from tiko.services import AuditService, SimulationService
 
 router = APIRouter(prefix="/risk", tags=["risk"])
 SimulationServiceDep = Annotated[SimulationService, Depends(get_simulation_service)]
+AuditServiceDep = Annotated[AuditService, Depends(get_audit_service)]
+ManageAlertsPrincipalDep = Annotated[
+    Principal, Depends(require_permission("manage_alerts"))
+]
 
 
 class RiskLimitsResponse(BaseModel):
@@ -108,6 +117,8 @@ def create_alert(
     run_id: UUID,
     request: AlertCreateRequest,
     service: SimulationServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManageAlertsPrincipalDep,
 ) -> Alert:
     """Create an alert for a simulation run.
 
@@ -115,6 +126,8 @@ def create_alert(
         run_id: Simulation run identifier.
         request: Alert creation request.
         service: Simulation service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
 
     Returns:
         Created alert.
@@ -124,12 +137,20 @@ def create_alert(
     """
 
     try:
-        return service.create_alert(
+        alert = service.create_alert(
             run_id=run_id,
             category=request.category,
             severity=request.severity,
             message=request.message,
         )
+        audit_service.record(
+            principal=principal,
+            action="alert.create",
+            resource_type="alert",
+            resource_id=str(alert.alert_id),
+            metadata={"run_id": str(run_id), "category": alert.category},
+        )
+        return alert
     except KeyError as error:
         raise HTTPException(
             status_code=404, detail="Simulation run not found."
@@ -142,6 +163,8 @@ def update_alert_status(
     alert_id: UUID,
     request: AlertStatusUpdateRequest,
     service: SimulationServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManageAlertsPrincipalDep,
 ) -> Alert:
     """Update a run alert status.
 
@@ -150,6 +173,8 @@ def update_alert_status(
         alert_id: Alert identifier.
         request: Alert status update request.
         service: Simulation service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
 
     Returns:
         Updated alert.
@@ -159,7 +184,15 @@ def update_alert_status(
     """
 
     try:
-        return service.update_alert_status(run_id, alert_id, request.status)
+        alert = service.update_alert_status(run_id, alert_id, request.status)
+        audit_service.record(
+            principal=principal,
+            action="alert.status.update",
+            resource_type="alert",
+            resource_id=str(alert_id),
+            metadata={"run_id": str(run_id), "status": alert.status},
+        )
+        return alert
     except KeyError as error:
         raise HTTPException(status_code=404, detail="Alert not found.") from error
 

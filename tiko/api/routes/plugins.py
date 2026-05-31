@@ -6,13 +6,22 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from tiko.api.dependencies import get_plugin_registry_service
+from tiko.api.dependencies import (
+    get_audit_service,
+    get_plugin_registry_service,
+    require_permission,
+)
 from tiko.domain.plugin import PluginManifest, PluginRegistryEntry, PluginStatus
-from tiko.services import PluginRegistryService
+from tiko.domain.security import Principal
+from tiko.services import AuditService, PluginRegistryService
 
 router = APIRouter(prefix="/plugins", tags=["plugins"])
 PluginRegistryServiceDep = Annotated[
     PluginRegistryService, Depends(get_plugin_registry_service)
+]
+AuditServiceDep = Annotated[AuditService, Depends(get_audit_service)]
+ManagePluginsPrincipalDep = Annotated[
+    Principal, Depends(require_permission("manage_plugins"))
 ]
 
 
@@ -40,12 +49,16 @@ def list_plugins(service: PluginRegistryServiceDep) -> list[PluginRegistryEntry]
 def register_plugin(
     manifest: PluginManifest,
     service: PluginRegistryServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManagePluginsPrincipalDep,
 ) -> PluginRegistryEntry:
     """Validate and register a plugin manifest.
 
     Args:
         manifest: Plugin manifest.
         service: Plugin registry service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
 
     Returns:
         Registered plugin entry.
@@ -55,7 +68,15 @@ def register_plugin(
     """
 
     try:
-        return service.register_plugin(manifest)
+        entry = service.register_plugin(manifest)
+        audit_service.record(
+            principal=principal,
+            action="plugin.register",
+            resource_type="plugin",
+            resource_id=str(entry.plugin_id),
+            metadata={"name": entry.manifest.name, "type": entry.manifest.plugin_type},
+        )
+        return entry
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
@@ -89,6 +110,8 @@ def update_plugin_status(
     plugin_id: UUID,
     request: PluginStatusUpdateRequest,
     service: PluginRegistryServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManagePluginsPrincipalDep,
 ) -> PluginRegistryEntry:
     """Update one plugin registry status.
 
@@ -96,6 +119,8 @@ def update_plugin_status(
         plugin_id: Plugin identifier.
         request: Status update payload.
         service: Plugin registry service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
 
     Returns:
         Updated plugin registry entry.
@@ -105,6 +130,14 @@ def update_plugin_status(
     """
 
     try:
-        return service.update_status(plugin_id, request.status)
+        entry = service.update_status(plugin_id, request.status)
+        audit_service.record(
+            principal=principal,
+            action="plugin.status.update",
+            resource_type="plugin",
+            resource_id=str(plugin_id),
+            metadata={"status": entry.status},
+        )
+        return entry
     except KeyError as error:
         raise HTTPException(status_code=404, detail="Plugin not found.") from error
