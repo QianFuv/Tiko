@@ -3,12 +3,13 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import UUID, uuid4
+from typing import Literal
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from tiko.analysis import build_run_benchmark, compare_run_benchmarks
 from tiko.core.config import Settings
 from tiko.db.repositories import SimulationRepository
-from tiko.domain.account import SimAccount
+from tiko.domain.account import Position, SimAccount
 from tiko.domain.comparison import RunBenchmark, RunComparison
 from tiko.domain.decision import DecisionReview, TradeIntent
 from tiko.domain.market import Candle, MarketEvent
@@ -149,6 +150,70 @@ class SimulationService:
         """
 
         return self._states[run_id].run
+
+    def update_run_status(
+        self,
+        run_id: UUID,
+        status: Literal["created", "running", "paused", "stopped", "completed"],
+    ) -> SimulationRun:
+        """Update one simulation run lifecycle status.
+
+        Args:
+            run_id: Simulation run identifier.
+            status: New lifecycle status.
+
+        Returns:
+            Updated simulation run.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        state = self._states[run_id]
+        account_status = {
+            "created": "active",
+            "running": "active",
+            "paused": "paused",
+            "stopped": "stopped",
+            "completed": state.run.account.status,
+        }[status]
+        account = state.run.account.model_copy(update={"status": account_status})
+        updates: dict[str, object] = {"status": status, "account": account}
+        if status == "stopped":
+            updates["end_sim_time"] = state.run.current_sim_time
+        updated_run = state.run.model_copy(update=updates)
+        state.run = updated_run
+        if self._repository is not None:
+            self._repository.save_run(updated_run)
+        return updated_run
+
+    def update_run_speed(
+        self, run_id: UUID, speed_multiplier: Decimal
+    ) -> SimulationRun:
+        """Update one simulation run speed multiplier.
+
+        Args:
+            run_id: Simulation run identifier.
+            speed_multiplier: Positive simulation speed multiplier.
+
+        Returns:
+            Updated simulation run.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+            ValueError: If the multiplier is not positive.
+        """
+
+        if speed_multiplier <= Decimal("0"):
+            raise ValueError("Simulation speed multiplier must be positive.")
+        state = self._states[run_id]
+        updated_run = state.run.model_copy(
+            update={"speed_multiplier": speed_multiplier}
+        )
+        state.run = updated_run
+        if self._repository is not None:
+            self._repository.save_run(updated_run)
+        return updated_run
 
     def step_run(self, run_id: UUID, confidence: float = 0.7) -> SimulationStepResult:
         """Advance a simulation run by one deterministic synthetic candle.
@@ -293,6 +358,81 @@ class SimulationService:
 
         return list(self._states[run_id].events)
 
+    def list_all_events(self) -> list[MarketEvent]:
+        """List market events across all simulation runs.
+
+        Returns:
+            Market events across runs.
+        """
+
+        return [event for state in self._states.values() for event in state.events]
+
+    def list_candles(self, run_id: UUID) -> list[Candle]:
+        """List candles observed by a simulation run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Candles observed by the run.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        return list(self._states[run_id].candles)
+
+    def inject_market_event(
+        self,
+        run_id: UUID,
+        type_: Literal[
+            "candle_closed",
+            "tick",
+            "orderbook_snapshot",
+            "funding_update",
+            "news_event",
+            "liquidity_shock",
+            "volatility_shock",
+            "system_event",
+        ],
+        symbol: str | None,
+        payload: dict[str, object],
+        source: str,
+        confidence: float,
+        simulated_time: datetime | None = None,
+    ) -> MarketEvent:
+        """Inject a controlled market event into a simulation run.
+
+        Args:
+            run_id: Simulation run identifier.
+            type_: Market event type.
+            symbol: Optional event symbol.
+            payload: Event payload.
+            source: Event source label.
+            confidence: Event confidence score.
+            simulated_time: Optional simulated event timestamp.
+
+        Returns:
+            Injected market event.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        state = self._states[run_id]
+        event = MarketEvent(
+            event_id=uuid4(),
+            type=type_,
+            symbol=symbol,
+            simulated_time=simulated_time or state.run.current_sim_time,
+            payload=payload,
+            source=source,
+            confidence=confidence,
+        )
+        self._event_bus.publish(event)
+        state.events.append(event)
+        return event
+
     def build_observation(self, run_id: UUID, symbol: str) -> Observation:
         """Build a point-in-time observation for a run and symbol.
 
@@ -328,6 +468,76 @@ class SimulationService:
 
         reviews = self._states[run_id].risk_reviews
         return reviews[-1] if reviews else None
+
+    def list_risk_reviews(self, run_id: UUID) -> list[RiskReview]:
+        """List risk reviews for a run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Risk reviews for the run.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        return list(self._states[run_id].risk_reviews)
+
+    def list_positions(self, run_id: UUID) -> list[Position]:
+        """Derive current simulated positions from fills.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Net simulated positions.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        state = self._states[run_id]
+        quantities_by_symbol: dict[str, Decimal] = {}
+        notionals_by_symbol: dict[str, Decimal] = {}
+        latest_time_by_symbol: dict[str, datetime] = {}
+        for fill in state.fills:
+            direction = Decimal("-1") if fill.side == "sell" else Decimal("1")
+            signed_quantity = direction * fill.quantity
+            signed_notional = signed_quantity * fill.price
+            quantities_by_symbol[fill.symbol] = (
+                quantities_by_symbol.get(fill.symbol, Decimal("0")) + signed_quantity
+            )
+            notionals_by_symbol[fill.symbol] = (
+                notionals_by_symbol.get(fill.symbol, Decimal("0")) + signed_notional
+            )
+            latest_time_by_symbol[fill.symbol] = fill.filled_at_sim_time
+
+        positions: list[Position] = []
+        for symbol, quantity in sorted(quantities_by_symbol.items()):
+            if quantity == Decimal("0"):
+                continue
+            notional = notionals_by_symbol[symbol]
+            absolute_quantity = abs(quantity)
+            mark_price = abs(notional) / absolute_quantity
+            positions.append(
+                Position(
+                    position_id=uuid5(NAMESPACE_URL, f"{run_id}:{symbol}"),
+                    account_id=state.run.account.account_id,
+                    symbol=symbol,
+                    side="long" if quantity > Decimal("0") else "short",
+                    quantity=absolute_quantity,
+                    avg_entry_price=mark_price,
+                    mark_price=mark_price,
+                    notional=abs(notional),
+                    leverage=Decimal("1"),
+                    unrealized_pnl=Decimal("0"),
+                    realized_pnl=state.run.account.realized_pnl,
+                    liquidation_price=None,
+                    updated_at_sim_time=latest_time_by_symbol[symbol],
+                )
+            )
+        return positions
 
     def create_decision_review(
         self,

@@ -122,6 +122,90 @@ def test_comparison_routes_benchmark_and_compare_runs() -> None:
     assert comparison_response.json()["fingerprints_match"] is True
 
 
+def test_simulation_lifecycle_routes_update_status_speed_and_audit() -> None:
+    """Verify simulation lifecycle routes update run state and audit commands."""
+
+    client = create_test_client()
+    run_id = client.post(
+        "/api/simulations",
+        json={"name": "lifecycle-demo", "symbols": ["BTCUSDT"]},
+        headers=OPERATOR_HEADERS,
+    ).json()["run_id"]
+
+    viewer_response = client.post(
+        f"/api/simulations/{run_id}/pause",
+        headers=VIEWER_HEADERS,
+    )
+    start_response = client.post(
+        f"/api/simulations/{run_id}/start",
+        headers=OPERATOR_HEADERS,
+    )
+    pause_response = client.post(
+        f"/api/simulations/{run_id}/pause",
+        headers=OPERATOR_HEADERS,
+    )
+    resume_response = client.post(
+        f"/api/simulations/{run_id}/resume",
+        headers=OPERATOR_HEADERS,
+    )
+    speed_response = client.post(
+        f"/api/simulations/{run_id}/speed",
+        json={"speed_multiplier": "5"},
+        headers=OPERATOR_HEADERS,
+    )
+    invalid_speed_response = client.post(
+        f"/api/simulations/{run_id}/speed",
+        json={"speed_multiplier": "0"},
+        headers=OPERATOR_HEADERS,
+    )
+    risk_pause_response = client.post(
+        f"/api/risk/{run_id}/pause",
+        headers=OPERATOR_HEADERS,
+    )
+    risk_resume_response = client.post(
+        f"/api/risk/{run_id}/resume",
+        headers=OPERATOR_HEADERS,
+    )
+    stop_response = client.post(
+        f"/api/simulations/{run_id}/stop",
+        headers=OPERATOR_HEADERS,
+    )
+    status_response = client.get(f"/api/simulations/{run_id}/status")
+
+    assert viewer_response.status_code == 403
+    assert start_response.json()["status"] == "running"
+    assert pause_response.json()["status"] == "paused"
+    assert resume_response.json()["status"] == "running"
+    assert speed_response.json()["speed_multiplier"] == "5"
+    assert invalid_speed_response.status_code == 422
+    assert risk_pause_response.status_code == 200
+    assert risk_resume_response.status_code == 200
+    assert stop_response.json()["status"] == "stopped"
+    assert status_response.json()["status"] == "stopped"
+    assert (
+        client.post(
+            "/api/simulations/00000000-0000-0000-0000-000000000000/start",
+            headers=OPERATOR_HEADERS,
+        ).status_code
+        == 404
+    )
+
+    audit_actions = [
+        entry["action"]
+        for entry in client.get("/api/audit/logs", headers=ADMIN_HEADERS).json()
+    ]
+    assert audit_actions == [
+        "simulation.create",
+        "simulation.start",
+        "simulation.pause",
+        "simulation.resume",
+        "simulation.speed.update",
+        "risk.pause",
+        "risk.resume",
+        "simulation.stop",
+    ]
+
+
 def test_query_routes_expose_simulated_state() -> None:
     """Verify query routes expose decisions, orders, fills, portfolio, and risk."""
 
@@ -142,6 +226,14 @@ def test_query_routes_expose_simulated_state() -> None:
     assert len(client.get("/api/orders").json()) == 1
     assert len(client.get("/api/fills").json()) == 1
     assert len(client.get(f"/api/simulations/{run_id}/events").json()) == 1
+    assert len(client.get(f"/api/market/candles?run_id={run_id}").json()) == 1
+    assert len(client.get("/api/market/events").json()) == 1
+    assert (
+        client.get("/api/market/orderbook?symbol=BTCUSDT").json()[
+            "private_methods_allowed"
+        ]
+        is False
+    )
     observation_response = client.get(f"/api/simulations/{run_id}/observations/BTCUSDT")
     assert observation_response.status_code == 200
     observation_payload = observation_response.json()
@@ -154,6 +246,35 @@ def test_query_routes_expose_simulated_state() -> None:
     assert (
         client.get(f"/api/risk/{run_id}/reviews/latest").json()["status"] == "approved"
     )
+    assert len(client.get(f"/api/risk/{run_id}/reviews").json()) == 1
+    assert len(client.get(f"/api/portfolio/{run_id}/positions").json()) == 1
+    assert len(client.get(f"/api/portfolio/{run_id}/snapshots").json()) == 1
+    assert client.get(f"/api/portfolio/{run_id}/pnl").json()["run_id"] == run_id
+    assert client.get(f"/api/portfolio/{run_id}/drawdown").json()["run_id"] == run_id
+    inject_response = client.post(
+        "/api/market/events/inject",
+        json={
+            "run_id": run_id,
+            "type": "news_event",
+            "symbol": "BTCUSDT",
+            "payload": {"headline": "Synthetic macro headline."},
+            "source": "manual",
+        },
+        headers=OPERATOR_HEADERS,
+    )
+    viewer_inject_response = client.post(
+        "/api/market/events/inject",
+        json={
+            "run_id": run_id,
+            "type": "news_event",
+            "payload": {},
+        },
+        headers=VIEWER_HEADERS,
+    )
+    assert inject_response.status_code == 200
+    assert inject_response.json()["type"] == "news_event"
+    assert viewer_inject_response.status_code == 403
+    assert len(client.get("/api/market/events").json()) == 2
     report_response = client.post(
         f"/api/reports/simulations/{run_id}",
         headers=OPERATOR_HEADERS,

@@ -1,7 +1,7 @@
 """Risk policy and review routes."""
 
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -197,6 +197,32 @@ def update_alert_status(
         raise HTTPException(status_code=404, detail="Alert not found.") from error
 
 
+@router.get("/{run_id}/reviews", response_model=list[RiskReview])
+def list_risk_reviews(
+    run_id: UUID,
+    service: SimulationServiceDep,
+) -> list[RiskReview]:
+    """List risk reviews for a run.
+
+    Args:
+        run_id: Simulation run identifier.
+        service: Simulation service dependency.
+
+    Returns:
+        Risk reviews for the run.
+
+    Raises:
+        HTTPException: If the run does not exist.
+    """
+
+    try:
+        return service.list_risk_reviews(run_id)
+    except KeyError as error:
+        raise HTTPException(
+            status_code=404, detail="Simulation run not found."
+        ) from error
+
+
 @router.get("/{run_id}/reviews/latest", response_model=RiskReview | None)
 def get_latest_risk_review(
     run_id: UUID,
@@ -222,3 +248,108 @@ def get_latest_risk_review(
         raise HTTPException(
             status_code=404, detail="Simulation run not found."
         ) from error
+
+
+@router.post("/{run_id}/pause", response_model=RiskLimitsResponse)
+def pause_run_from_risk(
+    run_id: UUID,
+    service: SimulationServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManageAlertsPrincipalDep,
+) -> RiskLimitsResponse:
+    """Pause a run from risk controls.
+
+    Args:
+        run_id: Simulation run identifier.
+        service: Simulation service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
+
+    Returns:
+        Current risk limits after pause.
+
+    Raises:
+        HTTPException: If the run does not exist.
+    """
+
+    return update_risk_controlled_run_status(
+        run_id=run_id,
+        status="paused",
+        action="risk.pause",
+        service=service,
+        audit_service=audit_service,
+        principal=principal,
+    )
+
+
+@router.post("/{run_id}/resume", response_model=RiskLimitsResponse)
+def resume_run_from_risk(
+    run_id: UUID,
+    service: SimulationServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManageAlertsPrincipalDep,
+) -> RiskLimitsResponse:
+    """Resume a run from risk controls.
+
+    Args:
+        run_id: Simulation run identifier.
+        service: Simulation service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
+
+    Returns:
+        Current risk limits after resume.
+
+    Raises:
+        HTTPException: If the run does not exist.
+    """
+
+    return update_risk_controlled_run_status(
+        run_id=run_id,
+        status="running",
+        action="risk.resume",
+        service=service,
+        audit_service=audit_service,
+        principal=principal,
+    )
+
+
+def update_risk_controlled_run_status(
+    run_id: UUID,
+    status: Literal["paused", "running"],
+    action: str,
+    service: SimulationService,
+    audit_service: AuditService,
+    principal: Principal,
+) -> RiskLimitsResponse:
+    """Update run status through risk controls and audit the command.
+
+    Args:
+        run_id: Simulation run identifier.
+        status: New simulation status.
+        action: Audit action.
+        service: Simulation service.
+        audit_service: Audit service.
+        principal: Authorized caller principal.
+
+    Returns:
+        Current risk limits response.
+
+    Raises:
+        HTTPException: If the run does not exist.
+    """
+
+    try:
+        service.update_run_status(run_id, status)
+    except KeyError as error:
+        raise HTTPException(
+            status_code=404, detail="Simulation run not found."
+        ) from error
+    audit_service.record(
+        principal=principal,
+        action=action,
+        resource_type="simulation_run",
+        resource_id=str(run_id),
+        metadata={"status": status},
+    )
+    return get_risk_limits(run_id, service)

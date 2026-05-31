@@ -1,7 +1,8 @@
 """Simulation lifecycle routes."""
 
 from datetime import datetime
-from typing import Annotated
+from decimal import Decimal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -43,6 +44,12 @@ class SimulationStepRequest(BaseModel):
     """Represent a request to advance one simulation step."""
 
     confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+
+
+class SimulationSpeedRequest(BaseModel):
+    """Represent a request to update simulation speed."""
+
+    speed_multiplier: Decimal = Field(gt=Decimal("0"))
 
 
 class MemoryEntryCreateRequest(BaseModel):
@@ -128,6 +135,229 @@ def get_simulation(
         raise HTTPException(
             status_code=404, detail="Simulation run not found."
         ) from error
+
+
+@router.get("/{run_id}/status", response_model=SimulationRun)
+def get_simulation_status(
+    run_id: UUID,
+    service: SimulationServiceDep,
+) -> SimulationRun:
+    """Get current simulation status.
+
+    Args:
+        run_id: Simulation run identifier.
+        service: Simulation service dependency.
+
+    Returns:
+        Simulation run status.
+
+    Raises:
+        HTTPException: If the run does not exist.
+    """
+
+    try:
+        return service.get_run(run_id)
+    except KeyError as error:
+        raise HTTPException(
+            status_code=404, detail="Simulation run not found."
+        ) from error
+
+
+@router.post("/{run_id}/start", response_model=SimulationRun)
+def start_simulation(
+    run_id: UUID,
+    service: SimulationServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManageSimulationPrincipalDep,
+) -> SimulationRun:
+    """Start a simulation run.
+
+    Args:
+        run_id: Simulation run identifier.
+        service: Simulation service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
+
+    Returns:
+        Updated simulation run.
+    """
+
+    return update_simulation_lifecycle(
+        run_id=run_id,
+        status="running",
+        action="simulation.start",
+        service=service,
+        audit_service=audit_service,
+        principal=principal,
+    )
+
+
+@router.post("/{run_id}/pause", response_model=SimulationRun)
+def pause_simulation(
+    run_id: UUID,
+    service: SimulationServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManageSimulationPrincipalDep,
+) -> SimulationRun:
+    """Pause a simulation run.
+
+    Args:
+        run_id: Simulation run identifier.
+        service: Simulation service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
+
+    Returns:
+        Updated simulation run.
+    """
+
+    return update_simulation_lifecycle(
+        run_id=run_id,
+        status="paused",
+        action="simulation.pause",
+        service=service,
+        audit_service=audit_service,
+        principal=principal,
+    )
+
+
+@router.post("/{run_id}/resume", response_model=SimulationRun)
+def resume_simulation(
+    run_id: UUID,
+    service: SimulationServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManageSimulationPrincipalDep,
+) -> SimulationRun:
+    """Resume a simulation run.
+
+    Args:
+        run_id: Simulation run identifier.
+        service: Simulation service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
+
+    Returns:
+        Updated simulation run.
+    """
+
+    return update_simulation_lifecycle(
+        run_id=run_id,
+        status="running",
+        action="simulation.resume",
+        service=service,
+        audit_service=audit_service,
+        principal=principal,
+    )
+
+
+@router.post("/{run_id}/stop", response_model=SimulationRun)
+def stop_simulation(
+    run_id: UUID,
+    service: SimulationServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManageSimulationPrincipalDep,
+) -> SimulationRun:
+    """Stop a simulation run.
+
+    Args:
+        run_id: Simulation run identifier.
+        service: Simulation service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
+
+    Returns:
+        Updated simulation run.
+    """
+
+    return update_simulation_lifecycle(
+        run_id=run_id,
+        status="stopped",
+        action="simulation.stop",
+        service=service,
+        audit_service=audit_service,
+        principal=principal,
+    )
+
+
+@router.post("/{run_id}/speed", response_model=SimulationRun)
+def update_simulation_speed(
+    run_id: UUID,
+    request: SimulationSpeedRequest,
+    service: SimulationServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManageSimulationPrincipalDep,
+) -> SimulationRun:
+    """Update a simulation run speed multiplier.
+
+    Args:
+        run_id: Simulation run identifier.
+        request: Speed update request.
+        service: Simulation service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
+
+    Returns:
+        Updated simulation run.
+
+    Raises:
+        HTTPException: If the run does not exist.
+    """
+
+    try:
+        run = service.update_run_speed(run_id, request.speed_multiplier)
+    except KeyError as error:
+        raise HTTPException(
+            status_code=404, detail="Simulation run not found."
+        ) from error
+    audit_service.record(
+        principal=principal,
+        action="simulation.speed.update",
+        resource_type="simulation_run",
+        resource_id=str(run_id),
+        metadata={"speed_multiplier": str(run.speed_multiplier)},
+    )
+    return run
+
+
+def update_simulation_lifecycle(
+    run_id: UUID,
+    status: Literal["created", "running", "paused", "stopped", "completed"],
+    action: str,
+    service: SimulationService,
+    audit_service: AuditService,
+    principal: Principal,
+) -> SimulationRun:
+    """Update simulation lifecycle and audit the command.
+
+    Args:
+        run_id: Simulation run identifier.
+        status: New simulation status.
+        action: Audit action.
+        service: Simulation service.
+        audit_service: Audit service.
+        principal: Authorized caller principal.
+
+    Returns:
+        Updated simulation run.
+
+    Raises:
+        HTTPException: If the run does not exist.
+    """
+
+    try:
+        run = service.update_run_status(run_id, status)
+    except KeyError as error:
+        raise HTTPException(
+            status_code=404, detail="Simulation run not found."
+        ) from error
+    audit_service.record(
+        principal=principal,
+        action=action,
+        resource_type="simulation_run",
+        resource_id=str(run_id),
+        metadata={"status": run.status},
+    )
+    return run
 
 
 @router.get("/{run_id}/events", response_model=list[MarketEvent])
