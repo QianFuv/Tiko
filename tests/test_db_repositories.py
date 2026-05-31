@@ -496,7 +496,15 @@ def test_experiment_service_writes_through_repository(
         kind="walk_forward",
         hypothesis="Momentum survives validation splits.",
         dataset_id=dataset.dataset_id,
-        parameters={"splits": 3},
+        parameters={
+            "splits": 3,
+            "training_period": {
+                "start": "2026-01-01T00:00:00Z",
+                "end": "2026-01-01T01:00:00Z",
+            },
+            "model_version": "0.1.0",
+            "stress_tests": [{"name": "volatility_shock", "status": "passed"}],
+        },
     )
     persisted_service = ExperimentService(repository)
 
@@ -529,6 +537,26 @@ def test_experiment_service_writes_through_repository(
     assert completed.metrics["completed"] is True
     assert completed.metrics["job_id"] == str(job_id)
     assert completed.metrics["returns_by_symbol"] == {"BTCUSDT": "0.05"}
+    assert report.sections["periods"] == {
+        "training": {
+            "start": "2026-01-01T00:00:00Z",
+            "end": "2026-01-01T01:00:00Z",
+        },
+        "validation": None,
+        "test": None,
+    }
+    assert report.sections["model_version"] == "0.1.0"
+    assert report.sections["backtest_results"] == {"candle_count": 1}
+    assert report.sections["stress_tests"] == [
+        {"name": "volatility_shock", "status": "passed"}
+    ]
+    assert report.sections["out_of_sample_performance"] == {
+        "returns_by_symbol": {"BTCUSDT": "0.05"}
+    }
+    assert report.sections["eligibility_decision"] == {
+        "status": "eligible_for_simulated_use",
+        "reason": "Completed experiment has backtest results.",
+    }
     assert persisted_service.list_experiment_reports(experiment.experiment_id) == [
         report
     ]

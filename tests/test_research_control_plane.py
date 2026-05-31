@@ -207,8 +207,15 @@ def test_experiment_routes_create_queue_and_audit(tmp_path: Path) -> None:
     assert report_response.status_code == 200
     report = report_response.json()
     render_response = client.get(f"/api/reports/{report['report_id']}/render")
+    sections = report["sections"]
     assert report["report_type"] == "experiment"
-    assert report["sections"]["experiment"]["experiment_id"] == experiment_id
+    assert sections["experiment"]["experiment_id"] == experiment_id
+    assert sections["periods"] == {"training": None, "validation": None, "test": None}
+    assert sections["model_version"] is None
+    assert sections["backtest_results"] == {}
+    assert sections["stress_tests"] == []
+    assert sections["out_of_sample_performance"] == {}
+    assert sections["eligibility_decision"]["status"] == "pending_review"
     assert render_response.status_code == 200
     rendered_report = render_response.json()
     assert rendered_report["report_type"] == "experiment"

@@ -252,6 +252,145 @@ class ExperimentService:
                 metrics[key] = result[key]
         return metrics
 
+    def _get_report_source_value(
+        self, experiment: ExperimentRecord, key: str
+    ) -> object | None:
+        """Read a report source value from parameters before metrics.
+
+        Args:
+            experiment: Source experiment record.
+            key: Source key to read.
+
+        Returns:
+            Matching value when present.
+        """
+
+        if key in experiment.parameters:
+            return experiment.parameters[key]
+        return experiment.metrics.get(key)
+
+    def _build_report_periods(self, experiment: ExperimentRecord) -> dict[str, object]:
+        """Build training, validation, and test period report context.
+
+        Args:
+            experiment: Source experiment record.
+
+        Returns:
+            Period summary section.
+        """
+
+        return {
+            "training": self._get_report_source_value(
+                experiment,
+                "training_period",
+            ),
+            "validation": self._get_report_source_value(
+                experiment,
+                "validation_period",
+            ),
+            "test": self._get_report_source_value(
+                experiment,
+                "test_period",
+            ),
+        }
+
+    def _build_report_model_version(
+        self, experiment: ExperimentRecord
+    ) -> object | None:
+        """Build model version context for an experiment report.
+
+        Args:
+            experiment: Source experiment record.
+
+        Returns:
+            Model version value when present.
+        """
+
+        return self._get_report_source_value(experiment, "model_version")
+
+    def _build_report_backtest_results(self, experiment: ExperimentRecord) -> object:
+        """Build backtest results for an experiment report.
+
+        Args:
+            experiment: Source experiment record.
+
+        Returns:
+            Backtest result payload or an empty mapping.
+        """
+
+        return experiment.metrics.get("backtest_summary", {})
+
+    def _build_report_stress_tests(self, experiment: ExperimentRecord) -> object:
+        """Build stress-test results for an experiment report.
+
+        Args:
+            experiment: Source experiment record.
+
+        Returns:
+            Stress-test payload or an empty list.
+        """
+
+        return (
+            self._get_report_source_value(experiment, "stress_tests")
+            or self._get_report_source_value(experiment, "stress_test_results")
+            or []
+        )
+
+    def _build_report_out_of_sample_performance(
+        self, experiment: ExperimentRecord
+    ) -> object:
+        """Build out-of-sample performance for an experiment report.
+
+        Args:
+            experiment: Source experiment record.
+
+        Returns:
+            Out-of-sample performance payload or an empty mapping.
+        """
+
+        explicit_performance = self._get_report_source_value(
+            experiment,
+            "out_of_sample_performance",
+        )
+        if explicit_performance is not None:
+            return explicit_performance
+        returns_by_symbol = experiment.metrics.get("returns_by_symbol")
+        if returns_by_symbol is not None:
+            return {"returns_by_symbol": returns_by_symbol}
+        return {}
+
+    def _build_report_eligibility_decision(
+        self,
+        experiment: ExperimentRecord,
+    ) -> dict[str, object]:
+        """Build simulated-use eligibility decision for an experiment report.
+
+        Args:
+            experiment: Source experiment record.
+
+        Returns:
+            Eligibility decision section.
+        """
+
+        backtest_results = self._build_report_backtest_results(experiment)
+        if experiment.status == "failed":
+            return {
+                "status": "ineligible",
+                "reason": experiment.metrics.get(
+                    "error_message",
+                    "Experiment failed.",
+                ),
+            }
+        if experiment.status == "completed" and backtest_results:
+            return {
+                "status": "eligible_for_simulated_use",
+                "reason": "Completed experiment has backtest results.",
+            }
+        return {
+            "status": "pending_review",
+            "reason": f"Experiment is {experiment.status}.",
+        }
+
     def create_experiment_report(self, experiment_id: UUID) -> ReportArtifact:
         """Create a structured report for one experiment.
 
@@ -282,6 +421,16 @@ class ExperimentService:
                 "model_id": str(experiment.model_id)
                 if experiment.model_id is not None
                 else None,
+                "periods": self._build_report_periods(experiment),
+                "model_version": self._build_report_model_version(experiment),
+                "backtest_results": self._build_report_backtest_results(experiment),
+                "stress_tests": self._build_report_stress_tests(experiment),
+                "out_of_sample_performance": (
+                    self._build_report_out_of_sample_performance(experiment)
+                ),
+                "eligibility_decision": (
+                    self._build_report_eligibility_decision(experiment)
+                ),
             },
             created_at_sim_time=experiment.queued_at
             or experiment.completed_at
