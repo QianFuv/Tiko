@@ -6,6 +6,7 @@ from tiko.domain.market import Candle, MarketEvent
 from tiko.domain.runtime import BackgroundJob
 from tiko.domain.simulation import SimulationRun
 from tiko.rl_lab import train_static_policy
+from tiko.services.artifacts import ModelArtifactStore
 from tiko.workers.definitions import WorkerDefinition
 
 
@@ -54,6 +55,20 @@ def handle_training_job(job: BackgroundJob) -> dict[str, object]:
         events=events,
         candidate_action_ids=candidate_action_ids,
     )
+    artifact_payload: dict[str, object] = {
+        "job_id": str(job.job_id),
+        "resource_type": job.resource_type,
+        "resource_id": job.resource_id,
+        "summary": summary.model_dump(mode="json"),
+    }
+    artifact = ModelArtifactStore(
+        _optional_artifact_root(job.payload)
+    ).store_json_artifact(
+        artifact_id=job.job_id,
+        model_type="rl",
+        algorithm=summary.algorithm,
+        payload=artifact_payload,
+    )
     return {
         "message": "RL worker completed deterministic static policy training.",
         "job_type": job.job_type,
@@ -63,6 +78,7 @@ def handle_training_job(job: BackgroundJob) -> dict[str, object]:
         "best_action_id": summary.best_action_id,
         "best_total_reward": str(summary.best_total_reward),
         "summary": summary.model_dump(mode="json"),
+        "artifact": artifact.model_dump(mode="json"),
     }
 
 
@@ -159,3 +175,22 @@ def _optional_int_sequence(
     ):
         raise ValueError(f"RL training payload field {key} must be a list of integers.")
     return tuple(value)
+
+
+def _optional_artifact_root(payload: dict[str, object]) -> str:
+    """Read the optional artifact root from a job payload.
+
+    Args:
+        payload: Runtime job payload.
+
+    Returns:
+        Artifact root path string.
+
+    Raises:
+        ValueError: If the value is present but invalid.
+    """
+
+    value = payload.get("artifact_root", ".tiko/artifacts")
+    if not isinstance(value, str) or not value:
+        raise ValueError("RL training payload field artifact_root is invalid.")
+    return value

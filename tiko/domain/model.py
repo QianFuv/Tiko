@@ -26,3 +26,14 @@ class ModelRegistryEntry(DomainModel):
     artifact_uri: str = Field(min_length=1)
     status: ModelStatus
     created_at: datetime
+
+
+class StoredModelArtifact(DomainModel):
+    """Represent a stored research model artifact."""
+
+    artifact_id: UUID
+    model_type: ModelType
+    algorithm: str = Field(min_length=1)
+    artifact_uri: str = Field(min_length=1)
+    size_bytes: int = Field(ge=0)
+    stored_at: datetime

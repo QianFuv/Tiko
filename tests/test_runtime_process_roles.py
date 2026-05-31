@@ -1,5 +1,6 @@
 """Tests for scheduler and worker process role helpers."""
 
+import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -244,7 +245,7 @@ def test_worker_process_jobs_completes_eligible_runtime_jobs() -> None:
     assert heartbeat.event_queue_depth == 0
 
 
-def test_rl_worker_processes_static_training_jobs() -> None:
+def test_rl_worker_processes_static_training_jobs(tmp_path: Path) -> None:
     """Verify RL worker jobs run deterministic static policy training."""
 
     service = RuntimeService()
@@ -258,6 +259,7 @@ def test_rl_worker_processes_static_training_jobs() -> None:
             "run": run.model_dump(mode="json"),
             "candles": [candle.model_dump(mode="json") for candle in candles],
             "candidate_action_ids": [0, 3],
+            "artifact_root": str(tmp_path),
         },
     )
     definition = next(
@@ -268,6 +270,9 @@ def test_rl_worker_processes_static_training_jobs() -> None:
 
     result = process_worker_jobs(service, definition, max_jobs=1)
     completed_job = service.get_job(job.job_id)
+    artifact = completed_job.result["artifact"]
+    assert isinstance(artifact, dict)
+    artifact_path = tmp_path / "models" / f"{job.job_id}.json"
 
     assert result.claimed_job_ids == (job.job_id,)
     assert result.completed_job_ids == (job.job_id,)
@@ -281,6 +286,13 @@ def test_rl_worker_processes_static_training_jobs() -> None:
     assert isinstance(metrics, dict)
     assert summary["episode_count"] == 2
     assert metrics["best_target_weight"] == "0.50"
+    assert artifact["artifact_id"] == str(job.job_id)
+    assert artifact["model_type"] == "rl"
+    assert artifact["algorithm"] == "static_discrete_policy_search"
+    assert artifact["size_bytes"] == artifact_path.stat().st_size
+    stored_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert stored_payload["job_id"] == str(job.job_id)
+    assert stored_payload["summary"]["best_action_id"] == 3
 
 
 def test_report_worker_renders_and_stores_report_artifacts(

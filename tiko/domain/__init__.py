@@ -33,7 +33,12 @@ from tiko.domain.market import (
     OrderBookSnapshot,
 )
 from tiko.domain.memory import MemoryEntry, MemorySearchResult, MemoryType
-from tiko.domain.model import ModelRegistryEntry, ModelStatus, ModelType
+from tiko.domain.model import (
+    ModelRegistryEntry,
+    ModelStatus,
+    ModelType,
+    StoredModelArtifact,
+)
 from tiko.domain.observation import Observation
 from tiko.domain.order import Fill, OrderRequest, SimOrder
 from tiko.domain.plugin import (
@@ -159,6 +164,7 @@ __all__ = [
     "SimulationDefinitionMode",
     "SimulationRun",
     "StoredReportArtifact",
+    "StoredModelArtifact",
     "TradeIntent",
     "UserProfile",
     "WatchdogCheck",
