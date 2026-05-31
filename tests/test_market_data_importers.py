@@ -44,6 +44,44 @@ def sample_candle_row() -> dict[str, str]:
     }
 
 
+def validation_candle(
+    symbol: str,
+    timeframe: str,
+    open_offset: timedelta,
+    close_offset: timedelta,
+) -> Candle:
+    """Create a candle with explicit offsets for validator tests.
+
+    Args:
+        symbol: Candle symbol.
+        timeframe: Candle timeframe.
+        open_offset: Offset from the validation base time for open_time.
+        close_offset: Offset from the validation base time for close_time.
+
+    Returns:
+        Candle domain model.
+    """
+
+    base_time = datetime(2026, 1, 1, tzinfo=UTC)
+    open_time = base_time + open_offset
+    close_time = base_time + close_offset
+    return Candle(
+        symbol=symbol,
+        timeframe=timeframe,
+        open_time=open_time,
+        close_time=close_time,
+        open=Decimal("100"),
+        high=Decimal("110"),
+        low=Decimal("90"),
+        close=Decimal("105"),
+        volume=Decimal("2.5"),
+        quote_volume=None,
+        source="validator-test",
+        as_of=close_time,
+        created_at=close_time,
+    )
+
+
 def write_csv(path: Path, rows: list[dict[str, str]]) -> None:
     """Write raw candle rows to a CSV fixture file.
 
@@ -132,6 +170,85 @@ def test_validator_reports_price_and_availability_errors() -> None:
         "as_of_before_close",
         "high_below_body",
         "low_above_body",
+    }
+
+
+def test_validator_reports_structural_time_series_issues() -> None:
+    """Verify validation reports candle order, overlap, and gap issues."""
+
+    report = MarketDataValidator().validate_candles(
+        [
+            validation_candle(
+                "BTCUSDT",
+                "1h",
+                timedelta(hours=0),
+                timedelta(hours=1),
+            ),
+            validation_candle(
+                "BTCUSDT",
+                "1h",
+                timedelta(hours=3),
+                timedelta(hours=4),
+            ),
+            validation_candle(
+                "BTCUSDT",
+                "1h",
+                timedelta(hours=2),
+                timedelta(hours=3),
+            ),
+            validation_candle(
+                "ETHUSDT",
+                "1h",
+                timedelta(hours=0),
+                timedelta(hours=1),
+            ),
+            validation_candle(
+                "ETHUSDT",
+                "1h",
+                timedelta(minutes=30),
+                timedelta(hours=1, minutes=30),
+            ),
+        ]
+    )
+
+    assert report.error_count() == 2
+    assert {issue.code for issue in report.issues} == {
+        "candle_gap",
+        "out_of_order_candle",
+        "overlapping_candle",
+    }
+    assert {issue.code for issue in report.issues if issue.severity == "warning"} == {
+        "candle_gap"
+    }
+
+
+def test_validator_reports_timeframe_duration_issues() -> None:
+    """Verify validation reports timeframe parsing and duration issues."""
+
+    report = MarketDataValidator().validate_candles(
+        [
+            validation_candle(
+                "BTCUSDT",
+                "1h",
+                timedelta(hours=0),
+                timedelta(minutes=30),
+            ),
+            validation_candle(
+                "ETHUSDT",
+                "custom",
+                timedelta(hours=0),
+                timedelta(hours=1),
+            ),
+        ]
+    )
+
+    assert report.error_count() == 1
+    assert {issue.code for issue in report.issues} == {
+        "timeframe_duration_mismatch",
+        "unknown_timeframe",
+    }
+    assert {issue.code for issue in report.issues if issue.severity == "warning"} == {
+        "unknown_timeframe"
     }
 
 
