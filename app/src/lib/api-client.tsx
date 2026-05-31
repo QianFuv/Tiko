@@ -7,6 +7,7 @@ import type {
   AgentRun,
   ApiData,
   BackendHealthState,
+  Candle,
   DataSource,
   DatasetQualityReport,
   DatasetRecord,
@@ -14,16 +15,24 @@ import type {
   DecisionTrace,
   ExperimentRecord,
   Fill,
+  MarketEvent,
+  MarketOrderBook,
+  MarketSymbolsResponse,
+  MemoryEntry,
   ModelRegistryEntry,
   PortfolioSummary,
   PositionView,
+  PluginRegistryEntry,
   ReportArtifact,
   RiskLimits,
   RiskReview,
   RunDashboardData,
+  RunMarketData,
+  RunMemoryData,
   RunReportData,
   RunReviewData,
   RunTraceData,
+  SettingsPageData,
   SimAccount,
   SimOrder,
   SimulationRun,
@@ -41,10 +50,13 @@ const DEMO_AGENT_RUN_ID = "00000000-0000-4000-8000-000000000501";
 const DEMO_OBSERVATION_MESSAGE_ID = "00000000-0000-4000-8000-000000000601";
 const DEMO_ASSISTANT_MESSAGE_ID = "00000000-0000-4000-8000-000000000602";
 const DEMO_DECISION_REVIEW_ID = "00000000-0000-4000-8000-000000000701";
+const DEMO_MEMORY_ID = "00000000-0000-4000-8000-000000000801";
 const DEMO_DATASET_ID = "00000000-0000-4000-8000-000000000901";
 const DEMO_EXPERIMENT_ID = "00000000-0000-4000-8000-000000001001";
 const DEMO_MODEL_ID = "00000000-0000-4000-8000-000000001101";
 const DEMO_REPORT_ID = "00000000-0000-4000-8000-000000001201";
+const DEMO_PLUGIN_ID = "00000000-0000-4000-8000-000000001301";
+const DEMO_EVENT_ID = "00000000-0000-4000-8000-000000001401";
 const DEMO_TIME = "2026-05-31T00:00:00Z";
 
 /**
@@ -226,6 +238,175 @@ export async function fetchReports(): Promise<ApiData<ReportArtifact[]>> {
       simulationsResult.error ??
       decisionsResult.error ??
       experimentsResult.error,
+  };
+}
+
+/**
+ * Fetch market symbols and read-only policy metadata.
+ *
+ * @returns Market symbols from the backend or demo fallback data.
+ */
+export async function fetchMarketSymbols(): Promise<
+  ApiData<MarketSymbolsResponse>
+> {
+  return fetchApiData("/api/market/symbols", buildDemoMarketSymbols);
+}
+
+/**
+ * Fetch run candles.
+ *
+ * @param runId - Simulation run identifier.
+ * @returns Run candles from the backend or demo fallback data.
+ */
+export async function fetchMarketCandles(
+  runId: string,
+): Promise<ApiData<Candle[]>> {
+  return fetchApiData(`/api/market/candles?run_id=${runId}`, () =>
+    buildDemoCandles(),
+  );
+}
+
+/**
+ * Fetch read-only order book policy data for a symbol.
+ *
+ * @param symbol - Market symbol.
+ * @returns Order book data from the backend or demo fallback data.
+ */
+export async function fetchMarketOrderBook(
+  symbol: string,
+): Promise<ApiData<MarketOrderBook>> {
+  return fetchApiData(
+    `/api/market/orderbook?symbol=${encodeURIComponent(symbol)}`,
+    () => buildDemoOrderBook(symbol),
+  );
+}
+
+/**
+ * Fetch run market events.
+ *
+ * @param runId - Simulation run identifier.
+ * @returns Run events from the backend or demo fallback data.
+ */
+export async function fetchMarketEvents(
+  runId: string,
+): Promise<ApiData<MarketEvent[]>> {
+  return fetchApiData(
+    `/api/simulations/${runId}/events`,
+    buildDemoMarketEvents,
+  );
+}
+
+/**
+ * Fetch all market page data for a simulation run.
+ *
+ * @param runId - Simulation run identifier.
+ * @returns Aggregated run market data.
+ */
+export async function fetchRunMarketData(
+  runId: string,
+): Promise<RunMarketData> {
+  const runResult = await fetchSimulation(runId);
+  const primarySymbol = runResult.data.symbols[0] ?? "BTCUSDT";
+  const [symbolsResult, candlesResult, orderBookResult, eventsResult] =
+    await Promise.all([
+      fetchMarketSymbols(),
+      fetchMarketCandles(runId),
+      fetchMarketOrderBook(primarySymbol),
+      fetchMarketEvents(runId),
+    ]);
+  return {
+    source: combineDataSources([
+      runResult.source,
+      symbolsResult.source,
+      candlesResult.source,
+      orderBookResult.source,
+      eventsResult.source,
+    ]),
+    run: runResult.data,
+    symbols: symbolsResult.data,
+    candles: candlesResult.data,
+    orderBook: orderBookResult.data,
+    events: eventsResult.data,
+  };
+}
+
+/**
+ * Fetch memory entries for a simulation run.
+ *
+ * @param runId - Simulation run identifier.
+ * @returns Memory entries from the backend or demo fallback data.
+ */
+export async function fetchMemoryEntries(
+  runId: string,
+): Promise<ApiData<MemoryEntry[]>> {
+  return fetchApiData(`/api/simulations/${runId}/memory`, () =>
+    buildDemoMemoryEntries(runId),
+  );
+}
+
+/**
+ * Fetch run memory and review context.
+ *
+ * @param runId - Simulation run identifier.
+ * @returns Aggregated run memory data.
+ */
+export async function fetchRunMemoryData(
+  runId: string,
+): Promise<RunMemoryData> {
+  const [runResult, memoryResult, decisionsResult] = await Promise.all([
+    fetchSimulation(runId),
+    fetchMemoryEntries(runId),
+    fetchDecisions(runId),
+  ]);
+  const reviewResults = await Promise.all(
+    decisionsResult.data.map((decision) => fetchDecisionReviews(decision)),
+  );
+  return {
+    source: combineDataSources([
+      runResult.source,
+      memoryResult.source,
+      decisionsResult.source,
+      ...reviewResults.map((result) => result.source),
+    ]),
+    run: runResult.data,
+    memoryEntries: memoryResult.data,
+    decisions: decisionsResult.data,
+    reviewsByDecisionId: buildReviewMap(decisionsResult.data, reviewResults),
+  };
+}
+
+/**
+ * Fetch plugin registry entries.
+ *
+ * @returns Plugin registry entries from the backend or demo fallback data.
+ */
+export async function fetchPlugins(): Promise<ApiData<PluginRegistryEntry[]>> {
+  return fetchApiData("/api/plugins", buildDemoPlugins);
+}
+
+/**
+ * Fetch settings and safety overview data.
+ *
+ * @returns Aggregated settings page data.
+ */
+export async function fetchSettingsData(): Promise<SettingsPageData> {
+  const [health, simulationsResult, symbolsResult] = await Promise.all([
+    fetchBackendHealth(),
+    fetchSimulations(),
+    fetchMarketSymbols(),
+  ]);
+  const run = simulationsResult.data[0] ?? buildDemoRun(DEMO_RUN_ID);
+  const riskLimitsResult = await fetchRiskLimits(run.run_id);
+  return {
+    source: combineDataSources([
+      simulationsResult.source,
+      symbolsResult.source,
+      riskLimitsResult.source,
+    ]),
+    health,
+    symbols: symbolsResult.data,
+    run,
+    riskLimits: riskLimitsResult.data,
   };
 }
 
@@ -861,6 +1042,152 @@ function buildDemoReports(runId = DEMO_RUN_ID): ReportArtifact[] {
       created_at: DEMO_TIME,
     },
     ...buildDemoDecisionReports(DEMO_DECISION_ID, runId),
+  ];
+}
+
+/**
+ * Build deterministic demo market symbol metadata.
+ *
+ * @returns Demo market symbol metadata.
+ */
+function buildDemoMarketSymbols(): MarketSymbolsResponse {
+  return {
+    symbols: ["BTCUSDT", "ETHUSDT"],
+    data_policy: "read_only_public_market_data",
+    private_methods_allowed: false,
+  };
+}
+
+/**
+ * Build deterministic demo candles.
+ *
+ * @returns Demo candles.
+ */
+function buildDemoCandles(): Candle[] {
+  return [
+    {
+      symbol: "BTCUSDT",
+      timeframe: "1h",
+      open_time: "2026-05-30T23:00:00Z",
+      close_time: DEMO_TIME,
+      open: "67620.00",
+      high: "68150.00",
+      low: "67440.00",
+      close: "68000.00",
+      volume: "1240.50",
+      quote_volume: "84290000.00",
+      source: "demo",
+      as_of: DEMO_TIME,
+      created_at: DEMO_TIME,
+    },
+  ];
+}
+
+/**
+ * Build deterministic demo order book policy data.
+ *
+ * @param symbol - Market symbol.
+ * @returns Demo order book data.
+ */
+function buildDemoOrderBook(symbol: string): MarketOrderBook {
+  return {
+    symbol,
+    bids: [
+      ["67990.00", "0.84"],
+      ["67975.00", "1.12"],
+    ],
+    asks: [
+      ["68010.00", "0.76"],
+      ["68025.00", "1.40"],
+    ],
+    data_policy: "read_only_public_market_data",
+    private_methods_allowed: false,
+  };
+}
+
+/**
+ * Build deterministic demo market events.
+ *
+ * @returns Demo market events.
+ */
+function buildDemoMarketEvents(): MarketEvent[] {
+  return [
+    {
+      event_id: DEMO_EVENT_ID,
+      type: "candle_closed",
+      symbol: "BTCUSDT",
+      simulated_time: DEMO_TIME,
+      payload: {
+        close: "68000.00",
+        source: "demo",
+      },
+      source: "synthetic",
+      confidence: 1,
+    },
+  ];
+}
+
+/**
+ * Build deterministic demo memory entries.
+ *
+ * @param runId - Simulation run identifier.
+ * @returns Demo memory entries.
+ */
+function buildDemoMemoryEntries(runId: string): MemoryEntry[] {
+  return [
+    {
+      memory_id: DEMO_MEMORY_ID,
+      run_id: runId,
+      decision_id: DEMO_DECISION_ID,
+      memory_type: "decision",
+      summary: "Momentum decision remained directionally correct.",
+      content: {
+        realized_return: "0.018",
+        review_horizon: "1h",
+      },
+      tags: ["posterior_review", "momentum"],
+      available_at_sim_time: DEMO_TIME,
+      created_at: DEMO_TIME,
+    },
+  ];
+}
+
+/**
+ * Build deterministic demo plugin registry entries.
+ *
+ * @returns Demo plugin registry entries.
+ */
+function buildDemoPlugins(): PluginRegistryEntry[] {
+  return [
+    {
+      plugin_id: DEMO_PLUGIN_ID,
+      manifest: {
+        name: "readonly-ccxt-market-data",
+        version: "0.1.0",
+        plugin_type: "market_data_connector",
+        description: "Demo read-only public market data connector manifest.",
+        permissions: {
+          read_market_data: true,
+          read_portfolio: false,
+          write_market_events: false,
+          write_features: false,
+          write_orders: false,
+          network_access: true,
+          file_system_access: "sandbox",
+          provider_allowlist: ["binance"],
+        },
+        inputs: ["symbol", "timeframe"],
+        output_schema: "Candle[]",
+        tests: ["public methods only"],
+      },
+      sandbox_result: {
+        passed: true,
+        violations: [],
+        warnings: [],
+      },
+      status: "validated",
+      created_at: DEMO_TIME,
+    },
   ];
 }
 

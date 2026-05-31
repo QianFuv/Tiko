@@ -28,6 +28,11 @@ function buildRunSections(runId: string): RunSection[] {
       href: `/simulations/${runId}/dashboard`,
     },
     {
+      key: "market",
+      label: "Market",
+      href: `/simulations/${runId}/market`,
+    },
+    {
       key: "decisions",
       label: "Decisions",
       href: `/simulations/${runId}/decisions`,
@@ -56,6 +61,11 @@ function buildRunSections(runId: string): RunSection[] {
       key: "review",
       label: "Review",
       href: `/simulations/${runId}/review`,
+    },
+    {
+      key: "memory",
+      label: "Memory",
+      href: `/simulations/${runId}/memory`,
     },
     {
       key: "reports",

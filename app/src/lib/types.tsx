@@ -104,6 +104,46 @@ export type ReportArtifact = {
   created_at: string;
 };
 
+export type MarketSymbolsResponse = {
+  symbols: string[];
+  data_policy: string;
+  private_methods_allowed: boolean;
+};
+
+export type Candle = {
+  symbol: string;
+  timeframe: string;
+  open_time: string;
+  close_time: string;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+  quote_volume: string | null;
+  source: string;
+  as_of: string;
+  created_at: string;
+};
+
+export type MarketOrderBook = {
+  symbol: string;
+  bids: [string, string][];
+  asks: [string, string][];
+  data_policy: string;
+  private_methods_allowed: boolean;
+};
+
+export type MarketEvent = {
+  event_id: string;
+  type: string;
+  symbol: string | null;
+  simulated_time: string;
+  payload: Record<string, unknown>;
+  source: string;
+  confidence: number;
+};
+
 export type AgentRun = {
   agent_run_id: string;
   run_id: string;
@@ -143,6 +183,62 @@ export type DecisionReview = {
   error_tags: string[];
   reviewer_summary: string;
   created_at_sim_time: string;
+};
+
+export type MemoryEntry = {
+  memory_id: string;
+  run_id: string;
+  decision_id: string | null;
+  memory_type: "decision" | "failure" | "regime" | "agent" | "experiment";
+  summary: string;
+  content: Record<string, unknown>;
+  tags: string[];
+  available_at_sim_time: string;
+  created_at: string;
+};
+
+export type PluginPermissions = {
+  read_market_data: boolean;
+  read_portfolio: boolean;
+  write_market_events: boolean;
+  write_features: boolean;
+  write_orders: boolean;
+  network_access: boolean;
+  file_system_access: "none" | "sandbox" | "readonly";
+  provider_allowlist: string[];
+};
+
+export type PluginManifest = {
+  name: string;
+  version: string;
+  plugin_type:
+    | "market_data_connector"
+    | "data_import"
+    | "synthetic_market"
+    | "feature_calculation"
+    | "event_generation"
+    | "analysis_tool"
+    | "report"
+    | "experiment";
+  description: string;
+  permissions: PluginPermissions;
+  inputs: string[];
+  output_schema: string;
+  tests: string[];
+};
+
+export type SandboxResult = {
+  passed: boolean;
+  violations: string[];
+  warnings: string[];
+};
+
+export type PluginRegistryEntry = {
+  plugin_id: string;
+  manifest: PluginManifest;
+  sandbox_result: SandboxResult;
+  status: "draft" | "validated" | "enabled" | "archived" | "rejected";
+  created_at: string;
 };
 
 export type SimAccount = {
@@ -282,6 +378,15 @@ export type RunDashboardData = {
   latestRiskReview: RiskReview | null;
 };
 
+export type RunMarketData = {
+  source: DataSource;
+  run: SimulationRun;
+  symbols: MarketSymbolsResponse;
+  candles: Candle[];
+  orderBook: MarketOrderBook;
+  events: MarketEvent[];
+};
+
 export type RunTraceData = {
   source: DataSource;
   run: SimulationRun;
@@ -303,6 +408,22 @@ export type RunReportData = {
   run: SimulationRun;
   simulationReports: ReportArtifact[];
   decisionReports: ReportArtifact[];
+};
+
+export type RunMemoryData = {
+  source: DataSource;
+  run: SimulationRun;
+  memoryEntries: MemoryEntry[];
+  decisions: TradeIntent[];
+  reviewsByDecisionId: Record<string, DecisionReview[]>;
+};
+
+export type SettingsPageData = {
+  source: DataSource;
+  health: BackendHealthState;
+  symbols: MarketSymbolsResponse;
+  run: SimulationRun;
+  riskLimits: RiskLimits;
 };
 
 export type Metric = {

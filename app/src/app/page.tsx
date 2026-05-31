@@ -158,6 +158,20 @@ export default async function Home(): Promise<ReactElement> {
                 <span>Reports</span>
                 <span>Open</span>
               </Link>
+              <Link
+                href="/plugins"
+                className="flex items-center justify-between gap-3 border-b border-[#d8dee4] py-2 font-medium text-[#1f6f8b] hover:text-[#174f63]"
+              >
+                <span>Plugins</span>
+                <span>Open</span>
+              </Link>
+              <Link
+                href="/settings"
+                className="flex items-center justify-between gap-3 border-b border-[#d8dee4] py-2 font-medium text-[#1f6f8b] hover:text-[#174f63]"
+              >
+                <span>Settings</span>
+                <span>Open</span>
+              </Link>
             </div>
           </div>
           <div>
@@ -174,10 +188,7 @@ export default async function Home(): Promise<ReactElement> {
             <h2 className="text-xl font-semibold">Build Order</h2>
             <ol className="mt-3 grid gap-2 text-sm text-[#44504b]">
               <BuildStep value="Dataset and experiment APIs" status="Active" />
-              <BuildStep
-                value="Long-running observation pages"
-                status="Done"
-              />
+              <BuildStep value="Long-running observation pages" status="Done" />
               <BuildStep value="Workers and scheduler" status="Next" />
             </ol>
           </div>
