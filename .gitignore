@@ -3,6 +3,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 docs/plan/
+docs/report/
 .env
 .env.*
 AGENTS.md
