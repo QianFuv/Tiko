@@ -3,7 +3,8 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from uuid import uuid4
+from typing import Literal
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -15,6 +16,7 @@ from tiko.db import (
     create_session_factory,
 )
 from tiko.domain.market import Candle
+from tiko.domain.order import Fill
 from tiko.domain.reporting import ReportArtifact
 from tiko.services import ReportArtifactStore, ReportRenderService, SimulationService
 from tiko.simulation.replay import MarketReplayExhausted
@@ -53,6 +55,42 @@ def create_replay_candle() -> Candle:
         source="replay-test",
         as_of=datetime(2026, 1, 1, 2, tzinfo=UTC),
         created_at=datetime(2026, 1, 1, 2, tzinfo=UTC),
+    )
+
+
+def create_service_fill(
+    run_id: UUID,
+    symbol: str,
+    side: Literal["buy", "sell"],
+    quantity: Decimal,
+    price: Decimal,
+    hour: int,
+) -> Fill:
+    """Create a deterministic fill for service accounting tests.
+
+    Args:
+        run_id: Simulation run identifier.
+        symbol: Fill symbol.
+        side: Fill side.
+        quantity: Fill quantity.
+        price: Fill price.
+        hour: Simulated fill hour.
+
+    Returns:
+        Fill domain model.
+    """
+
+    return Fill(
+        fill_id=uuid4(),
+        order_id=uuid4(),
+        run_id=run_id,
+        symbol=symbol,
+        side=side,
+        quantity=quantity,
+        price=price,
+        fee=Decimal("0"),
+        slippage_bps=Decimal("0"),
+        filled_at_sim_time=datetime(2026, 1, 1, hour, tzinfo=UTC),
     )
 
 
@@ -416,6 +454,52 @@ def test_step_marks_positions_and_account_to_market() -> None:
     assert result.portfolio_snapshot.total_equity == expected_total_equity
     assert result.portfolio_snapshot.unrealized_pnl == expected_unrealized_pnl
     assert result.portfolio_snapshot.max_drawdown == expected_drawdown
+
+
+def test_service_derives_reduced_position_from_fill_accounting() -> None:
+    """Verify service position derivation preserves cost basis after reductions."""
+
+    service = SimulationService(Settings())
+    run = service.create_run(
+        name="reduced-position",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    state = service._get_state(run.run_id)
+    as_of = datetime(2026, 1, 1, 3, tzinfo=UTC)
+    state.fills = [
+        create_service_fill(
+            run.run_id,
+            "BTCUSDT",
+            "buy",
+            Decimal("2"),
+            Decimal("100"),
+            1,
+        ),
+        create_service_fill(
+            run.run_id,
+            "BTCUSDT",
+            "sell",
+            Decimal("0.5"),
+            Decimal("110"),
+            2,
+        ),
+    ]
+
+    positions = service._derive_positions(
+        state,
+        mark_prices={"BTCUSDT": Decimal("110")},
+        as_of=as_of,
+    )
+
+    assert len(positions) == 1
+    position = positions[0]
+    assert position.side == "long"
+    assert position.quantity == Decimal("1.5")
+    assert position.avg_entry_price == Decimal("100")
+    assert position.realized_pnl == Decimal("5.0")
+    assert position.unrealized_pnl == Decimal("15.0")
+    assert position.updated_at_sim_time == as_of
 
 
 def test_step_applies_configured_funding_to_open_positions() -> None:

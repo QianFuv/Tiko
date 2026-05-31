@@ -46,6 +46,7 @@ from tiko.simulation.ledger import (
     LedgerUpdate,
     apply_fill_to_ledger,
     apply_funding_to_ledger,
+    calculate_fill_accounting,
 )
 from tiko.simulation.metrics import MetricsEngine
 from tiko.simulation.replay import MarketReplay, MarketReplayExhausted
@@ -494,7 +495,11 @@ class SimulationService:
         ledger_update: LedgerUpdate | None = None
         if order_request is not None:
             order, fill = self._broker.submit_market_order(order_request, candle.close)
-            ledger_update = apply_fill_to_ledger(account, fill)
+            ledger_update = apply_fill_to_ledger(
+                account,
+                fill,
+                prior_fills=state.fills,
+            )
             account = ledger_update.account
             state.orders.append(order)
             state.fills.append(fill)
@@ -1233,57 +1238,41 @@ class SimulationService:
             Net simulated positions.
         """
 
-        quantities_by_symbol: dict[str, Decimal] = {}
-        notionals_by_symbol: dict[str, Decimal] = {}
-        latest_time_by_symbol: dict[str, datetime] = {}
-        for fill in state.fills:
-            direction = Decimal("-1") if fill.side == "sell" else Decimal("1")
-            signed_quantity = direction * fill.quantity
-            signed_notional = signed_quantity * fill.price
-            quantities_by_symbol[fill.symbol] = (
-                quantities_by_symbol.get(fill.symbol, Decimal("0")) + signed_quantity
-            )
-            notionals_by_symbol[fill.symbol] = (
-                notionals_by_symbol.get(fill.symbol, Decimal("0")) + signed_notional
-            )
-            latest_time_by_symbol[fill.symbol] = fill.filled_at_sim_time
-
+        accounting = calculate_fill_accounting(state.fills)
         positions: list[Position] = []
-        for symbol, quantity in sorted(quantities_by_symbol.items()):
-            if quantity == Decimal("0"):
-                continue
-            notional = notionals_by_symbol[symbol]
-            absolute_quantity = abs(quantity)
-            avg_entry_price = abs(notional) / absolute_quantity
+        for accounted_position in accounting.positions:
             mark_price = (
-                mark_prices.get(symbol, avg_entry_price)
+                mark_prices.get(
+                    accounted_position.symbol,
+                    accounted_position.avg_entry_price,
+                )
                 if mark_prices is not None
-                else avg_entry_price
-            )
-            side: Literal["long", "short"] = (
-                "long" if quantity > Decimal("0") else "short"
+                else accounted_position.avg_entry_price
             )
             unrealized_pnl = self._calculate_unrealized_pnl(
-                side=side,
-                quantity=absolute_quantity,
-                avg_entry_price=avg_entry_price,
+                side=accounted_position.side,
+                quantity=accounted_position.quantity,
+                avg_entry_price=accounted_position.avg_entry_price,
                 mark_price=mark_price,
             )
             positions.append(
                 Position(
-                    position_id=uuid5(NAMESPACE_URL, f"{state.run.run_id}:{symbol}"),
+                    position_id=uuid5(
+                        NAMESPACE_URL,
+                        f"{state.run.run_id}:{accounted_position.symbol}",
+                    ),
                     account_id=state.run.account.account_id,
-                    symbol=symbol,
-                    side=side,
-                    quantity=absolute_quantity,
-                    avg_entry_price=avg_entry_price,
+                    symbol=accounted_position.symbol,
+                    side=accounted_position.side,
+                    quantity=accounted_position.quantity,
+                    avg_entry_price=accounted_position.avg_entry_price,
                     mark_price=mark_price,
-                    notional=absolute_quantity * mark_price,
+                    notional=accounted_position.quantity * mark_price,
                     leverage=Decimal("1"),
                     unrealized_pnl=unrealized_pnl,
-                    realized_pnl=state.run.account.realized_pnl,
+                    realized_pnl=accounted_position.realized_pnl,
                     liquidation_price=None,
-                    updated_at_sim_time=as_of or latest_time_by_symbol[symbol],
+                    updated_at_sim_time=as_of or accounted_position.latest_time,
                 )
             )
         return positions
@@ -1401,7 +1390,7 @@ class SimulationService:
             notional=ledger_update.notional,
             cash_delta=ledger_update.cash_delta,
             fee=ledger_update.fee,
-            realized_pnl_delta=-ledger_update.fee,
+            realized_pnl_delta=ledger_update.realized_pnl_delta,
             created_at_sim_time=fill.filled_at_sim_time,
             created_at=datetime.now(UTC),
         )

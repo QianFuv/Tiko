@@ -6,7 +6,7 @@ from typing import Literal
 from uuid import uuid4
 
 from tiko.domain.account import Position, SimAccount
-from tiko.domain.order import OrderRequest
+from tiko.domain.order import Fill, OrderRequest
 from tiko.domain.simulation import SimulationRun
 from tiko.simulation.broker import SimBroker
 from tiko.simulation.fee import FeeEngine
@@ -14,6 +14,7 @@ from tiko.simulation.ledger import (
     apply_fill_to_account,
     apply_fill_to_ledger,
     apply_funding_to_ledger,
+    calculate_fill_accounting,
 )
 from tiko.simulation.matching import MatchingEngine
 from tiko.simulation.metrics import MetricsEngine
@@ -39,6 +40,40 @@ def create_order_request(side: Literal["buy", "sell"] = "buy") -> OrderRequest:
         order_type="market",
         quantity=Decimal("2"),
         submitted_at_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+
+def create_fill(
+    side: Literal["buy", "sell"],
+    quantity: Decimal,
+    price: Decimal,
+    hour: int,
+    fee: Decimal = Decimal("0"),
+) -> Fill:
+    """Create a deterministic fill for accounting tests.
+
+    Args:
+        side: Fill side.
+        quantity: Fill quantity.
+        price: Fill price.
+        hour: Simulated fill hour.
+        fee: Fill fee.
+
+    Returns:
+        Fill domain model.
+    """
+
+    return Fill(
+        fill_id=uuid4(),
+        order_id=uuid4(),
+        run_id=uuid4(),
+        symbol="BTCUSDT",
+        side=side,
+        quantity=quantity,
+        price=price,
+        fee=fee,
+        slippage_bps=Decimal("0"),
+        filled_at_sim_time=datetime(2026, 1, 1, hour, tzinfo=UTC),
     )
 
 
@@ -177,7 +212,75 @@ def test_ledger_update_preserves_account_output_and_exposes_metadata() -> None:
     assert ledger_update.notional == Decimal("200.04")
     assert ledger_update.fee == Decimal("0.10002")
     assert ledger_update.cash_delta == Decimal("-200.14002")
+    assert ledger_update.realized_pnl_delta == Decimal("-0.10002")
     assert ledger_update.account.realized_pnl == Decimal("-0.10002")
+
+
+def test_fill_accounting_partial_close_preserves_average_entry() -> None:
+    """Verify partial reductions realize PnL without moving remaining cost basis."""
+
+    accounting = calculate_fill_accounting(
+        [
+            create_fill("buy", Decimal("2"), Decimal("100"), 1),
+            create_fill("sell", Decimal("0.5"), Decimal("110"), 2),
+        ]
+    )
+
+    position = accounting.positions[0]
+    assert accounting.realized_pnl == Decimal("5.0")
+    assert position.side == "long"
+    assert position.quantity == Decimal("1.5")
+    assert position.avg_entry_price == Decimal("100")
+    assert position.realized_pnl == Decimal("5.0")
+
+
+def test_fill_accounting_full_close_realizes_trade_pnl() -> None:
+    """Verify full closes leave no open position and realize trade PnL."""
+
+    open_fill = create_fill(
+        "buy",
+        Decimal("2"),
+        Decimal("100"),
+        1,
+        fee=Decimal("0.10"),
+    )
+    close_fill = create_fill(
+        "sell",
+        Decimal("2"),
+        Decimal("90"),
+        2,
+        fee=Decimal("0.09"),
+    )
+    open_update = apply_fill_to_ledger(create_account(), open_fill)
+    close_update = apply_fill_to_ledger(
+        open_update.account,
+        close_fill,
+        prior_fills=[open_fill],
+    )
+    accounting = calculate_fill_accounting([open_fill, close_fill])
+
+    assert accounting.positions == ()
+    assert accounting.realized_pnl == Decimal("-20")
+    assert close_update.realized_pnl_delta == Decimal("-20.09")
+    assert close_update.account.realized_pnl == Decimal("-20.19")
+
+
+def test_fill_accounting_reversal_opens_residual_at_reversal_price() -> None:
+    """Verify reversals realize the closed side and open residual exposure."""
+
+    accounting = calculate_fill_accounting(
+        [
+            create_fill("buy", Decimal("1"), Decimal("100"), 1),
+            create_fill("sell", Decimal("2"), Decimal("110"), 2),
+        ]
+    )
+
+    position = accounting.positions[0]
+    assert accounting.realized_pnl == Decimal("10")
+    assert position.side == "short"
+    assert position.quantity == Decimal("1")
+    assert position.avg_entry_price == Decimal("110")
+    assert position.realized_pnl == Decimal("10")
 
 
 def test_funding_update_charges_longs_and_pays_shorts() -> None:
