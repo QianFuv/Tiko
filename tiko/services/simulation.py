@@ -621,6 +621,7 @@ class SimulationService:
         """
 
         state = self._get_state(run_id)
+        self._ensure_run_can_step(state.run)
         try:
             candle = self._next_candle(state)
         except MarketReplayExhausted:
@@ -807,6 +808,19 @@ class SimulationService:
             )
         self._publish_realtime_envelopes(realtime_envelopes)
         return result
+
+    def _ensure_run_can_step(self, run: SimulationRun) -> None:
+        """Validate that a simulation run can produce another manual step.
+
+        Args:
+            run: Simulation run about to be stepped.
+
+        Raises:
+            ValueError: If the run is in a terminal lifecycle state.
+        """
+
+        if run.status in {"stopped", "completed"}:
+            raise ValueError(f"Simulation run is {run.status} and cannot be stepped.")
 
     def _next_candle(self, state: SimulationState) -> Candle:
         """Return the next candle for a simulation state.

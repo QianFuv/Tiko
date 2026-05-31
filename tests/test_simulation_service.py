@@ -481,6 +481,8 @@ def test_service_create_run_accepts_configured_simulation_fields() -> None:
     assert run.config["initial_equity"] == "250000"
     assert result.run.status == "completed"
 
+    with pytest.raises(ValueError, match="completed"):
+        service.step_run(run.run_id, confidence=0.7)
     with pytest.raises(ValueError, match="end_sim_time"):
         service.create_run(
             name="invalid-end",
@@ -495,6 +497,23 @@ def test_service_create_run_accepts_configured_simulation_fields() -> None:
             start_sim_time=start_time,
             initial_equity=Decimal("0"),
         )
+
+
+def test_service_rejects_step_for_stopped_run() -> None:
+    """Verify stopped runs cannot produce more step artifacts."""
+
+    service = SimulationService(Settings())
+    run = service.create_run(
+        name="stopped-step",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    service.update_run_status(run.run_id, "stopped")
+
+    with pytest.raises(ValueError, match="stopped"):
+        service.step_run(run.run_id, confidence=0.7)
+
+    assert service.list_candles(run.run_id) == []
 
 
 def test_simulation_steps_size_orders_against_existing_target() -> None:

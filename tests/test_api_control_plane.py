@@ -328,6 +328,10 @@ def test_simulation_lifecycle_routes_update_status_speed_and_audit() -> None:
         headers=OPERATOR_HEADERS,
     )
     status_response = client.get(f"/api/simulations/{run_id}/status")
+    terminal_step_response = client.post(
+        f"/api/simulations/{run_id}/step",
+        headers=OPERATOR_HEADERS,
+    )
 
     assert viewer_response.status_code == 403
     assert start_response.json()["status"] == "running"
@@ -339,6 +343,8 @@ def test_simulation_lifecycle_routes_update_status_speed_and_audit() -> None:
     assert risk_resume_response.status_code == 200
     assert stop_response.json()["status"] == "stopped"
     assert status_response.json()["status"] == "stopped"
+    assert terminal_step_response.status_code == 422
+    assert "stopped" in terminal_step_response.json()["detail"]
     assert (
         client.post(
             "/api/simulations/00000000-0000-0000-0000-000000000000/start",

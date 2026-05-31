@@ -586,3 +586,5 @@ def step_simulation(
         raise HTTPException(
             status_code=404, detail="Simulation run not found."
         ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
