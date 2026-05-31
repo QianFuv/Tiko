@@ -9,6 +9,7 @@ from pydantic import Field
 from tiko.domain.base import DomainModel
 
 ReportType = Literal["simulation", "decision", "experiment"]
+ReportFormat = Literal["markdown"]
 AlertCategory = Literal[
     "pnl",
     "drawdown",
@@ -35,6 +36,17 @@ class ReportArtifact(DomainModel):
     sections: dict[str, object]
     created_at_sim_time: datetime
     created_at: datetime
+
+
+class RenderedReport(DomainModel):
+    """Represent a rendered human-readable report document."""
+
+    report_id: UUID
+    report_type: ReportType
+    format: ReportFormat
+    title: str = Field(min_length=1)
+    content: str = Field(min_length=1)
+    rendered_at: datetime
 
 
 class Alert(DomainModel):

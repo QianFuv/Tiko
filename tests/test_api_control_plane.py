@@ -354,11 +354,25 @@ def test_query_routes_expose_simulated_state() -> None:
 
     assert report_response.status_code == 200
     assert report_response.json()["report_type"] == "simulation"
+    simulation_report_id = report_response.json()["report_id"]
+    render_response = client.get(f"/api/reports/{simulation_report_id}/render")
+    unsupported_render_response = client.get(
+        f"/api/reports/{simulation_report_id}/render?format=html"
+    )
+    unknown_render_response = client.get(
+        "/api/reports/00000000-0000-0000-0000-000000000000/render"
+    )
+    assert render_response.status_code == 200
+    rendered_report = render_response.json()
+    assert rendered_report["format"] == "markdown"
+    assert rendered_report["report_type"] == "simulation"
+    assert "# query-demo simulation report" in rendered_report["content"]
+    assert "### Activity" in rendered_report["content"]
+    assert unsupported_render_response.status_code == 422
+    assert unknown_render_response.status_code == 404
     assert (
-        client.get(f"/api/reports/{report_response.json()['report_id']}").json()[
-            "report_id"
-        ]
-        == report_response.json()["report_id"]
+        client.get(f"/api/reports/{simulation_report_id}").json()["report_id"]
+        == simulation_report_id
     )
     assert len(client.get(f"/api/reports/simulations/{run_id}").json()) == 1
     assert alert_response.status_code == 200
@@ -417,8 +431,14 @@ def test_query_routes_expose_simulated_state() -> None:
     )
     assert decision_report_response.status_code == 200
     decision_report = decision_report_response.json()
+    decision_render_response = client.get(
+        f"/api/reports/{decision_report['report_id']}/render"
+    )
     assert decision_report["report_type"] == "decision"
     assert decision_report["sections"]["decision"]["decision_id"] == decision_id
+    assert decision_render_response.status_code == 200
+    assert "decision report" in decision_render_response.json()["content"]
+    assert "### Risk Review" in decision_render_response.json()["content"]
     assert (
         client.get(f"/api/reports/{decision_report['report_id']}").json()["report_type"]
         == "decision"

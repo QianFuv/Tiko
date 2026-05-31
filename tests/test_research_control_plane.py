@@ -206,8 +206,15 @@ def test_experiment_routes_create_queue_and_audit(tmp_path: Path) -> None:
     assert "job_id" in queued["metrics"]
     assert report_response.status_code == 200
     report = report_response.json()
+    render_response = client.get(f"/api/reports/{report['report_id']}/render")
     assert report["report_type"] == "experiment"
     assert report["sections"]["experiment"]["experiment_id"] == experiment_id
+    assert render_response.status_code == 200
+    rendered_report = render_response.json()
+    assert rendered_report["report_type"] == "experiment"
+    assert rendered_report["format"] == "markdown"
+    assert "# baseline walk-forward experiment report" in rendered_report["content"]
+    assert "### Hypothesis" in rendered_report["content"]
     assert (
         client.get(f"/api/reports/{report['report_id']}").json()["report_id"]
         == (report["report_id"])

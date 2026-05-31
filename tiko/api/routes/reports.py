@@ -3,7 +3,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from tiko.api.dependencies import (
     get_audit_service,
@@ -11,9 +11,14 @@ from tiko.api.dependencies import (
     get_simulation_service,
     require_permission,
 )
-from tiko.domain.reporting import ReportArtifact
+from tiko.domain.reporting import RenderedReport, ReportArtifact, ReportFormat
 from tiko.domain.security import Principal
-from tiko.services import AuditService, ExperimentService, SimulationService
+from tiko.services import (
+    AuditService,
+    ExperimentService,
+    ReportRenderService,
+    SimulationService,
+)
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 SimulationServiceDep = Annotated[SimulationService, Depends(get_simulation_service)]
@@ -22,6 +27,35 @@ AuditServiceDep = Annotated[AuditService, Depends(get_audit_service)]
 ManageReportsPrincipalDep = Annotated[
     Principal, Depends(require_permission("manage_reports"))
 ]
+ReportFormatQuery = Annotated[ReportFormat, Query(alias="format")]
+
+
+def find_report_artifact(
+    report_id: UUID,
+    simulation_service: SimulationService,
+    experiment_service: ExperimentService,
+) -> ReportArtifact:
+    """Find a report artifact across simulation and experiment services.
+
+    Args:
+        report_id: Report identifier.
+        simulation_service: Simulation service dependency.
+        experiment_service: Experiment service dependency.
+
+    Returns:
+        Report artifact.
+
+    Raises:
+        HTTPException: If the report does not exist.
+    """
+
+    try:
+        return simulation_service.get_report(report_id)
+    except KeyError:
+        try:
+            return experiment_service.get_report(report_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Report not found.") from error
 
 
 @router.get("/{report_id}", response_model=ReportArtifact)
@@ -44,13 +78,33 @@ def get_report(
         HTTPException: If the report does not exist.
     """
 
-    try:
-        return simulation_service.get_report(report_id)
-    except KeyError:
-        try:
-            return experiment_service.get_report(report_id)
-        except KeyError as error:
-            raise HTTPException(status_code=404, detail="Report not found.") from error
+    return find_report_artifact(report_id, simulation_service, experiment_service)
+
+
+@router.get("/{report_id}/render", response_model=RenderedReport)
+def render_report(
+    report_id: UUID,
+    simulation_service: SimulationServiceDep,
+    experiment_service: ExperimentServiceDep,
+    report_format: ReportFormatQuery = "markdown",
+) -> RenderedReport:
+    """Render one report by ID.
+
+    Args:
+        report_id: Report identifier.
+        simulation_service: Simulation service dependency.
+        experiment_service: Experiment service dependency.
+        report_format: Requested report render format.
+
+    Returns:
+        Rendered report document.
+
+    Raises:
+        HTTPException: If the report does not exist.
+    """
+
+    report = find_report_artifact(report_id, simulation_service, experiment_service)
+    return ReportRenderService().render(report, report_format=report_format)
 
 
 @router.post("/simulations/{run_id}", response_model=ReportArtifact)

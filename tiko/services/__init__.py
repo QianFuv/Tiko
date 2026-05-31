@@ -6,6 +6,7 @@ from tiko.services.experiments import ExperimentService
 from tiko.services.models import ModelRegistryService
 from tiko.services.plugins import PluginRegistryService
 from tiko.services.portfolio import PortfolioService
+from tiko.services.reports import ReportRenderService
 from tiko.services.risk import RiskService
 from tiko.services.runtime import RuntimeService
 from tiko.services.simulation import SimulationService
@@ -18,6 +19,7 @@ __all__ = [
     "ModelRegistryService",
     "PortfolioService",
     "PluginRegistryService",
+    "ReportRenderService",
     "RiskService",
     "RuntimeService",
     "SimulationService",

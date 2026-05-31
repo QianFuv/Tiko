@@ -56,7 +56,9 @@ from tiko.domain.reporting import (
     AlertCategory,
     AlertSeverity,
     AlertStatus,
+    RenderedReport,
     ReportArtifact,
+    ReportFormat,
     ReportType,
 )
 from tiko.domain.risk import RiskLimits, RiskReview
@@ -127,7 +129,9 @@ __all__ = [
     "ProjectRecord",
     "RiskLimits",
     "RiskReview",
+    "RenderedReport",
     "ReportArtifact",
+    "ReportFormat",
     "ReportType",
     "RewardBreakdown",
     "RewardComponents",

@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from uuid import uuid4
 
 import pytest
 
@@ -13,7 +14,8 @@ from tiko.db import (
     create_session_factory,
 )
 from tiko.domain.market import Candle
-from tiko.services import SimulationService
+from tiko.domain.reporting import ReportArtifact
+from tiko.services import ReportRenderService, SimulationService
 from tiko.simulation.replay import MarketReplayExhausted
 
 
@@ -350,6 +352,65 @@ def test_service_creates_reports_and_updates_alerts() -> None:
     assert service.list_alerts(run.run_id) == [updated_alert]
     assert repository.list_reports(run.run_id) == [report]
     assert repository.list_alerts(run.run_id) == [updated_alert]
+
+
+def test_report_renderer_creates_markdown_documents() -> None:
+    """Verify structured reports render to deterministic Markdown."""
+
+    service = SimulationService(Settings())
+    renderer = ReportRenderService()
+    run = service.create_run(
+        name="rendering",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    service.step_run(run.run_id, confidence=0.7)
+    report = service.create_simulation_report(run.run_id)
+
+    rendered_report = renderer.render(report)
+
+    assert rendered_report.report_id == report.report_id
+    assert rendered_report.report_type == "simulation"
+    assert rendered_report.format == "markdown"
+    assert rendered_report.title == report.title
+    assert rendered_report.content.startswith("# rendering simulation report")
+    assert "- Report Type: simulation" in rendered_report.content
+    assert "## Summary" in rendered_report.content
+    assert "### Activity" in rendered_report.content
+    assert '"decision_count": 1' in rendered_report.content
+
+
+def test_report_renderer_handles_empty_sections() -> None:
+    """Verify Markdown rendering works for reports without sections."""
+
+    renderer = ReportRenderService()
+    created_at = datetime(2026, 1, 1, tzinfo=UTC)
+    report = ReportArtifact(
+        report_id=uuid4(),
+        run_id=uuid4(),
+        report_type="experiment",
+        title="Empty experiment report",
+        summary="No sections have been attached.",
+        sections={},
+        created_at_sim_time=created_at,
+        created_at=created_at,
+    )
+
+    rendered_report = renderer.render(report)
+
+    assert rendered_report.content == (
+        f"# {report.title}\n"
+        "\n"
+        f"- Report ID: {report.report_id}\n"
+        "- Report Type: experiment\n"
+        f"- Run ID: {report.run_id}\n"
+        f"- Created At: {created_at.isoformat()}\n"
+        f"- Created At Sim Time: {created_at.isoformat()}\n"
+        "\n"
+        "## Summary\n"
+        "\n"
+        "No sections have been attached.\n"
+    )
 
 
 def test_service_rejects_memory_for_decision_from_another_run() -> None:
