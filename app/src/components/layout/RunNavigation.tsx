@@ -33,6 +33,11 @@ function buildRunSections(runId: string): RunSection[] {
       href: `/simulations/${runId}/decisions`,
     },
     {
+      key: "agent-trace",
+      label: "Agent Trace",
+      href: `/simulations/${runId}/agent-trace`,
+    },
+    {
       key: "orders",
       label: "Orders",
       href: `/simulations/${runId}/orders`,
@@ -46,6 +51,16 @@ function buildRunSections(runId: string): RunSection[] {
       key: "risk",
       label: "Risk",
       href: `/simulations/${runId}/risk`,
+    },
+    {
+      key: "review",
+      label: "Review",
+      href: `/simulations/${runId}/review`,
+    },
+    {
+      key: "reports",
+      label: "Reports",
+      href: `/simulations/${runId}/reports`,
     },
   ];
 }

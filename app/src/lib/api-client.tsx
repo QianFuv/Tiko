@@ -3,11 +3,15 @@
  */
 
 import type {
+  AgentMessage,
+  AgentRun,
   ApiData,
   BackendHealthState,
   DataSource,
   DatasetQualityReport,
   DatasetRecord,
+  DecisionReview,
+  DecisionTrace,
   ExperimentRecord,
   Fill,
   ModelRegistryEntry,
@@ -17,6 +21,9 @@ import type {
   RiskLimits,
   RiskReview,
   RunDashboardData,
+  RunReportData,
+  RunReviewData,
+  RunTraceData,
   SimAccount,
   SimOrder,
   SimulationRun,
@@ -30,6 +37,10 @@ const DEMO_DECISION_ID = "00000000-0000-4000-8000-000000000101";
 const DEMO_ORDER_ID = "00000000-0000-4000-8000-000000000201";
 const DEMO_FILL_ID = "00000000-0000-4000-8000-000000000301";
 const DEMO_REVIEW_ID = "00000000-0000-4000-8000-000000000401";
+const DEMO_AGENT_RUN_ID = "00000000-0000-4000-8000-000000000501";
+const DEMO_OBSERVATION_MESSAGE_ID = "00000000-0000-4000-8000-000000000601";
+const DEMO_ASSISTANT_MESSAGE_ID = "00000000-0000-4000-8000-000000000602";
+const DEMO_DECISION_REVIEW_ID = "00000000-0000-4000-8000-000000000701";
 const DEMO_DATASET_ID = "00000000-0000-4000-8000-000000000901";
 const DEMO_EXPERIMENT_ID = "00000000-0000-4000-8000-000000001001";
 const DEMO_MODEL_ID = "00000000-0000-4000-8000-000000001101";
@@ -160,14 +171,18 @@ export async function fetchModels(): Promise<ApiData<ModelRegistryEntry[]>> {
  * @returns Aggregated reports from the backend or demo fallback data.
  */
 export async function fetchReports(): Promise<ApiData<ReportArtifact[]>> {
-  const [simulationsResult, decisionsResult, experimentsResult] = await Promise.all([
-    fetchSimulations(),
-    fetchDecisions(),
-    fetchExperiments(),
-  ]);
+  const [simulationsResult, decisionsResult, experimentsResult] =
+    await Promise.all([
+      fetchSimulations(),
+      fetchDecisions(),
+      fetchExperiments(),
+    ]);
   const reportRequests = [
     ...simulationsResult.data.map((run) =>
-      fetchApiData(`/api/reports/simulations/${run.run_id}`, () => [] as ReportArtifact[]),
+      fetchApiData(
+        `/api/reports/simulations/${run.run_id}`,
+        () => [] as ReportArtifact[],
+      ),
     ),
     ...decisionsResult.data.map((decision) =>
       fetchApiData(
@@ -212,6 +227,201 @@ export async function fetchReports(): Promise<ApiData<ReportArtifact[]>> {
       decisionsResult.error ??
       experimentsResult.error,
   };
+}
+
+/**
+ * Fetch agent runtime traces for a simulation run.
+ *
+ * @param runId - Simulation run identifier.
+ * @returns Aggregated agent run, message, and decision trace data.
+ */
+export async function fetchRunTraceData(runId: string): Promise<RunTraceData> {
+  const [runResult, decisionsResult, agentRunsResult] = await Promise.all([
+    fetchSimulation(runId),
+    fetchDecisions(runId),
+    fetchAgentRuns(runId),
+  ]);
+  const [messageResults, traceResults] = await Promise.all([
+    Promise.all(
+      agentRunsResult.data.map((agentRun) =>
+        fetchAgentMessages(agentRun.agent_run_id),
+      ),
+    ),
+    Promise.all(
+      decisionsResult.data.map((decision) => fetchDecisionTrace(decision)),
+    ),
+  ]);
+  return {
+    source: combineDataSources([
+      runResult.source,
+      decisionsResult.source,
+      agentRunsResult.source,
+      ...messageResults.map((result) => result.source),
+      ...traceResults.map((result) => result.source),
+    ]),
+    run: runResult.data,
+    agentRuns: agentRunsResult.data,
+    messagesByAgentRunId: buildMessageMap(agentRunsResult.data, messageResults),
+    traces: traceResults.map((result) => result.data),
+  };
+}
+
+/**
+ * Fetch posterior decision reviews for a simulation run.
+ *
+ * @param runId - Simulation run identifier.
+ * @returns Aggregated decision review data.
+ */
+export async function fetchRunReviewData(
+  runId: string,
+): Promise<RunReviewData> {
+  const [runResult, decisionsResult, latestRiskReviewResult] =
+    await Promise.all([
+      fetchSimulation(runId),
+      fetchDecisions(runId),
+      fetchLatestRiskReview(runId),
+    ]);
+  const reviewResults = await Promise.all(
+    decisionsResult.data.map((decision) => fetchDecisionReviews(decision)),
+  );
+  return {
+    source: combineDataSources([
+      runResult.source,
+      decisionsResult.source,
+      latestRiskReviewResult.source,
+      ...reviewResults.map((result) => result.source),
+    ]),
+    run: runResult.data,
+    decisions: decisionsResult.data,
+    reviewsByDecisionId: buildReviewMap(decisionsResult.data, reviewResults),
+    latestRiskReview: latestRiskReviewResult.data,
+  };
+}
+
+/**
+ * Fetch run-scoped simulation and decision reports.
+ *
+ * @param runId - Simulation run identifier.
+ * @returns Aggregated run report data.
+ */
+export async function fetchRunReportData(
+  runId: string,
+): Promise<RunReportData> {
+  const [runResult, decisionsResult, simulationReportsResult] =
+    await Promise.all([
+      fetchSimulation(runId),
+      fetchDecisions(runId),
+      fetchSimulationReports(runId),
+    ]);
+  const decisionReportResults = await Promise.all(
+    decisionsResult.data.map((decision) =>
+      fetchDecisionReports(decision.decision_id, runId),
+    ),
+  );
+  return {
+    source: combineDataSources([
+      runResult.source,
+      decisionsResult.source,
+      simulationReportsResult.source,
+      ...decisionReportResults.map((result) => result.source),
+    ]),
+    run: runResult.data,
+    simulationReports: simulationReportsResult.data,
+    decisionReports: decisionReportResults.flatMap((result) => result.data),
+  };
+}
+
+/**
+ * Fetch agent runtime runs, optionally filtered by simulation run.
+ *
+ * @param runId - Optional simulation run identifier.
+ * @returns Agent runtime runs from the backend or demo fallback data.
+ */
+export async function fetchAgentRuns(
+  runId?: string,
+): Promise<ApiData<AgentRun[]>> {
+  return fetchApiData(
+    "/api/agents/runs",
+    () => buildDemoAgentRuns(runId ?? DEMO_RUN_ID),
+    (agentRuns) =>
+      agentRuns.filter(
+        (agentRun) => runId === undefined || agentRun.run_id === runId,
+      ),
+  );
+}
+
+/**
+ * Fetch trace messages for one agent run.
+ *
+ * @param agentRunId - Agent run identifier.
+ * @returns Agent messages from the backend or demo fallback data.
+ */
+export async function fetchAgentMessages(
+  agentRunId: string,
+): Promise<ApiData<AgentMessage[]>> {
+  return fetchApiData(`/api/agents/runs/${agentRunId}/messages`, () =>
+    buildDemoAgentMessages(agentRunId),
+  );
+}
+
+/**
+ * Fetch joined trace artifacts for one decision.
+ *
+ * @param decision - Decision used for the endpoint and fallback payload.
+ * @returns Decision trace from the backend or demo fallback data.
+ */
+export async function fetchDecisionTrace(
+  decision: TradeIntent,
+): Promise<ApiData<DecisionTrace>> {
+  return fetchApiData(`/api/decisions/${decision.decision_id}/trace`, () =>
+    buildDemoDecisionTrace(decision),
+  );
+}
+
+/**
+ * Fetch posterior reviews for one decision.
+ *
+ * @param decision - Decision used for the endpoint and fallback payload.
+ * @returns Decision reviews from the backend or demo fallback data.
+ */
+export async function fetchDecisionReviews(
+  decision: TradeIntent,
+): Promise<ApiData<DecisionReview[]>> {
+  return fetchApiData(`/api/decisions/${decision.decision_id}/review`, () =>
+    buildDemoDecisionReviews(decision),
+  );
+}
+
+/**
+ * Fetch simulation reports for one run.
+ *
+ * @param runId - Simulation run identifier.
+ * @returns Simulation reports from the backend or demo fallback data.
+ */
+export async function fetchSimulationReports(
+  runId: string,
+): Promise<ApiData<ReportArtifact[]>> {
+  return fetchApiData(`/api/reports/simulations/${runId}`, () =>
+    buildDemoReports(runId).filter(
+      (report) => report.report_type === "simulation",
+    ),
+  );
+}
+
+/**
+ * Fetch decision reports for one decision.
+ *
+ * @param decisionId - Decision identifier.
+ * @param runId - Optional simulation run identifier for fallback data.
+ * @returns Decision reports from the backend or demo fallback data.
+ */
+export async function fetchDecisionReports(
+  decisionId: string,
+  runId = DEMO_RUN_ID,
+): Promise<ApiData<ReportArtifact[]>> {
+  return fetchApiData(`/api/reports/decisions/${decisionId}`, () =>
+    buildDemoDecisionReports(decisionId, runId),
+  );
 }
 
 /**
@@ -390,6 +600,44 @@ async function fetchApiData<T>(
       error: error instanceof Error ? error.message : "Backend unavailable",
     };
   }
+}
+
+/**
+ * Build message lookup by agent run identifier.
+ *
+ * @param agentRuns - Agent runs used for map keys.
+ * @param results - Message request results in agent run order.
+ * @returns Messages keyed by agent run identifier.
+ */
+function buildMessageMap(
+  agentRuns: AgentRun[],
+  results: ApiData<AgentMessage[]>[],
+): Record<string, AgentMessage[]> {
+  return Object.fromEntries(
+    agentRuns.map((agentRun, index) => [
+      agentRun.agent_run_id,
+      results[index]?.data ?? [],
+    ]),
+  );
+}
+
+/**
+ * Build review lookup by decision identifier.
+ *
+ * @param decisions - Decisions used for map keys.
+ * @param results - Review request results in decision order.
+ * @returns Reviews keyed by decision identifier.
+ */
+function buildReviewMap(
+  decisions: TradeIntent[],
+  results: ApiData<DecisionReview[]>[],
+): Record<string, DecisionReview[]> {
+  return Object.fromEntries(
+    decisions.map((decision, index) => [
+      decision.decision_id,
+      results[index]?.data ?? [],
+    ]),
+  );
 }
 
 /**
@@ -587,16 +835,18 @@ function buildDemoModels(): ModelRegistryEntry[] {
 /**
  * Build deterministic demo report artifacts.
  *
+ * @param runId - Simulation run identifier.
  * @returns Demo report artifacts.
  */
-function buildDemoReports(): ReportArtifact[] {
+function buildDemoReports(runId = DEMO_RUN_ID): ReportArtifact[] {
   return [
     {
       report_id: DEMO_REPORT_ID,
-      run_id: DEMO_RUN_ID,
+      run_id: runId,
       report_type: "simulation",
       title: "BTCUSDT long-run simulation report",
-      summary: "Demo report covering decisions, orders, fills, and risk checks.",
+      summary:
+        "Demo report covering decisions, orders, fills, and risk checks.",
       sections: {
         activity: {
           decisions: 1,
@@ -605,6 +855,43 @@ function buildDemoReports(): ReportArtifact[] {
         },
         safety: {
           live_trading_allowed: false,
+        },
+      },
+      created_at_sim_time: DEMO_TIME,
+      created_at: DEMO_TIME,
+    },
+    ...buildDemoDecisionReports(DEMO_DECISION_ID, runId),
+  ];
+}
+
+/**
+ * Build deterministic demo decision report artifacts.
+ *
+ * @param decisionId - Decision identifier.
+ * @param runId - Simulation run identifier.
+ * @returns Demo decision report artifacts.
+ */
+function buildDemoDecisionReports(
+  decisionId: string,
+  runId = DEMO_RUN_ID,
+): ReportArtifact[] {
+  return [
+    {
+      report_id: `${DEMO_REPORT_ID.slice(0, -3)}202`,
+      run_id: runId,
+      report_type: "decision",
+      title: "BTCUSDT momentum decision review",
+      summary:
+        "Demo report connecting the structured intent to trace, risk, order, and fill artifacts.",
+      sections: {
+        decision: {
+          decision_id: decisionId,
+          action: "open_long",
+          confidence: 0.74,
+        },
+        outcome: {
+          realized_return: "0.018",
+          max_adverse_excursion: "-0.006",
         },
       },
       created_at_sim_time: DEMO_TIME,
@@ -778,6 +1065,116 @@ function buildDemoRiskReview(): RiskReview {
     ],
     created_at_sim_time: DEMO_TIME,
   };
+}
+
+/**
+ * Build deterministic demo agent run records.
+ *
+ * @param runId - Simulation run identifier.
+ * @returns Demo agent run records.
+ */
+function buildDemoAgentRuns(runId: string): AgentRun[] {
+  return [
+    {
+      agent_run_id: DEMO_AGENT_RUN_ID,
+      run_id: runId,
+      decision_id: DEMO_DECISION_ID,
+      agent_id: "rule_based_trader",
+      status: "completed",
+      started_at_sim_time: DEMO_TIME,
+      completed_at_sim_time: DEMO_TIME,
+    },
+  ];
+}
+
+/**
+ * Build deterministic demo agent messages.
+ *
+ * @param agentRunId - Agent run identifier.
+ * @returns Demo agent messages.
+ */
+function buildDemoAgentMessages(agentRunId: string): AgentMessage[] {
+  return [
+    {
+      message_id: DEMO_OBSERVATION_MESSAGE_ID,
+      agent_run_id: agentRunId,
+      role: "observation",
+      content: {
+        symbol: "BTCUSDT",
+        close_above_open: true,
+        data_quality_score: 0.98,
+      },
+      created_at_sim_time: DEMO_TIME,
+    },
+    {
+      message_id: DEMO_ASSISTANT_MESSAGE_ID,
+      agent_run_id: agentRunId,
+      role: "assistant",
+      content: {
+        action: "open_long",
+        thesis:
+          "Momentum remains positive while confidence and data quality satisfy policy gates.",
+      },
+      created_at_sim_time: DEMO_TIME,
+    },
+  ];
+}
+
+/**
+ * Build deterministic demo joined decision trace data.
+ *
+ * @param decision - Decision associated with the trace.
+ * @returns Demo decision trace data.
+ */
+function buildDemoDecisionTrace(decision: TradeIntent): DecisionTrace {
+  const agentRun = buildDemoAgentRuns(decision.run_id)[0];
+  return {
+    decision,
+    agent_run: {
+      ...agentRun,
+      decision_id: decision.decision_id,
+      agent_id: decision.agent_id,
+    },
+    messages: buildDemoAgentMessages(agentRun.agent_run_id),
+    risk_review: {
+      ...buildDemoRiskReview(),
+      decision_id: decision.decision_id,
+    },
+    order: {
+      ...buildDemoOrders(decision.run_id)[0],
+      decision_id: decision.decision_id,
+      symbol: decision.symbol,
+    },
+    fill: {
+      ...buildDemoFills(decision.run_id)[0],
+      symbol: decision.symbol,
+    },
+  };
+}
+
+/**
+ * Build deterministic demo posterior decision reviews.
+ *
+ * @param decision - Decision associated with the review.
+ * @returns Demo decision reviews.
+ */
+function buildDemoDecisionReviews(decision: TradeIntent): DecisionReview[] {
+  return [
+    {
+      review_id: DEMO_DECISION_REVIEW_ID,
+      decision_id: decision.decision_id,
+      run_id: decision.run_id,
+      horizon: "1h",
+      realized_return: "0.018",
+      max_adverse_excursion: "-0.006",
+      max_favorable_excursion: "0.026",
+      was_correct_directionally: true,
+      error_tags: [],
+      reviewer_summary:
+        "Decision remained directionally correct after the configured review horizon.",
+      created_at_sim_time: DEMO_TIME,
+    },
+  ];
 }
 
 /**

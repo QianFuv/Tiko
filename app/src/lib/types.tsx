@@ -104,6 +104,47 @@ export type ReportArtifact = {
   created_at: string;
 };
 
+export type AgentRun = {
+  agent_run_id: string;
+  run_id: string;
+  decision_id: string;
+  agent_id: string;
+  status: "completed" | "failed" | "replayed";
+  started_at_sim_time: string;
+  completed_at_sim_time: string;
+};
+
+export type AgentMessage = {
+  message_id: string;
+  agent_run_id: string;
+  role: "system" | "observation" | "assistant" | "risk";
+  content: Record<string, unknown>;
+  created_at_sim_time: string;
+};
+
+export type DecisionTrace = {
+  decision: TradeIntent;
+  agent_run: AgentRun;
+  messages: AgentMessage[];
+  risk_review: RiskReview | null;
+  order: SimOrder | null;
+  fill: Fill | null;
+};
+
+export type DecisionReview = {
+  review_id: string;
+  decision_id: string;
+  run_id: string;
+  horizon: string;
+  realized_return: string;
+  max_adverse_excursion: string;
+  max_favorable_excursion: string;
+  was_correct_directionally: boolean;
+  error_tags: string[];
+  reviewer_summary: string;
+  created_at_sim_time: string;
+};
+
 export type SimAccount = {
   account_id: string;
   name: string;
@@ -239,6 +280,29 @@ export type RunDashboardData = {
   positions: PositionView[];
   riskLimits: RiskLimits;
   latestRiskReview: RiskReview | null;
+};
+
+export type RunTraceData = {
+  source: DataSource;
+  run: SimulationRun;
+  agentRuns: AgentRun[];
+  messagesByAgentRunId: Record<string, AgentMessage[]>;
+  traces: DecisionTrace[];
+};
+
+export type RunReviewData = {
+  source: DataSource;
+  run: SimulationRun;
+  decisions: TradeIntent[];
+  reviewsByDecisionId: Record<string, DecisionReview[]>;
+  latestRiskReview: RiskReview | null;
+};
+
+export type RunReportData = {
+  source: DataSource;
+  run: SimulationRun;
+  simulationReports: ReportArtifact[];
+  decisionReports: ReportArtifact[];
 };
 
 export type Metric = {
