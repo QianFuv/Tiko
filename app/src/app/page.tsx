@@ -144,6 +144,20 @@ export default async function Home(): Promise<ReactElement> {
                 <span>Experiments</span>
                 <span>Open</span>
               </Link>
+              <Link
+                href="/models"
+                className="flex items-center justify-between gap-3 border-b border-[#d8dee4] py-2 font-medium text-[#1f6f8b] hover:text-[#174f63]"
+              >
+                <span>Models</span>
+                <span>Open</span>
+              </Link>
+              <Link
+                href="/reports"
+                className="flex items-center justify-between gap-3 border-b border-[#d8dee4] py-2 font-medium text-[#1f6f8b] hover:text-[#174f63]"
+              >
+                <span>Reports</span>
+                <span>Open</span>
+              </Link>
             </div>
           </div>
           <div>

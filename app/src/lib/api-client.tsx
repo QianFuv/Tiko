@@ -10,8 +10,10 @@ import type {
   DatasetRecord,
   ExperimentRecord,
   Fill,
+  ModelRegistryEntry,
   PortfolioSummary,
   PositionView,
+  ReportArtifact,
   RiskLimits,
   RiskReview,
   RunDashboardData,
@@ -30,6 +32,8 @@ const DEMO_FILL_ID = "00000000-0000-4000-8000-000000000301";
 const DEMO_REVIEW_ID = "00000000-0000-4000-8000-000000000401";
 const DEMO_DATASET_ID = "00000000-0000-4000-8000-000000000901";
 const DEMO_EXPERIMENT_ID = "00000000-0000-4000-8000-000000001001";
+const DEMO_MODEL_ID = "00000000-0000-4000-8000-000000001101";
+const DEMO_REPORT_ID = "00000000-0000-4000-8000-000000001201";
 const DEMO_TIME = "2026-05-31T00:00:00Z";
 
 /**
@@ -139,6 +143,75 @@ export async function fetchDatasetQualityReports(
  */
 export async function fetchExperiments(): Promise<ApiData<ExperimentRecord[]>> {
   return fetchApiData("/api/experiments", buildDemoExperiments);
+}
+
+/**
+ * Fetch model registry entries.
+ *
+ * @returns Model registry entries from the backend or demo fallback data.
+ */
+export async function fetchModels(): Promise<ApiData<ModelRegistryEntry[]>> {
+  return fetchApiData("/api/models", buildDemoModels);
+}
+
+/**
+ * Fetch report artifacts from scoped report endpoints.
+ *
+ * @returns Aggregated reports from the backend or demo fallback data.
+ */
+export async function fetchReports(): Promise<ApiData<ReportArtifact[]>> {
+  const [simulationsResult, decisionsResult, experimentsResult] = await Promise.all([
+    fetchSimulations(),
+    fetchDecisions(),
+    fetchExperiments(),
+  ]);
+  const reportRequests = [
+    ...simulationsResult.data.map((run) =>
+      fetchApiData(`/api/reports/simulations/${run.run_id}`, () => [] as ReportArtifact[]),
+    ),
+    ...decisionsResult.data.map((decision) =>
+      fetchApiData(
+        `/api/reports/decisions/${decision.decision_id}`,
+        () => [] as ReportArtifact[],
+      ),
+    ),
+    ...experimentsResult.data.map((experiment) =>
+      fetchApiData(
+        `/api/reports/experiments/${experiment.experiment_id}`,
+        () => [] as ReportArtifact[],
+      ),
+    ),
+  ];
+  const reportResults: ApiData<ReportArtifact[]>[] =
+    reportRequests.length === 0 ? [] : await Promise.all(reportRequests);
+  if (
+    simulationsResult.source === "demo" &&
+    decisionsResult.source === "demo" &&
+    experimentsResult.source === "demo"
+  ) {
+    return {
+      data: buildDemoReports(),
+      source: "demo",
+      error:
+        simulationsResult.error ??
+        decisionsResult.error ??
+        experimentsResult.error,
+    };
+  }
+  return {
+    data: reportResults.flatMap((result) => result.data),
+    source: combineDataSources([
+      simulationsResult.source,
+      decisionsResult.source,
+      experimentsResult.source,
+      ...reportResults.map((result) => result.source),
+    ]),
+    error:
+      reportResults.find((result) => result.error !== null)?.error ??
+      simulationsResult.error ??
+      decisionsResult.error ??
+      experimentsResult.error,
+  };
 }
 
 /**
@@ -481,6 +554,61 @@ function buildDemoExperiments(): ExperimentRecord[] {
       created_at: "2026-05-31T00:00:00Z",
       queued_at: DEMO_TIME,
       completed_at: null,
+    },
+  ];
+}
+
+/**
+ * Build deterministic demo model registry entries.
+ *
+ * @returns Demo model registry entries.
+ */
+function buildDemoModels(): ModelRegistryEntry[] {
+  return [
+    {
+      model_id: DEMO_MODEL_ID,
+      name: "rule-based momentum baseline",
+      version: "0.1.0",
+      model_type: "rule",
+      algorithm: "deterministic_momentum",
+      training_dataset_id: DEMO_DATASET_ID,
+      validation_dataset_id: DEMO_DATASET_ID,
+      metrics: {
+        simulated_reward: "0.12",
+        max_drawdown: "0.031",
+      },
+      artifact_uri: "demo://models/rule-based-momentum",
+      status: "paper_enabled",
+      created_at: DEMO_TIME,
+    },
+  ];
+}
+
+/**
+ * Build deterministic demo report artifacts.
+ *
+ * @returns Demo report artifacts.
+ */
+function buildDemoReports(): ReportArtifact[] {
+  return [
+    {
+      report_id: DEMO_REPORT_ID,
+      run_id: DEMO_RUN_ID,
+      report_type: "simulation",
+      title: "BTCUSDT long-run simulation report",
+      summary: "Demo report covering decisions, orders, fills, and risk checks.",
+      sections: {
+        activity: {
+          decisions: 1,
+          orders: 1,
+          fills: 1,
+        },
+        safety: {
+          live_trading_allowed: false,
+        },
+      },
+      created_at_sim_time: DEMO_TIME,
+      created_at: DEMO_TIME,
     },
   ];
 }

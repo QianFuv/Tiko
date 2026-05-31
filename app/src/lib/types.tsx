@@ -79,6 +79,31 @@ export type ExperimentRecord = {
   completed_at: string | null;
 };
 
+export type ModelRegistryEntry = {
+  model_id: string;
+  name: string;
+  version: string;
+  model_type: string;
+  algorithm: string;
+  training_dataset_id: string;
+  validation_dataset_id: string;
+  metrics: Record<string, unknown>;
+  artifact_uri: string;
+  status: string;
+  created_at: string;
+};
+
+export type ReportArtifact = {
+  report_id: string;
+  run_id: string;
+  report_type: "simulation" | "decision" | "experiment";
+  title: string;
+  summary: string;
+  sections: Record<string, unknown>;
+  created_at_sim_time: string;
+  created_at: string;
+};
+
 export type SimAccount = {
   account_id: string;
   name: string;
