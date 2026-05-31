@@ -159,3 +159,75 @@ def update_model_status(
         return entry
     except KeyError as error:
         raise HTTPException(status_code=404, detail="Model not found.") from error
+
+
+@router.post("/{model_id}/promote", response_model=ModelRegistryEntry)
+def promote_model(
+    model_id: UUID,
+    service: ModelRegistryServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManageResearchPrincipalDep,
+) -> ModelRegistryEntry:
+    """Promote one model to simulated paper-enabled status.
+
+    Args:
+        model_id: Model identifier.
+        service: Model registry service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
+
+    Returns:
+        Promoted model registry entry.
+
+    Raises:
+        HTTPException: If no model exists for the ID.
+    """
+
+    try:
+        entry = service.promote_model(model_id)
+        audit_service.record(
+            principal=principal,
+            action="model.promote",
+            resource_type="model",
+            resource_id=str(model_id),
+            metadata={"status": entry.status},
+        )
+        return entry
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Model not found.") from error
+
+
+@router.post("/{model_id}/archive", response_model=ModelRegistryEntry)
+def archive_model(
+    model_id: UUID,
+    service: ModelRegistryServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManageResearchPrincipalDep,
+) -> ModelRegistryEntry:
+    """Archive one model registry entry.
+
+    Args:
+        model_id: Model identifier.
+        service: Model registry service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
+
+    Returns:
+        Archived model registry entry.
+
+    Raises:
+        HTTPException: If no model exists for the ID.
+    """
+
+    try:
+        entry = service.archive_model(model_id)
+        audit_service.record(
+            principal=principal,
+            action="model.archive",
+            resource_type="model",
+            resource_id=str(model_id),
+            metadata={"status": entry.status},
+        )
+        return entry
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Model not found.") from error

@@ -291,6 +291,12 @@ def test_query_routes_expose_simulated_state() -> None:
 
     assert report_response.status_code == 200
     assert report_response.json()["report_type"] == "simulation"
+    assert (
+        client.get(f"/api/reports/{report_response.json()['report_id']}").json()[
+            "report_id"
+        ]
+        == report_response.json()["report_id"]
+    )
     assert len(client.get(f"/api/reports/simulations/{run_id}").json()) == 1
     assert alert_response.status_code == 200
     alert_id = alert_response.json()["alert_id"]
@@ -342,6 +348,26 @@ def test_query_routes_expose_simulated_state() -> None:
     )
     assert annotation_response.status_code == 200
     assert annotation_response.json()["memory_type"] == "decision"
+    decision_report_response = client.post(
+        f"/api/reports/decisions/{decision_id}",
+        headers=OPERATOR_HEADERS,
+    )
+    assert decision_report_response.status_code == 200
+    decision_report = decision_report_response.json()
+    assert decision_report["report_type"] == "decision"
+    assert decision_report["sections"]["decision"]["decision_id"] == decision_id
+    assert (
+        client.get(f"/api/reports/{decision_report['report_id']}").json()["report_type"]
+        == "decision"
+    )
+    assert len(client.get(f"/api/reports/decisions/{decision_id}").json()) == 1
+    assert (
+        client.post(
+            "/api/reports/decisions/00000000-0000-0000-0000-000000000000",
+            headers=OPERATOR_HEADERS,
+        ).status_code
+        == 404
+    )
     assert (
         client.get("/api/decisions/00000000-0000-0000-0000-000000000000").status_code
         == 404
@@ -472,11 +498,35 @@ def test_model_registry_routes_manage_research_models() -> None:
         json={"status": "validated"},
         headers=RESEARCHER_HEADERS,
     )
+    viewer_promote_response = client.post(
+        f"/api/models/{model_id}/promote",
+        headers=VIEWER_HEADERS,
+    )
+    promote_response = client.post(
+        f"/api/models/{model_id}/promote",
+        headers=RESEARCHER_HEADERS,
+    )
+    archive_response = client.post(
+        f"/api/models/{model_id}/archive",
+        headers=RESEARCHER_HEADERS,
+    )
 
     assert status_response.status_code == 200
     assert status_response.json()["status"] == "validated"
+    assert viewer_promote_response.status_code == 403
+    assert promote_response.status_code == 200
+    assert promote_response.json()["status"] == "paper_enabled"
+    assert archive_response.status_code == 200
+    assert archive_response.json()["status"] == "archived"
     assert (
         client.get("/api/models/00000000-0000-0000-0000-000000000000").status_code
+        == 404
+    )
+    assert (
+        client.post(
+            "/api/models/00000000-0000-0000-0000-000000000000/promote",
+            headers=RESEARCHER_HEADERS,
+        ).status_code
         == 404
     )
 

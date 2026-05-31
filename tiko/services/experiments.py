@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from tiko.domain.experiment import ExperimentKind, ExperimentRecord
+from tiko.domain.reporting import ReportArtifact
 
 
 class ExperimentService:
@@ -13,6 +14,7 @@ class ExperimentService:
         """Initialize the experiment service."""
 
         self._experiments: dict[UUID, ExperimentRecord] = {}
+        self._reports: dict[UUID, list[ReportArtifact]] = {}
 
     def create_experiment(
         self,
@@ -107,3 +109,77 @@ class ExperimentService:
         )
         self._experiments[experiment_id] = queued_experiment
         return queued_experiment
+
+    def create_experiment_report(self, experiment_id: UUID) -> ReportArtifact:
+        """Create a structured report for one experiment.
+
+        Args:
+            experiment_id: Experiment identifier.
+
+        Returns:
+            Created experiment report.
+
+        Raises:
+            KeyError: If the experiment does not exist.
+        """
+
+        experiment = self._experiments[experiment_id]
+        created_at = datetime.now(UTC)
+        report = ReportArtifact(
+            report_id=uuid4(),
+            run_id=experiment.experiment_id,
+            report_type="experiment",
+            title=f"{experiment.name} experiment report",
+            summary=f"{experiment.kind} experiment is {experiment.status}.",
+            sections={
+                "experiment": experiment.model_dump(mode="json"),
+                "hypothesis": experiment.hypothesis,
+                "parameters": experiment.parameters,
+                "status": experiment.status,
+                "metrics": experiment.metrics,
+                "model_id": str(experiment.model_id)
+                if experiment.model_id is not None
+                else None,
+            },
+            created_at_sim_time=experiment.queued_at
+            or experiment.completed_at
+            or experiment.created_at,
+            created_at=created_at,
+        )
+        self._reports.setdefault(experiment_id, []).append(report)
+        return report
+
+    def list_experiment_reports(self, experiment_id: UUID) -> list[ReportArtifact]:
+        """List reports for one experiment.
+
+        Args:
+            experiment_id: Experiment identifier.
+
+        Returns:
+            Experiment reports.
+
+        Raises:
+            KeyError: If the experiment does not exist.
+        """
+
+        self.get_experiment(experiment_id)
+        return list(self._reports.get(experiment_id, []))
+
+    def get_report(self, report_id: UUID) -> ReportArtifact:
+        """Get one experiment report by ID.
+
+        Args:
+            report_id: Report identifier.
+
+        Returns:
+            Experiment report.
+
+        Raises:
+            KeyError: If the report does not exist.
+        """
+
+        for reports in self._reports.values():
+            for report in reports:
+                if report.report_id == report_id:
+                    return report
+        raise KeyError(report_id)

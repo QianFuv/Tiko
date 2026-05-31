@@ -9,6 +9,7 @@ from tiko.api.dependencies import reset_simulation_service
 from tiko.api.main import create_app
 
 ADMIN_HEADERS = {"X-Tiko-Role": "admin", "X-Tiko-User": "admin@example.test"}
+OPERATOR_HEADERS = {"X-Tiko-Role": "operator", "X-Tiko-User": "operator@example.test"}
 RESEARCHER_HEADERS = {
     "X-Tiko-Role": "researcher",
     "X-Tiko-User": "researcher@example.test",
@@ -192,6 +193,10 @@ def test_experiment_routes_create_queue_and_audit(tmp_path: Path) -> None:
         f"/api/experiments/{experiment_id}/run",
         headers=RESEARCHER_HEADERS,
     )
+    report_response = client.post(
+        f"/api/reports/experiments/{experiment_id}",
+        headers=OPERATOR_HEADERS,
+    )
 
     assert run_response.status_code == 200
     queued = run_response.json()
@@ -199,12 +204,29 @@ def test_experiment_routes_create_queue_and_audit(tmp_path: Path) -> None:
     assert queued["queued_at"] is not None
     assert queued["metrics"]["queued"] is True
     assert "job_id" in queued["metrics"]
+    assert report_response.status_code == 200
+    report = report_response.json()
+    assert report["report_type"] == "experiment"
+    assert report["sections"]["experiment"]["experiment_id"] == experiment_id
+    assert (
+        client.get(f"/api/reports/{report['report_id']}").json()["report_id"]
+        == (report["report_id"])
+    )
+    assert len(client.get(f"/api/reports/experiments/{experiment_id}").json()) == 1
+    assert (
+        client.post(
+            "/api/reports/experiments/00000000-0000-0000-0000-000000000000",
+            headers=OPERATOR_HEADERS,
+        ).status_code
+        == 404
+    )
 
     audit_response = client.get("/api/audit/logs", headers=ADMIN_HEADERS)
     assert [entry["action"] for entry in audit_response.json()] == [
         "dataset.upload",
         "experiment.create",
         "experiment.run.queue",
+        "report.experiment.create",
     ]
 
 

@@ -110,3 +110,33 @@ class ModelRegistryService:
         if self._repository is not None:
             self._repository.save_model_registry_entry(entry)
         return entry
+
+    def promote_model(self, model_id: UUID) -> ModelRegistryEntry:
+        """Promote a model for simulated paper-enabled eligibility.
+
+        Args:
+            model_id: Model identifier.
+
+        Returns:
+            Promoted model registry entry.
+
+        Raises:
+            KeyError: If no model exists for the ID.
+        """
+
+        return self.update_status(model_id, "paper_enabled")
+
+    def archive_model(self, model_id: UUID) -> ModelRegistryEntry:
+        """Archive a model registry entry.
+
+        Args:
+            model_id: Model identifier.
+
+        Returns:
+            Archived model registry entry.
+
+        Raises:
+            KeyError: If no model exists for the ID.
+        """
+
+        return self.update_status(model_id, "archived")

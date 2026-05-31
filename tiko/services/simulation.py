@@ -931,6 +931,60 @@ class SimulationService:
             self._repository.save_report(report)
         return report
 
+    def create_decision_report(self, decision_id: UUID) -> ReportArtifact:
+        """Create a structured decision trace report.
+
+        Args:
+            decision_id: Trade intent identifier.
+
+        Returns:
+            Created decision report.
+
+        Raises:
+            KeyError: If no decision exists for the ID.
+        """
+
+        trace = self.build_decision_trace(decision_id)
+        state, decision = self._find_decision_state(decision_id)
+        report = ReportArtifact(
+            report_id=uuid4(),
+            run_id=decision.run_id,
+            report_type="decision",
+            title=f"{decision.symbol} decision report",
+            summary=(
+                f"{decision.action} intent from {decision.agent_id} with "
+                f"{decision.confidence:.2f} confidence."
+            ),
+            sections={
+                "decision": decision.model_dump(mode="json"),
+                "agent_run": trace.agent_run.model_dump(mode="json"),
+                "agent_messages": [
+                    message.model_dump(mode="json") for message in trace.messages
+                ],
+                "risk_review": (
+                    trace.risk_review.model_dump(mode="json")
+                    if trace.risk_review is not None
+                    else None
+                ),
+                "order": (
+                    trace.order.model_dump(mode="json")
+                    if trace.order is not None
+                    else None
+                ),
+                "fill": (
+                    trace.fill.model_dump(mode="json")
+                    if trace.fill is not None
+                    else None
+                ),
+            },
+            created_at_sim_time=state.run.current_sim_time,
+            created_at=datetime.now(UTC),
+        )
+        state.reports.append(report)
+        if self._repository is not None:
+            self._repository.save_report(report)
+        return report
+
     def list_reports(self, run_id: UUID) -> list[ReportArtifact]:
         """List structured reports for a run.
 
@@ -945,6 +999,50 @@ class SimulationService:
         """
 
         return list(self._states[run_id].reports)
+
+    def list_decision_reports(self, decision_id: UUID) -> list[ReportArtifact]:
+        """List decision reports for one decision.
+
+        Args:
+            decision_id: Trade intent identifier.
+
+        Returns:
+            Decision report artifacts.
+
+        Raises:
+            KeyError: If no decision exists for the ID.
+        """
+
+        state, _decision = self._find_decision_state(decision_id)
+        reports: list[ReportArtifact] = []
+        for report in state.reports:
+            decision_section = report.sections.get("decision")
+            if (
+                report.report_type == "decision"
+                and isinstance(decision_section, dict)
+                and decision_section.get("decision_id") == str(decision_id)
+            ):
+                reports.append(report)
+        return reports
+
+    def get_report(self, report_id: UUID) -> ReportArtifact:
+        """Get one simulation-backed report by ID.
+
+        Args:
+            report_id: Report identifier.
+
+        Returns:
+            Report artifact.
+
+        Raises:
+            KeyError: If no report exists for the ID.
+        """
+
+        for state in self._states.values():
+            for report in state.reports:
+                if report.report_id == report_id:
+                    return report
+        raise KeyError(report_id)
 
     def create_alert(
         self,
