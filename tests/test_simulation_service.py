@@ -511,6 +511,42 @@ def test_service_skips_order_below_configured_min_notional() -> None:
     assert service.list_ledger_entries(run.run_id) == []
 
 
+def test_service_uses_updated_run_min_order_notional() -> None:
+    """Verify run-level risk limits drive minimum notional during steps."""
+
+    service = SimulationService(Settings(min_order_notional=Decimal("0")))
+    run = service.create_run(
+        name="updated-min-notional",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    updated_limits = service.update_risk_limits(
+        run_id=run.run_id,
+        minimum_confidence=0.5,
+        minimum_data_quality_score=0.0,
+        max_target_weight=Decimal("0.25"),
+        min_order_notional=Decimal("20000"),
+        max_order_notional=Decimal("25000"),
+    )
+    preserved_limits = service.update_risk_limits(
+        run_id=run.run_id,
+        minimum_confidence=0.5,
+        minimum_data_quality_score=0.0,
+        max_target_weight=Decimal("0.25"),
+        max_order_notional=Decimal("25000"),
+    )
+
+    result = service.step_run(run.run_id, confidence=0.7)
+
+    assert updated_limits.min_order_notional == Decimal("20000")
+    assert preserved_limits.min_order_notional == Decimal("20000")
+    assert result.risk_review.status == "approved"
+    assert result.decision.status == "no_order"
+    assert result.portfolio_order_plan.reason == "notional_below_minimum"
+    assert result.order is None
+    assert result.fill is None
+
+
 def test_service_create_run_accepts_configured_simulation_fields() -> None:
     """Verify run creation stores configured simulation settings."""
 

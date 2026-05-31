@@ -60,6 +60,7 @@ class PortfolioService:
         risk_review: RiskReview,
         reference_price: Decimal,
         positions: Sequence[Position] = (),
+        min_order_notional: Decimal | None = None,
     ) -> PortfolioOrderPlan:
         """Create a portfolio order sizing plan.
 
@@ -69,11 +70,18 @@ class PortfolioService:
             risk_review: Independent risk review.
             reference_price: Current market reference price.
             positions: Current simulated positions used for target-delta sizing.
+            min_order_notional: Optional minimum notional override.
 
         Returns:
             Portfolio sizing plan with optional order request.
+
+        Raises:
+            ValueError: If the minimum notional override is negative.
         """
 
+        effective_min_order_notional = self._resolve_min_order_notional(
+            min_order_notional
+        )
         target_notional = risk_review.approved_target_weight * account.total_equity
         current_notional = self._current_signed_notional(intent.symbol, positions)
         delta_notional = target_notional - current_notional
@@ -127,8 +135,8 @@ class PortfolioService:
             )
         expected_notional = quantity * reference_price
         if (
-            self.min_order_notional > Decimal("0")
-            and expected_notional < self.min_order_notional
+            effective_min_order_notional > Decimal("0")
+            and expected_notional < effective_min_order_notional
         ):
             return self._build_no_order_plan(
                 account=account,
@@ -136,7 +144,7 @@ class PortfolioService:
                 reason="notional_below_minimum",
                 sizing_explanation=(
                     f"Expected notional {expected_notional} is below minimum "
-                    f"order notional {self.min_order_notional}."
+                    f"order notional {effective_min_order_notional}."
                 ),
                 target_notional=target_notional,
                 current_notional=current_notional,
@@ -186,6 +194,7 @@ class PortfolioService:
         risk_review: RiskReview,
         reference_price: Decimal,
         positions: Sequence[Position] = (),
+        min_order_notional: Decimal | None = None,
     ) -> OrderRequest | None:
         """Create an internal order request for an approved risk review.
 
@@ -195,6 +204,7 @@ class PortfolioService:
             risk_review: Independent risk review.
             reference_price: Current market reference price.
             positions: Current simulated positions used for target-delta sizing.
+            min_order_notional: Optional minimum notional override.
 
         Returns:
             Simulated order request or `None` when no order should be created.
@@ -206,6 +216,7 @@ class PortfolioService:
             risk_review=risk_review,
             reference_price=reference_price,
             positions=positions,
+            min_order_notional=min_order_notional,
         ).order_request
 
     def _build_no_order_plan(
@@ -270,6 +281,27 @@ class PortfolioService:
         if self.order_type == "limit":
             return reference_price
         return None
+
+    def _resolve_min_order_notional(
+        self, min_order_notional: Decimal | None
+    ) -> Decimal:
+        """Resolve the effective minimum order notional for one plan.
+
+        Args:
+            min_order_notional: Optional minimum notional override.
+
+        Returns:
+            Effective minimum order notional.
+
+        Raises:
+            ValueError: If the override is negative.
+        """
+
+        if min_order_notional is None:
+            return self.min_order_notional
+        if min_order_notional < Decimal("0"):
+            raise ValueError("min_order_notional must not be negative.")
+        return min_order_notional
 
     def _estimate_fee(
         self, expected_notional: Decimal, order_type: PortfolioOrderType

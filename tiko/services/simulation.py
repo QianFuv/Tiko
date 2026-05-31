@@ -293,6 +293,7 @@ class SimulationService:
         minimum_data_quality_score: float,
         max_target_weight: Decimal,
         max_order_notional: Decimal,
+        min_order_notional: Decimal | None = None,
         max_leverage: Decimal | None = None,
         max_drawdown: Decimal | None = None,
         max_daily_loss: Decimal | None = None,
@@ -305,6 +306,7 @@ class SimulationService:
             minimum_data_quality_score: Minimum observation quality required.
             max_target_weight: Maximum absolute target portfolio weight.
             max_order_notional: Maximum simulated order notional.
+            min_order_notional: Optional minimum simulated order notional.
             max_leverage: Optional maximum allowed leverage.
             max_drawdown: Optional maximum drawdown ratio.
             max_daily_loss: Optional maximum daily loss ratio.
@@ -322,6 +324,11 @@ class SimulationService:
             minimum_confidence=minimum_confidence,
             minimum_data_quality_score=minimum_data_quality_score,
             max_target_weight=max_target_weight,
+            min_order_notional=(
+                min_order_notional
+                if min_order_notional is not None
+                else state.risk_limits.min_order_notional
+            ),
             max_order_notional=max_order_notional,
             max_leverage=(
                 max_leverage
@@ -358,6 +365,7 @@ class SimulationService:
             minimum_confidence=self._settings.minimum_trade_confidence,
             minimum_data_quality_score=self._settings.minimum_data_quality_score,
             max_target_weight=self._settings.max_target_weight,
+            min_order_notional=self._settings.min_order_notional,
             max_order_notional=self._settings.max_order_notional,
             max_leverage=self._settings.max_leverage,
             max_drawdown=self._settings.max_drawdown,
@@ -703,6 +711,7 @@ class SimulationService:
             risk_review=risk_review,
             reference_price=candle.close,
             positions=state.positions,
+            min_order_notional=state.risk_limits.min_order_notional,
         )
         order_request = portfolio_order_plan.order_request
         intent = self._apply_step_decision_status(intent, risk_review, order_request)

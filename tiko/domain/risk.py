@@ -17,6 +17,7 @@ class RiskLimits(DomainModel):
     minimum_confidence: float = Field(ge=0.0, le=1.0)
     minimum_data_quality_score: float = Field(ge=0.0, le=1.0)
     max_target_weight: Decimal = Field(ge=Decimal("0"), le=Decimal("1"))
+    min_order_notional: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
     max_order_notional: Decimal = Field(ge=Decimal("0"))
     max_leverage: Decimal = Field(default=Decimal("1"), gt=Decimal("0"))
     max_drawdown: Decimal = Field(default=Decimal("1"), ge=Decimal("0"))

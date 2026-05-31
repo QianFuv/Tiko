@@ -24,6 +24,7 @@ from tiko.domain import (
     PortfolioOrderPlan,
     Principal,
     RawMarketDataRecord,
+    RiskLimits,
     RiskReview,
     SimAccount,
     SimOrder,
@@ -393,6 +394,31 @@ def test_risk_review_and_simulation_run_are_validated() -> None:
                 "triggered_rules": [],
                 "created_at_sim_time": current_time(),
             }
+        )
+
+
+def test_risk_limits_include_minimum_order_notional() -> None:
+    """Verify risk limits expose minimum executable order notional."""
+
+    limits = RiskLimits(
+        run_id=uuid4(),
+        minimum_confidence=0.5,
+        minimum_data_quality_score=0.75,
+        max_target_weight=Decimal("0.25"),
+        min_order_notional=Decimal("5"),
+        max_order_notional=Decimal("10000"),
+    )
+
+    assert limits.min_order_notional == Decimal("5")
+
+    with pytest.raises(ValidationError):
+        RiskLimits(
+            run_id=uuid4(),
+            minimum_confidence=0.5,
+            minimum_data_quality_score=0.75,
+            max_target_weight=Decimal("0.25"),
+            min_order_notional=Decimal("-1"),
+            max_order_notional=Decimal("10000"),
         )
 
 
