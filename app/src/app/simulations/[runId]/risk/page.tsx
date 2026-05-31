@@ -66,6 +66,10 @@ export default async function RiskPage({
                 value={formatCurrency(data.riskLimits.max_order_notional)}
               />
               <LimitRow
+                label="Min order notional"
+                value={formatCurrency(data.riskLimits.min_order_notional)}
+              />
+              <LimitRow
                 label="Minimum confidence"
                 value={formatPercent(data.riskLimits.minimum_confidence)}
               />

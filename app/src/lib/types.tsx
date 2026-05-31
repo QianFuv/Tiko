@@ -354,6 +354,7 @@ export type RiskLimits = {
   minimum_confidence: number;
   minimum_data_quality_score: number;
   max_target_weight: string;
+  min_order_notional: string;
   max_order_notional: string;
   max_drawdown: string;
   max_daily_loss: string;
