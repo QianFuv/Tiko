@@ -536,6 +536,28 @@ def test_repository_persists_successful_step_artifacts(
     assert repository.list_metric_snapshots(run.run_id) == [result.metric_snapshot]
 
 
+def test_repository_persists_funding_ledger_entries(
+    repository: SimulationRepository,
+) -> None:
+    """Verify funding ledger entries persist separately from fill entries."""
+
+    service = SimulationService(Settings(synthetic_funding_rate=Decimal("0.001")))
+    run = service.create_run(
+        name="funding-step",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    result = service.step_run(run.run_id, confidence=0.7)
+
+    repository.save_step_result(result)
+
+    assert result.ledger_entry is not None
+    assert result.funding_ledger_entry is not None
+    ledger_entries = repository.list_ledger_entries(run.run_id)
+    assert ledger_entries == [result.ledger_entry, result.funding_ledger_entry]
+    assert ledger_entries[1].entry_type == "funding"
+
+
 def test_repository_persists_decision_reviews_and_memory_entries(
     repository: SimulationRepository,
 ) -> None:

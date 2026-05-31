@@ -5,12 +5,16 @@ from decimal import Decimal
 from typing import Literal
 from uuid import uuid4
 
-from tiko.domain.account import SimAccount
+from tiko.domain.account import Position, SimAccount
 from tiko.domain.order import OrderRequest
 from tiko.domain.simulation import SimulationRun
 from tiko.simulation.broker import SimBroker
 from tiko.simulation.fee import FeeEngine
-from tiko.simulation.ledger import apply_fill_to_account, apply_fill_to_ledger
+from tiko.simulation.ledger import (
+    apply_fill_to_account,
+    apply_fill_to_ledger,
+    apply_funding_to_ledger,
+)
 from tiko.simulation.matching import MatchingEngine
 from tiko.simulation.metrics import MetricsEngine
 from tiko.simulation.slippage import SlippageEngine
@@ -82,6 +86,33 @@ def create_run(account: SimAccount) -> SimulationRun:
     )
 
 
+def create_position(side: Literal["long", "short"]) -> Position:
+    """Create a marked position for funding tests.
+
+    Args:
+        side: Position side.
+
+    Returns:
+        Simulated position.
+    """
+
+    return Position(
+        position_id=uuid4(),
+        account_id=uuid4(),
+        symbol="BTCUSDT",
+        side=side,
+        quantity=Decimal("2"),
+        avg_entry_price=Decimal("100"),
+        mark_price=Decimal("100"),
+        notional=Decimal("200"),
+        leverage=Decimal("1"),
+        unrealized_pnl=Decimal("0"),
+        realized_pnl=Decimal("0"),
+        liquidation_price=None,
+        updated_at_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+
 def test_fee_engine_calculates_basis_point_fee() -> None:
     """Verify fee calculation uses notional and basis points."""
 
@@ -147,6 +178,36 @@ def test_ledger_update_preserves_account_output_and_exposes_metadata() -> None:
     assert ledger_update.fee == Decimal("0.10002")
     assert ledger_update.cash_delta == Decimal("-200.14002")
     assert ledger_update.account.realized_pnl == Decimal("-0.10002")
+
+
+def test_funding_update_charges_longs_and_pays_shorts() -> None:
+    """Verify simulated funding applies signed notional cash deltas."""
+
+    account = create_account()
+    long_update = apply_funding_to_ledger(
+        account,
+        [create_position("long")],
+        Decimal("0.001"),
+    )
+    short_update = apply_funding_to_ledger(
+        account,
+        [create_position("short")],
+        Decimal("0.001"),
+    )
+    zero_update = apply_funding_to_ledger(
+        account,
+        [create_position("long")],
+        Decimal("0"),
+    )
+
+    assert long_update.notional == Decimal("200")
+    assert long_update.funding_payment == Decimal("0.200")
+    assert long_update.cash_delta == Decimal("-0.200")
+    assert long_update.account.realized_pnl == Decimal("-0.200")
+    assert short_update.funding_payment == Decimal("-0.200")
+    assert short_update.cash_delta == Decimal("0.200")
+    assert short_update.account.realized_pnl == Decimal("0.200")
+    assert zero_update.cash_delta == Decimal("0")
 
 
 def test_metrics_engine_summarizes_simulated_execution() -> None:

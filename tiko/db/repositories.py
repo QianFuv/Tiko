@@ -197,6 +197,8 @@ class SimulationRepository:
             self._replace_positions(session, result.run.run_id, result.positions)
             if result.ledger_entry is not None:
                 self._merge_ledger_entry(session, result.ledger_entry)
+            if result.funding_ledger_entry is not None:
+                self._merge_ledger_entry(session, result.funding_ledger_entry)
             self._merge_portfolio_snapshot(session, result.portfolio_snapshot)
             self._merge_metric_snapshot(session, result.metric_snapshot)
             session.commit()

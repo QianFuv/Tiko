@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from decimal import Decimal
 
-from tiko.domain.account import SimAccount
+from tiko.domain.account import Position, SimAccount
 from tiko.domain.order import Fill
 
 
@@ -15,6 +15,16 @@ class LedgerUpdate:
     notional: Decimal
     cash_delta: Decimal
     fee: Decimal
+
+
+@dataclass(frozen=True)
+class FundingUpdate:
+    """Describe the account impact of simulated funding."""
+
+    account: SimAccount
+    notional: Decimal
+    cash_delta: Decimal
+    funding_payment: Decimal
 
 
 def apply_fill_to_ledger(account: SimAccount, fill: Fill) -> LedgerUpdate:
@@ -45,6 +55,46 @@ def apply_fill_to_ledger(account: SimAccount, fill: Fill) -> LedgerUpdate:
         notional=notional,
         cash_delta=cash_delta,
         fee=fill.fee,
+    )
+
+
+def apply_funding_to_ledger(
+    account: SimAccount,
+    positions: list[Position] | tuple[Position, ...],
+    funding_rate: Decimal,
+) -> FundingUpdate:
+    """Apply simulated funding to account cash and realized PnL.
+
+    Args:
+        account: Current simulated account state.
+        positions: Current marked positions.
+        funding_rate: Fixed funding rate for the interval.
+
+    Returns:
+        Funding update with updated account and cash impact details.
+    """
+
+    signed_notional = sum(
+        (
+            position.notional if position.side == "long" else -position.notional
+            for position in positions
+        ),
+        Decimal("0"),
+    )
+    funding_payment = signed_notional * funding_rate
+    cash_delta = -funding_payment
+    updated_account = account.model_copy(
+        update={
+            "cash_balance": max(Decimal("0"), account.cash_balance + cash_delta),
+            "realized_pnl": account.realized_pnl + cash_delta,
+            "total_equity": max(Decimal("0"), account.total_equity + cash_delta),
+        }
+    )
+    return FundingUpdate(
+        account=updated_account,
+        notional=abs(signed_notional),
+        cash_delta=cash_delta,
+        funding_payment=funding_payment,
     )
 
 

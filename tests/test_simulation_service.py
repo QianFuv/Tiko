@@ -417,6 +417,61 @@ def test_step_marks_positions_and_account_to_market() -> None:
     assert result.portfolio_snapshot.max_drawdown == expected_drawdown
 
 
+def test_step_applies_configured_funding_to_open_positions() -> None:
+    """Verify configured funding creates separate ledger and account deltas."""
+
+    service = SimulationService(Settings(synthetic_funding_rate=Decimal("0.001")))
+    run = service.create_run(
+        name="funding-accounting",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    result = service.step_run(run.run_id, confidence=0.7)
+
+    assert result.funding_ledger_entry is not None
+    funding_entry = result.funding_ledger_entry
+    fill_entry = result.ledger_entry
+    assert fill_entry is not None
+    assert funding_entry.entry_type == "funding"
+    assert funding_entry.fill_id is None
+    assert funding_entry.cash_delta == -(
+        result.positions[0].notional * Decimal("0.001")
+    )
+    assert funding_entry.realized_pnl_delta == funding_entry.cash_delta
+    assert result.run.account.realized_pnl == (
+        fill_entry.realized_pnl_delta + funding_entry.realized_pnl_delta
+    )
+    assert result.portfolio_snapshot.realized_pnl == result.run.account.realized_pnl
+    assert result.metric_snapshot.metrics["cumulative_funding"] == str(
+        funding_entry.cash_delta
+    )
+    assert service.list_ledger_entries(run.run_id) == [fill_entry, funding_entry]
+
+
+def test_step_skips_funding_until_configured_interval() -> None:
+    """Verify funding interval gating delays funding ledger entries."""
+
+    service = SimulationService(
+        Settings(
+            synthetic_funding_rate=Decimal("0.001"),
+            synthetic_funding_interval_steps=2,
+        )
+    )
+    run = service.create_run(
+        name="funding-interval",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    first_result = service.step_run(run.run_id, confidence=0.7)
+    second_result = service.step_run(run.run_id, confidence=0.7)
+
+    assert first_result.funding_ledger_entry is None
+    assert second_result.funding_ledger_entry is not None
+    assert second_result.funding_ledger_entry.entry_type == "funding"
+
+
 def test_service_creates_reports_and_updates_alerts() -> None:
     """Verify service creates reports and alert workflow artifacts."""
 

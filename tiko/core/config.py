@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     max_order_notional: Decimal = Field(default=Decimal("25000"), ge=Decimal("0"))
     max_drawdown: Decimal = Field(default=Decimal("0.20"), ge=Decimal("0"))
     max_daily_loss: Decimal = Field(default=Decimal("0.05"), ge=Decimal("0"))
+    synthetic_funding_rate: Decimal = Decimal("0")
+    synthetic_funding_interval_steps: int = Field(default=1, ge=1)
     synthetic_seed: int = 42
 
 

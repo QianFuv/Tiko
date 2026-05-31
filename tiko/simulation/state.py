@@ -62,5 +62,6 @@ class SimulationStepResult:
     fill: Fill | None
     positions: tuple[Position, ...]
     ledger_entry: LedgerEntry | None
+    funding_ledger_entry: LedgerEntry | None
     portfolio_snapshot: PortfolioSnapshot
     metric_snapshot: MetricSnapshot

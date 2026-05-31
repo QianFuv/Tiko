@@ -41,7 +41,12 @@ from tiko.services.risk import RiskService
 from tiko.simulation.broker import SimBroker
 from tiko.simulation.clock import advance_simulated_time
 from tiko.simulation.event_bus import EventBus
-from tiko.simulation.ledger import LedgerUpdate, apply_fill_to_ledger
+from tiko.simulation.ledger import (
+    FundingUpdate,
+    LedgerUpdate,
+    apply_fill_to_ledger,
+    apply_funding_to_ledger,
+)
 from tiko.simulation.metrics import MetricsEngine
 from tiko.simulation.replay import MarketReplay, MarketReplayExhausted
 from tiko.simulation.state import SimulationState, SimulationStepResult
@@ -510,7 +515,16 @@ class SimulationService:
             )
         )
         state.positions = list(positions)
-        marked_account = self._mark_account_to_market(ledger_run.account, positions)
+        funded_account = ledger_run.account
+        funding_update: FundingUpdate | None = None
+        if self._should_apply_funding(state.step_index + 1, positions):
+            funding_update = apply_funding_to_ledger(
+                funded_account,
+                positions,
+                self._settings.synthetic_funding_rate,
+            )
+            funded_account = funding_update.account
+        marked_account = self._mark_account_to_market(funded_account, positions)
         updated_run = ledger_run.model_copy(update={"account": marked_account})
         state.run = updated_run
         state.step_index += 1
@@ -521,11 +535,22 @@ class SimulationService:
         )
         if ledger_entry is not None:
             state.ledger_entries.append(ledger_entry)
+        funding_ledger_entry = (
+            self._build_funding_ledger_entry(updated_run, positions, funding_update)
+            if funding_update is not None
+            else None
+        )
+        if funding_ledger_entry is not None:
+            state.ledger_entries.append(funding_ledger_entry)
         portfolio_snapshot = self._build_portfolio_snapshot(
             updated_run, positions, event.event_id
         )
         metric_snapshot = self._build_metric_snapshot(
-            updated_run, state.orders, state.fills, event.event_id
+            updated_run,
+            state.orders,
+            state.fills,
+            state.ledger_entries,
+            event.event_id,
         )
         state.portfolio_snapshots.append(portfolio_snapshot)
         state.metric_snapshots.append(metric_snapshot)
@@ -544,6 +569,7 @@ class SimulationService:
             fill=fill,
             positions=positions,
             ledger_entry=ledger_entry,
+            funding_ledger_entry=funding_ledger_entry,
             portfolio_snapshot=portfolio_snapshot,
             metric_snapshot=metric_snapshot,
         )
@@ -1324,6 +1350,28 @@ class SimulationService:
             }
         )
 
+    def _should_apply_funding(
+        self,
+        completed_step_number: int,
+        positions: Sequence[Position],
+    ) -> bool:
+        """Determine whether simulated funding should be applied.
+
+        Args:
+            completed_step_number: One-based completed step number.
+            positions: Current marked positions.
+
+        Returns:
+            Whether funding should be applied for this step.
+        """
+
+        return (
+            self._settings.synthetic_funding_rate != Decimal("0")
+            and len(positions) > 0
+            and completed_step_number % self._settings.synthetic_funding_interval_steps
+            == 0
+        )
+
     def _build_ledger_entry(
         self,
         run: SimulationRun,
@@ -1355,6 +1403,44 @@ class SimulationService:
             fee=ledger_update.fee,
             realized_pnl_delta=-ledger_update.fee,
             created_at_sim_time=fill.filled_at_sim_time,
+            created_at=datetime.now(UTC),
+        )
+
+    def _build_funding_ledger_entry(
+        self,
+        run: SimulationRun,
+        positions: Sequence[Position],
+        funding_update: FundingUpdate,
+    ) -> LedgerEntry:
+        """Build a durable ledger entry for simulated funding.
+
+        Args:
+            run: Updated simulation run.
+            positions: Current marked positions.
+            funding_update: Funding metadata for the interval.
+
+        Returns:
+            Funding ledger entry domain model.
+        """
+
+        symbols = ",".join(sorted({position.symbol for position in positions}))
+        return LedgerEntry(
+            ledger_entry_id=uuid5(
+                NAMESPACE_URL,
+                f"funding-ledger-entry:{run.run_id}:{run.current_sim_time.isoformat()}",
+            ),
+            run_id=run.run_id,
+            account_id=run.account.account_id,
+            fill_id=None,
+            entry_type="funding",
+            symbol=symbols or None,
+            quantity=sum((position.quantity for position in positions), Decimal("0")),
+            price=None,
+            notional=funding_update.notional,
+            cash_delta=funding_update.cash_delta,
+            fee=Decimal("0"),
+            realized_pnl_delta=funding_update.cash_delta,
+            created_at_sim_time=run.current_sim_time,
             created_at=datetime.now(UTC),
         )
 
@@ -1405,6 +1491,7 @@ class SimulationService:
         run: SimulationRun,
         orders: list[SimOrder],
         fills: list[Fill],
+        ledger_entries: Sequence[LedgerEntry],
         source_event_id: UUID,
     ) -> MetricSnapshot:
         """Build a metric snapshot from current execution artifacts.
@@ -1413,6 +1500,7 @@ class SimulationService:
             run: Updated simulation run.
             orders: Current simulated orders for the run.
             fills: Current simulated fills for the run.
+            ledger_entries: Current simulated ledger entries for the run.
             source_event_id: Source event identifier for deterministic snapshot IDs.
 
         Returns:
@@ -1420,6 +1508,14 @@ class SimulationService:
         """
 
         metrics = self._metrics_engine.summarize_execution(run, orders, fills)
+        cumulative_funding = sum(
+            (
+                entry.cash_delta
+                for entry in ledger_entries
+                if entry.entry_type == "funding"
+            ),
+            Decimal("0"),
+        )
         return MetricSnapshot(
             snapshot_id=uuid5(NAMESPACE_URL, f"metric-snapshot:{source_event_id}"),
             run_id=run.run_id,
@@ -1430,6 +1526,7 @@ class SimulationService:
                 "total_fees": str(metrics.total_fees),
                 "traded_notional": str(metrics.traded_notional),
                 "realized_return": str(metrics.realized_return),
+                "cumulative_funding": str(cumulative_funding),
             },
             created_at=datetime.now(UTC),
         )
