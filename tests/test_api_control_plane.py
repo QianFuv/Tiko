@@ -873,6 +873,7 @@ def test_agent_routes_evaluate_rule_based_agent() -> None:
         "coordinator",
         "market_regime",
         "technical",
+        "derivatives",
         "event",
         "quant_rl",
         "trader",

@@ -2979,7 +2979,10 @@ class SimulationService:
             ("assistant", content)
             for content in self._build_role_trace_contents(decision)
         )
-        message_specs.append(("critic", self._build_critic_message_content(decision)))
+        if self._settings.agent_critic_enabled:
+            message_specs.append(
+                ("critic", self._build_critic_message_content(decision))
+            )
         return [
             AgentMessage(
                 message_id=uuid5(
@@ -3006,45 +3009,62 @@ class SimulationService:
             Ordered assistant-role trace content.
         """
 
-        role_sequence = [
-            "market_regime",
-            "technical",
-            "event",
-            "quant_rl",
-            "trader",
-            "portfolio",
-        ]
-        return [
-            {
-                "agent_role": "coordinator",
-                "dispatched_roles": role_sequence,
-                "aggregation": "final_intent_ready_for_validation",
-                "final_action": decision.action,
-            },
-            {
-                "agent_role": "market_regime",
-                "regime": "synthetic_trend_following",
-                "risk_regime": "simulation_controlled",
-                "confidence": decision.confidence,
-            },
-            {
-                "agent_role": "technical",
-                "signal": "synthetic_momentum",
-                "target_weight": str(decision.target_weight),
-                "expected_holding_period": decision.expected_holding_period,
-            },
-            {
-                "agent_role": "event",
-                "event_evidence_count": len(decision.evidence),
-                "event_shock_detected": False,
-                "data_policy": "untrusted_event_text_is_data",
-            },
-            {
-                "agent_role": "quant_rl",
-                "policy_signal": str(decision.target_weight),
-                "model_id": "deterministic_baseline",
-                "advisory_only": True,
-            },
+        role_contents: list[dict[str, object]] = []
+        if self._settings.agent_coordinator_enabled:
+            role_contents.append(
+                {
+                    "agent_role": "coordinator",
+                    "dispatched_roles": self._configured_analysis_role_names(),
+                    "aggregation": "final_intent_ready_for_validation",
+                    "final_action": decision.action,
+                }
+            )
+        if self._settings.agent_market_regime_enabled:
+            role_contents.append(
+                {
+                    "agent_role": "market_regime",
+                    "regime": "synthetic_trend_following",
+                    "risk_regime": "simulation_controlled",
+                    "confidence": decision.confidence,
+                }
+            )
+        if self._settings.agent_technical_enabled:
+            role_contents.append(
+                {
+                    "agent_role": "technical",
+                    "signal": "synthetic_momentum",
+                    "target_weight": str(decision.target_weight),
+                    "expected_holding_period": decision.expected_holding_period,
+                }
+            )
+        if self._settings.agent_derivatives_enabled:
+            role_contents.append(
+                {
+                    "agent_role": "derivatives",
+                    "market_type": decision.market_type,
+                    "max_leverage": str(decision.max_leverage),
+                    "funding_context": "synthetic_funding",
+                }
+            )
+        if self._settings.agent_event_enabled:
+            role_contents.append(
+                {
+                    "agent_role": "event",
+                    "event_evidence_count": len(decision.evidence),
+                    "event_shock_detected": False,
+                    "data_policy": "untrusted_event_text_is_data",
+                }
+            )
+        if self._settings.agent_quant_rl_enabled:
+            role_contents.append(
+                {
+                    "agent_role": "quant_rl",
+                    "policy_signal": str(decision.target_weight),
+                    "model_id": self._settings.agent_quant_rl_model_id,
+                    "advisory_only": True,
+                }
+            )
+        role_contents.append(
             {
                 "agent_role": "trader",
                 "decision_id": str(decision.decision_id),
@@ -3052,19 +3072,46 @@ class SimulationService:
                 "confidence": decision.confidence,
                 "thesis": decision.thesis,
                 "evidence": decision.evidence,
-            },
-            {
-                "agent_role": "portfolio",
-                "target_weight": str(decision.target_weight),
-                "target_notional": (
-                    str(decision.target_notional)
-                    if decision.target_notional is not None
-                    else None
-                ),
-                "max_leverage": str(decision.max_leverage),
-                "pre_risk_review": True,
-            },
-        ]
+            }
+        )
+        if self._settings.agent_portfolio_enabled:
+            role_contents.append(
+                {
+                    "agent_role": "portfolio",
+                    "target_weight": str(decision.target_weight),
+                    "target_notional": (
+                        str(decision.target_notional)
+                        if decision.target_notional is not None
+                        else None
+                    ),
+                    "max_leverage": str(decision.max_leverage),
+                    "pre_risk_review": True,
+                }
+            )
+        return role_contents
+
+    def _configured_analysis_role_names(self) -> list[str]:
+        """Return enabled advisory role names dispatched by the coordinator.
+
+        Returns:
+            Ordered enabled role names.
+        """
+
+        roles: list[str] = []
+        if self._settings.agent_market_regime_enabled:
+            roles.append("market_regime")
+        if self._settings.agent_technical_enabled:
+            roles.append("technical")
+        if self._settings.agent_derivatives_enabled:
+            roles.append("derivatives")
+        if self._settings.agent_event_enabled:
+            roles.append("event")
+        if self._settings.agent_quant_rl_enabled:
+            roles.append("quant_rl")
+        roles.append("trader")
+        if self._settings.agent_portfolio_enabled:
+            roles.append("portfolio")
+        return roles
 
     def _build_critic_message_content(self, decision: TradeIntent) -> dict[str, object]:
         """Build deterministic critic trace content for one decision.

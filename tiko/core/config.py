@@ -72,6 +72,15 @@ class Settings(BaseSettings):
             "TIKO_OPENROUTER_MAX_TOKENS", "OPENROUTER_MAX_TOKENS"
         ),
     )
+    agent_coordinator_enabled: bool = True
+    agent_market_regime_enabled: bool = True
+    agent_technical_enabled: bool = True
+    agent_derivatives_enabled: bool = True
+    agent_event_enabled: bool = True
+    agent_quant_rl_enabled: bool = True
+    agent_quant_rl_model_id: str = Field(default="rl_btc_eth_v3", min_length=1)
+    agent_critic_enabled: bool = True
+    agent_portfolio_enabled: bool = True
     default_base_currency: str = "USDT"
     default_initial_equity: int = Field(default=100_000, ge=1)
     minimum_trade_confidence: float = Field(default=0.55, ge=0.0, le=1.0)

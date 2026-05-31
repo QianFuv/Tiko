@@ -206,6 +206,7 @@ def test_simulation_step_creates_internal_order_and_fill() -> None:
         "coordinator",
         "market_regime",
         "technical",
+        "derivatives",
         "event",
         "quant_rl",
         "trader",
@@ -498,6 +499,7 @@ def test_low_confidence_intent_is_rejected_without_order() -> None:
         "coordinator",
         "market_regime",
         "technical",
+        "derivatives",
         "event",
         "quant_rl",
         "trader",
@@ -513,6 +515,48 @@ def test_low_confidence_intent_is_rejected_without_order() -> None:
     assert service.list_fills() == []
     assert service.list_ledger_entries(run.run_id) == []
     assert service.list_portfolio_snapshots(run.run_id) == [result.portfolio_snapshot]
+
+
+def test_agent_trace_respects_configured_role_settings() -> None:
+    """Verify agent trace roles follow architecture configuration settings."""
+
+    service = SimulationService(
+        Settings(
+            agent_derivatives_enabled=False,
+            agent_event_enabled=False,
+            agent_quant_rl_model_id="rl_custom_v1",
+        )
+    )
+    run = service.create_run(
+        name="configured-agent-roles",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    result = service.step_run(run.run_id, confidence=0.7)
+
+    role_contents = [
+        message.content
+        for message in result.agent_messages
+        if message.role == "assistant"
+    ]
+    role_names = [content["agent_role"] for content in role_contents]
+    quant_content = next(
+        content for content in role_contents if content["agent_role"] == "quant_rl"
+    )
+    coordinator_content = next(
+        content for content in role_contents if content["agent_role"] == "coordinator"
+    )
+    assert "derivatives" not in role_names
+    assert "event" not in role_names
+    assert quant_content["model_id"] == "rl_custom_v1"
+    assert coordinator_content["dispatched_roles"] == [
+        "market_regime",
+        "technical",
+        "quant_rl",
+        "trader",
+        "portfolio",
+    ]
 
 
 def test_daily_loss_circuit_blocks_after_prior_simulated_loss() -> None:
@@ -938,6 +982,7 @@ def test_decision_report_includes_trace_and_posterior_sections() -> None:
         "coordinator",
         "market_regime",
         "technical",
+        "derivatives",
         "event",
         "quant_rl",
         "trader",
