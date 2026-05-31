@@ -233,6 +233,7 @@ class SimulationService:
         minimum_data_quality_score: float,
         max_target_weight: Decimal,
         max_order_notional: Decimal,
+        max_leverage: Decimal | None = None,
         max_drawdown: Decimal | None = None,
         max_daily_loss: Decimal | None = None,
     ) -> RiskLimits:
@@ -244,6 +245,7 @@ class SimulationService:
             minimum_data_quality_score: Minimum observation quality required.
             max_target_weight: Maximum absolute target portfolio weight.
             max_order_notional: Maximum simulated order notional.
+            max_leverage: Optional maximum allowed leverage.
             max_drawdown: Optional maximum drawdown ratio.
             max_daily_loss: Optional maximum daily loss ratio.
 
@@ -261,6 +263,11 @@ class SimulationService:
             minimum_data_quality_score=minimum_data_quality_score,
             max_target_weight=max_target_weight,
             max_order_notional=max_order_notional,
+            max_leverage=(
+                max_leverage
+                if max_leverage is not None
+                else state.risk_limits.max_leverage
+            ),
             max_drawdown=(
                 max_drawdown
                 if max_drawdown is not None
@@ -292,6 +299,7 @@ class SimulationService:
             minimum_data_quality_score=self._settings.minimum_data_quality_score,
             max_target_weight=self._settings.max_target_weight,
             max_order_notional=self._settings.max_order_notional,
+            max_leverage=self._settings.max_leverage,
             max_drawdown=self._settings.max_drawdown,
             max_daily_loss=self._settings.max_daily_loss,
             live_trading_allowed=False,
@@ -312,6 +320,7 @@ class SimulationService:
             minimum_data_quality_score=limits.minimum_data_quality_score,
             max_target_weight=limits.max_target_weight,
             max_order_notional=limits.max_order_notional,
+            max_leverage=limits.max_leverage,
             max_drawdown=limits.max_drawdown,
             max_daily_loss=limits.max_daily_loss,
         )

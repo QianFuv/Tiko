@@ -80,6 +80,7 @@ class Settings(BaseSettings):
         default=Decimal("0.25"), ge=Decimal("0"), le=Decimal("1")
     )
     max_order_notional: Decimal = Field(default=Decimal("25000"), ge=Decimal("0"))
+    max_leverage: Decimal = Field(default=Decimal("1"), gt=Decimal("0"))
     max_drawdown: Decimal = Field(default=Decimal("0.20"), ge=Decimal("0"))
     max_daily_loss: Decimal = Field(default=Decimal("0.05"), ge=Decimal("0"))
     sim_broker_maker_fee_bps: Decimal = Field(default=Decimal("2"), ge=Decimal("0"))

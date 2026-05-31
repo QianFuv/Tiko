@@ -18,6 +18,7 @@ class RiskService:
         minimum_data_quality_score: float = 0.0,
         max_target_weight: Decimal = Decimal("1"),
         max_order_notional: Decimal = Decimal("1000000000"),
+        max_leverage: Decimal = Decimal("1"),
         max_drawdown: Decimal = Decimal("1"),
         max_daily_loss: Decimal = Decimal("1"),
     ) -> None:
@@ -28,14 +29,21 @@ class RiskService:
             minimum_data_quality_score: Minimum data quality required.
             max_target_weight: Maximum absolute portfolio target weight.
             max_order_notional: Maximum simulated order notional.
+            max_leverage: Maximum allowed leverage declared by the intent.
             max_drawdown: Maximum allowed drawdown ratio.
             max_daily_loss: Maximum allowed realized loss ratio.
+
+        Raises:
+            ValueError: If max leverage is not positive.
         """
 
+        if max_leverage <= Decimal("0"):
+            raise ValueError("max_leverage must be greater than zero.")
         self.minimum_confidence = minimum_confidence
         self.minimum_data_quality_score = minimum_data_quality_score
         self.max_target_weight = max_target_weight
         self.max_order_notional = max_order_notional
+        self.max_leverage = max_leverage
         self.max_drawdown = max_drawdown
         self.max_daily_loss = max_daily_loss
 
@@ -73,6 +81,9 @@ class RiskService:
         if intent.data_quality_score < self.minimum_data_quality_score:
             rejection_reasons.append("data_quality_below_threshold")
             triggered_rules.append("minimum_data_quality")
+        if intent.max_leverage > self.max_leverage:
+            rejection_reasons.append("leverage_exceeds_limit")
+            triggered_rules.append("max_leverage")
         if rejection_reasons:
             return RiskReview(
                 review_id=uuid4(),

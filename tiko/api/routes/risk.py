@@ -32,6 +32,7 @@ class RiskLimitsUpdateRequest(BaseModel):
     minimum_data_quality_score: float = Field(ge=0.0, le=1.0)
     max_target_weight: Decimal = Field(ge=Decimal("0"), le=Decimal("1"))
     max_order_notional: Decimal = Field(ge=Decimal("0"))
+    max_leverage: Decimal = Field(default=Decimal("1"), gt=Decimal("0"))
     max_drawdown: Decimal = Field(default=Decimal("0.20"), ge=Decimal("0"))
     max_daily_loss: Decimal = Field(default=Decimal("0.05"), ge=Decimal("0"))
 
@@ -107,6 +108,7 @@ def update_risk_limits(
             minimum_data_quality_score=request.minimum_data_quality_score,
             max_target_weight=request.max_target_weight,
             max_order_notional=request.max_order_notional,
+            max_leverage=request.max_leverage,
             max_drawdown=request.max_drawdown,
             max_daily_loss=request.max_daily_loss,
         )
@@ -124,6 +126,7 @@ def update_risk_limits(
             "minimum_data_quality_score": limits.minimum_data_quality_score,
             "max_target_weight": str(limits.max_target_weight),
             "max_order_notional": str(limits.max_order_notional),
+            "max_leverage": str(limits.max_leverage),
             "max_drawdown": str(limits.max_drawdown),
             "max_daily_loss": str(limits.max_daily_loss),
         },

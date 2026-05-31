@@ -15,6 +15,7 @@ def create_intent(
     target_weight: Decimal = Decimal("0.10"),
     confidence: float = 0.8,
     data_quality_score: float = 1.0,
+    max_leverage: Decimal = Decimal("1"),
 ) -> TradeIntent:
     """Create a trade intent for risk tests.
 
@@ -22,6 +23,7 @@ def create_intent(
         target_weight: Requested target portfolio weight.
         confidence: Agent confidence.
         data_quality_score: Data quality score.
+        max_leverage: Requested maximum leverage.
 
     Returns:
         Trade intent domain model.
@@ -35,7 +37,7 @@ def create_intent(
         market_type="synthetic",
         action="open_long" if target_weight >= Decimal("0") else "open_short",
         target_weight=target_weight,
-        max_leverage=Decimal("1"),
+        max_leverage=max_leverage,
         confidence=confidence,
         expected_holding_period="1h",
         thesis="Risk control test intent.",
@@ -121,6 +123,21 @@ def test_risk_rejects_low_confidence_and_low_data_quality() -> None:
         "confidence_below_threshold",
         "data_quality_below_threshold",
     ]
+
+
+def test_risk_rejects_excess_leverage() -> None:
+    """Verify risk review blocks intents above the run leverage ceiling."""
+
+    review = RiskService(
+        minimum_confidence=0.6,
+        max_leverage=Decimal("2"),
+    ).review(create_intent(max_leverage=Decimal("3")))
+
+    assert review.status == "rejected"
+    assert review.approved_target_weight == Decimal("0")
+    assert review.max_order_notional == Decimal("0")
+    assert review.reasons == ["leverage_exceeds_limit"]
+    assert review.triggered_rules == ["max_leverage"]
 
 
 def test_risk_resizes_oversized_long_and_short_intents() -> None:

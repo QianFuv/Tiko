@@ -426,6 +426,7 @@ def test_risk_limit_update_requires_operator_and_affects_reviews() -> None:
         "minimum_data_quality_score": 0.9,
         "max_target_weight": "0.05",
         "max_order_notional": "1000",
+        "max_leverage": "2",
         "max_drawdown": "0.10",
         "max_daily_loss": "0.02",
     }
@@ -446,6 +447,11 @@ def test_risk_limit_update_requires_operator_and_affects_reviews() -> None:
         json=request,
         headers=OPERATOR_HEADERS,
     )
+    invalid_leverage_response = client.put(
+        f"/api/risk/{run_id}/limits",
+        json=request | {"max_leverage": "0"},
+        headers=OPERATOR_HEADERS,
+    )
     step_response = client.post(
         f"/api/simulations/{run_id}/step",
         json={"confidence": 0.95},
@@ -460,8 +466,10 @@ def test_risk_limit_update_requires_operator_and_affects_reviews() -> None:
     assert update_response.json()["live_trading_allowed"] is False
     assert Decimal(str(get_response.json()["max_target_weight"])) == Decimal("0.05")
     assert Decimal(str(get_response.json()["max_order_notional"])) == Decimal("1000")
+    assert Decimal(str(get_response.json()["max_leverage"])) == Decimal("2")
     assert Decimal(str(get_response.json()["max_drawdown"])) == Decimal("0.10")
     assert Decimal(str(get_response.json()["max_daily_loss"])) == Decimal("0.02")
+    assert invalid_leverage_response.status_code == 422
     assert step_response.status_code == 200
     assert review_response.json()["status"] == "resized"
     assert Decimal(str(review_response.json()["approved_target_weight"])) == Decimal(
