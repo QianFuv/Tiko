@@ -1,7 +1,10 @@
 import type { NextConfig } from "next";
 
+/**
+ * Configure the frontend build for containerized standalone deployment.
+ */
 const nextConfig: NextConfig = {
-  /* config options here */
+  output: "standalone",
 };
 
 export default nextConfig;

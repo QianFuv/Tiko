@@ -1,0 +1,12 @@
+.git
+.venv
+__pycache__
+.mypy_cache
+.pytest_cache
+.ruff_cache
+docs/plan
+.env
+.env.*
+app/.next
+app/node_modules
+app/tsconfig.tsbuildinfo
