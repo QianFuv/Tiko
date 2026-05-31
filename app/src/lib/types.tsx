@@ -211,7 +211,14 @@ export type PluginPermissions = {
   write_orders: boolean;
   network_access: boolean;
   file_system_access: "none" | "sandbox" | "readonly";
+  approved_directories: string[];
   provider_allowlist: string[];
+  methods_allowlist: string[];
+  rate_limit_per_minute: number | null;
+  credential_scope: "none" | "market_data";
+  cpu_time_limit_seconds: number | null;
+  memory_limit_mb: number | null;
+  wall_time_limit_seconds: number | null;
 };
 
 export type PluginManifest = {

@@ -181,7 +181,38 @@ function buildPermissionLabels(permissions: PluginPermissions): string[] {
     permissions.write_orders ? "Write orders" : null,
     permissions.network_access ? "Network access" : null,
     `File system: ${permissions.file_system_access}`,
-    `Provider allowlist: ${permissions.provider_allowlist.join(", ") || "None"}`,
+    `Approved directories: ${formatList(permissions.approved_directories)}`,
+    `Provider allowlist: ${formatList(permissions.provider_allowlist)}`,
+    `Method allowlist: ${formatList(permissions.methods_allowlist)}`,
+    `Rate limit: ${formatLimit(permissions.rate_limit_per_minute, "per minute")}`,
+    `Credential scope: ${permissions.credential_scope}`,
+    `CPU limit: ${formatLimit(permissions.cpu_time_limit_seconds, "seconds")}`,
+    `Memory limit: ${formatLimit(permissions.memory_limit_mb, "MB")}`,
+    `Wall time limit: ${formatLimit(
+      permissions.wall_time_limit_seconds,
+      "seconds",
+    )}`,
   ];
   return labels.filter((label): label is string => label !== null);
+}
+
+/**
+ * Format a string allowlist for compact display.
+ *
+ * @param values - Values to display.
+ * @returns Comma-separated values or an empty marker.
+ */
+function formatList(values: string[]): string {
+  return values.length > 0 ? values.join(", ") : "None";
+}
+
+/**
+ * Format an optional numeric sandbox limit.
+ *
+ * @param value - Numeric limit value.
+ * @param unit - Unit label.
+ * @returns Human-readable limit text.
+ */
+function formatLimit(value: number | null, unit: string): string {
+  return value === null ? "None" : `${value} ${unit}`;
 }
