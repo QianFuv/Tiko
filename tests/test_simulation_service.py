@@ -146,6 +146,29 @@ def test_simulation_step_creates_internal_order_and_fill() -> None:
     assert service.list_metric_snapshots(run.run_id) == [result.metric_snapshot]
 
 
+def test_simulation_steps_size_orders_against_existing_target() -> None:
+    """Verify repeated target steps do not duplicate full target orders."""
+
+    service = SimulationService(Settings())
+    run = service.create_run(
+        name="target-delta",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    first_result = service.step_run(run.run_id, confidence=0.7)
+    second_result = service.step_run(run.run_id, confidence=0.7)
+
+    assert first_result.fill is not None
+    first_notional = first_result.fill.quantity * first_result.fill.price
+    second_notional = (
+        second_result.fill.quantity * second_result.fill.price
+        if second_result.fill is not None
+        else Decimal("0")
+    )
+    assert second_notional < first_notional / Decimal("10")
+
+
 def test_simulation_step_is_deterministic_for_observable_market_values() -> None:
     """Verify repeated runs with the same inputs produce the same market result."""
 

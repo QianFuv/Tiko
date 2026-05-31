@@ -490,6 +490,7 @@ class SimulationService:
             intent=intent,
             risk_review=risk_review,
             reference_price=candle.close,
+            positions=state.positions,
         )
         account = decision_run.account
         ledger_update: LedgerUpdate | None = None

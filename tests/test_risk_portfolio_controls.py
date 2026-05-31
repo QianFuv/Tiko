@@ -2,9 +2,10 @@
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import uuid4
 
-from tiko.domain.account import SimAccount
+from tiko.domain.account import Position, SimAccount
 from tiko.domain.decision import TradeIntent
 from tiko.services.portfolio import PortfolioService
 from tiko.services.risk import RiskService
@@ -72,6 +73,39 @@ def create_account(
     )
 
 
+def create_position(
+    side: Literal["long", "short"],
+    notional: Decimal,
+    symbol: str = "BTCUSDT",
+) -> Position:
+    """Create a marked position for portfolio sizing tests.
+
+    Args:
+        side: Position side.
+        notional: Absolute position notional.
+        symbol: Position symbol.
+
+    Returns:
+        Position domain model.
+    """
+
+    return Position(
+        position_id=uuid4(),
+        account_id=uuid4(),
+        symbol=symbol,
+        side=side,
+        quantity=notional / Decimal("100"),
+        avg_entry_price=Decimal("100"),
+        mark_price=Decimal("100"),
+        notional=notional,
+        leverage=Decimal("1"),
+        unrealized_pnl=Decimal("0"),
+        realized_pnl=Decimal("0"),
+        liquidation_price=None,
+        updated_at_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+
 def test_risk_rejects_low_confidence_and_low_data_quality() -> None:
     """Verify rejection reasons are explicit and non-executable."""
 
@@ -128,6 +162,64 @@ def test_portfolio_executes_resized_review_with_notional_cap() -> None:
 
     assert order_request is not None
     assert order_request.side == "buy"
+    assert order_request.quantity == Decimal("10.000000")
+
+
+def test_portfolio_skips_order_when_current_exposure_matches_target() -> None:
+    """Verify portfolio sizing does not duplicate existing target exposure."""
+
+    intent = create_intent(target_weight=Decimal("0.10"))
+    review = RiskService(minimum_confidence=0.5).review(intent)
+
+    order_request = PortfolioService().create_order_request(
+        account=create_account(),
+        intent=intent,
+        risk_review=review,
+        reference_price=Decimal("100"),
+        positions=[create_position("long", Decimal("10000"))],
+    )
+
+    assert order_request is None
+
+
+def test_portfolio_reduces_excess_long_exposure() -> None:
+    """Verify portfolio sizing sells only the delta above the target."""
+
+    intent = create_intent(target_weight=Decimal("0.10"))
+    review = RiskService(minimum_confidence=0.5).review(intent)
+
+    order_request = PortfolioService().create_order_request(
+        account=create_account(),
+        intent=intent,
+        risk_review=review,
+        reference_price=Decimal("100"),
+        positions=[create_position("long", Decimal("15000"))],
+    )
+
+    assert order_request is not None
+    assert order_request.side == "sell"
+    assert order_request.quantity == Decimal("50.000000")
+
+
+def test_portfolio_caps_reversal_delta_order() -> None:
+    """Verify portfolio sizing caps close-plus-reversal delta orders."""
+
+    intent = create_intent(target_weight=Decimal("-0.10"))
+    review = RiskService(
+        minimum_confidence=0.5,
+        max_order_notional=Decimal("1000"),
+    ).review(intent)
+
+    order_request = PortfolioService().create_order_request(
+        account=create_account(),
+        intent=intent,
+        risk_review=review,
+        reference_price=Decimal("100"),
+        positions=[create_position("long", Decimal("5000"))],
+    )
+
+    assert order_request is not None
+    assert order_request.side == "sell"
     assert order_request.quantity == Decimal("10.000000")
 
 
