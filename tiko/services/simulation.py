@@ -8,8 +8,9 @@ from uuid import UUID, uuid4
 from tiko.core.config import Settings
 from tiko.db.repositories import SimulationRepository
 from tiko.domain.account import SimAccount
-from tiko.domain.decision import TradeIntent
+from tiko.domain.decision import DecisionReview, TradeIntent
 from tiko.domain.market import Candle, MarketEvent
+from tiko.domain.memory import MemoryEntry, MemoryType
 from tiko.domain.observation import Observation
 from tiko.domain.order import Fill, SimOrder
 from tiko.domain.risk import RiskReview
@@ -318,6 +319,162 @@ class SimulationService:
 
         reviews = self._states[run_id].risk_reviews
         return reviews[-1] if reviews else None
+
+    def create_decision_review(
+        self,
+        decision_id: UUID,
+        horizon: str,
+        realized_return: Decimal,
+        max_adverse_excursion: Decimal,
+        max_favorable_excursion: Decimal,
+        was_correct_directionally: bool,
+        error_tags: list[str],
+        reviewer_summary: str,
+    ) -> DecisionReview:
+        """Create a posterior review for an existing decision.
+
+        Args:
+            decision_id: Reviewed trade intent identifier.
+            horizon: Review horizon label.
+            realized_return: Realized return over the horizon.
+            max_adverse_excursion: Worst simulated excursion over the horizon.
+            max_favorable_excursion: Best simulated excursion over the horizon.
+            was_correct_directionally: Whether the direction was correct.
+            error_tags: Review error tags.
+            reviewer_summary: Human-readable review summary.
+
+        Returns:
+            Created decision review.
+
+        Raises:
+            KeyError: If no decision exists for the ID.
+        """
+
+        state, decision = self._find_decision_state(decision_id)
+        review = DecisionReview(
+            review_id=uuid4(),
+            decision_id=decision.decision_id,
+            run_id=decision.run_id,
+            horizon=horizon,
+            realized_return=realized_return,
+            max_adverse_excursion=max_adverse_excursion,
+            max_favorable_excursion=max_favorable_excursion,
+            was_correct_directionally=was_correct_directionally,
+            error_tags=error_tags,
+            reviewer_summary=reviewer_summary,
+            created_at_sim_time=state.run.current_sim_time,
+        )
+        state.decision_reviews.append(review)
+        if self._repository is not None:
+            self._repository.save_decision_review(review)
+        return review
+
+    def list_decision_reviews(self, decision_id: UUID) -> list[DecisionReview]:
+        """List posterior reviews for an existing decision.
+
+        Args:
+            decision_id: Trade intent identifier.
+
+        Returns:
+            Decision reviews for the decision.
+
+        Raises:
+            KeyError: If no decision exists for the ID.
+        """
+
+        state, _decision = self._find_decision_state(decision_id)
+        return [
+            review
+            for review in state.decision_reviews
+            if review.decision_id == decision_id
+        ]
+
+    def create_memory_entry(
+        self,
+        run_id: UUID,
+        memory_type: MemoryType,
+        summary: str,
+        content: dict[str, object],
+        tags: list[str],
+        available_at_sim_time: datetime | None = None,
+        decision_id: UUID | None = None,
+    ) -> MemoryEntry:
+        """Create an auxiliary memory entry for a run.
+
+        Args:
+            run_id: Simulation run identifier.
+            memory_type: Memory category.
+            summary: Short memory summary.
+            content: Structured memory payload.
+            tags: Search and review tags.
+            available_at_sim_time: Optional point-in-time availability.
+            decision_id: Optional related decision identifier.
+
+        Returns:
+            Created memory entry.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+            ValueError: If the related decision is outside the run.
+        """
+
+        state = self._states[run_id]
+        if decision_id is not None and not any(
+            decision.decision_id == decision_id for decision in state.decisions
+        ):
+            raise ValueError("Memory decision reference must belong to the run.")
+        entry = MemoryEntry(
+            memory_id=uuid4(),
+            run_id=run_id,
+            decision_id=decision_id,
+            memory_type=memory_type,
+            summary=summary,
+            content=content,
+            tags=tags,
+            available_at_sim_time=available_at_sim_time or state.run.current_sim_time,
+            created_at=datetime.now(UTC),
+        )
+        state.memory_entries.append(entry)
+        state.memory_entries.sort(key=lambda memory: memory.available_at_sim_time)
+        if self._repository is not None:
+            self._repository.save_memory_entry(entry)
+        return entry
+
+    def list_memory_entries(self, run_id: UUID) -> list[MemoryEntry]:
+        """List auxiliary memory entries for a run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Memory entries ordered by availability time.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        return list(self._states[run_id].memory_entries)
+
+    def _find_decision_state(
+        self, decision_id: UUID
+    ) -> tuple[SimulationState, TradeIntent]:
+        """Find the simulation state that owns a decision.
+
+        Args:
+            decision_id: Trade intent identifier.
+
+        Returns:
+            Owning simulation state and decision.
+
+        Raises:
+            KeyError: If no decision exists for the ID.
+        """
+
+        for state in self._states.values():
+            for decision in state.decisions:
+                if decision.decision_id == decision_id:
+                    return state, decision
+        raise KeyError(decision_id)
 
     def _create_trade_intent(
         self,

@@ -11,15 +11,18 @@ from tiko.db.models import (
     AccountRecord,
     CandleRecord,
     DecisionRecord,
+    DecisionReviewRecord,
     FillRecord,
     MarketEventRecord,
+    MemoryEntryRecord,
     OrderRecord,
     RiskReviewRecord,
     SimulationRunRecord,
 )
 from tiko.domain.account import SimAccount
-from tiko.domain.decision import TradeIntent
+from tiko.domain.decision import DecisionReview, TradeIntent
 from tiko.domain.market import Candle, MarketEvent
+from tiko.domain.memory import MemoryEntry
 from tiko.domain.order import Fill, SimOrder
 from tiko.domain.risk import RiskReview
 from tiko.domain.simulation import SimulationRun
@@ -53,6 +56,7 @@ DecisionAction = Literal[
     "rebalance",
 ]
 RiskStatus = Literal["approved", "rejected", "resized", "circuit_blocked"]
+MemoryType = Literal["decision", "failure", "regime", "agent", "experiment"]
 OrderSide = Literal["buy", "sell"]
 OrderType = Literal["market", "limit"]
 OrderStatus = Literal[
@@ -252,6 +256,64 @@ class SimulationRepository:
                 return None
             return self._to_risk_review(record)
 
+    def save_decision_review(self, review: DecisionReview) -> None:
+        """Persist a posterior decision review.
+
+        Args:
+            review: Decision review to persist.
+        """
+
+        with self._session_factory() as session:
+            self._merge_decision_review(session, review)
+            session.commit()
+
+    def list_decision_reviews(self, decision_id: UUID) -> list[DecisionReview]:
+        """List posterior reviews for a decision.
+
+        Args:
+            decision_id: Trade intent identifier.
+
+        Returns:
+            Persisted decision reviews ordered by creation time.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(DecisionReviewRecord)
+                .where(DecisionReviewRecord.decision_id == str(decision_id))
+                .order_by(DecisionReviewRecord.created_at_sim_time)
+            ).all()
+            return [self._to_decision_review(record) for record in records]
+
+    def save_memory_entry(self, entry: MemoryEntry) -> None:
+        """Persist an auxiliary memory entry.
+
+        Args:
+            entry: Memory entry to persist.
+        """
+
+        with self._session_factory() as session:
+            self._merge_memory_entry(session, entry)
+            session.commit()
+
+    def list_memory_entries(self, run_id: UUID) -> list[MemoryEntry]:
+        """List memory entries for a simulation run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Persisted memory entries ordered by availability.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(MemoryEntryRecord)
+                .where(MemoryEntryRecord.run_id == str(run_id))
+                .order_by(MemoryEntryRecord.available_at_sim_time)
+            ).all()
+            return [self._to_memory_entry(record) for record in records]
+
     def _merge_run(self, session: Session, run: SimulationRun) -> None:
         """Merge a run and its account into the active session.
 
@@ -405,6 +467,52 @@ class SimulationRepository:
                 reasons=review.reasons,
                 triggered_rules=review.triggered_rules,
                 created_at_sim_time=review.created_at_sim_time,
+            )
+        )
+
+    def _merge_decision_review(self, session: Session, review: DecisionReview) -> None:
+        """Merge a posterior decision review into the active session.
+
+        Args:
+            session: Active SQLAlchemy session.
+            review: Decision review to merge.
+        """
+
+        session.merge(
+            DecisionReviewRecord(
+                review_id=str(review.review_id),
+                decision_id=str(review.decision_id),
+                run_id=str(review.run_id),
+                horizon=review.horizon,
+                realized_return=review.realized_return,
+                max_adverse_excursion=review.max_adverse_excursion,
+                max_favorable_excursion=review.max_favorable_excursion,
+                was_correct_directionally=review.was_correct_directionally,
+                error_tags=review.error_tags,
+                reviewer_summary=review.reviewer_summary,
+                created_at_sim_time=review.created_at_sim_time,
+            )
+        )
+
+    def _merge_memory_entry(self, session: Session, entry: MemoryEntry) -> None:
+        """Merge an auxiliary memory entry into the active session.
+
+        Args:
+            session: Active SQLAlchemy session.
+            entry: Memory entry to merge.
+        """
+
+        session.merge(
+            MemoryEntryRecord(
+                memory_id=str(entry.memory_id),
+                run_id=str(entry.run_id),
+                decision_id=str(entry.decision_id) if entry.decision_id else None,
+                memory_type=entry.memory_type,
+                summary=entry.summary,
+                content=entry.content,
+                tags=entry.tags,
+                available_at_sim_time=entry.available_at_sim_time,
+                created_at=entry.created_at,
             )
         )
 
@@ -621,6 +729,52 @@ class SimulationRepository:
             reasons=list(record.reasons),
             triggered_rules=list(record.triggered_rules),
             created_at_sim_time=self._aware_datetime(record.created_at_sim_time),
+        )
+
+    def _to_decision_review(self, record: DecisionReviewRecord) -> DecisionReview:
+        """Convert a decision review row to a domain model.
+
+        Args:
+            record: Persisted decision review row.
+
+        Returns:
+            Decision review domain model.
+        """
+
+        return DecisionReview(
+            review_id=UUID(record.review_id),
+            decision_id=UUID(record.decision_id),
+            run_id=UUID(record.run_id),
+            horizon=record.horizon,
+            realized_return=record.realized_return,
+            max_adverse_excursion=record.max_adverse_excursion,
+            max_favorable_excursion=record.max_favorable_excursion,
+            was_correct_directionally=record.was_correct_directionally,
+            error_tags=list(record.error_tags),
+            reviewer_summary=record.reviewer_summary,
+            created_at_sim_time=self._aware_datetime(record.created_at_sim_time),
+        )
+
+    def _to_memory_entry(self, record: MemoryEntryRecord) -> MemoryEntry:
+        """Convert a memory entry row to a domain model.
+
+        Args:
+            record: Persisted memory entry row.
+
+        Returns:
+            Memory entry domain model.
+        """
+
+        return MemoryEntry(
+            memory_id=UUID(record.memory_id),
+            run_id=UUID(record.run_id),
+            decision_id=UUID(record.decision_id) if record.decision_id else None,
+            memory_type=cast(MemoryType, record.memory_type),
+            summary=record.summary,
+            content=dict(record.content),
+            tags=list(record.tags),
+            available_at_sim_time=self._aware_datetime(record.available_at_sim_time),
+            created_at=self._aware_datetime(record.created_at),
         )
 
     def _to_order(self, record: OrderRecord) -> SimOrder:

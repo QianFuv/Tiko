@@ -39,3 +39,19 @@ class TradeIntent(DomainModel):
     invalidation_conditions: list[str]
     data_quality_score: float = Field(ge=0.0, le=1.0)
     created_at_sim_time: datetime
+
+
+class DecisionReview(DomainModel):
+    """Represent posterior review metrics for one structured trade intent."""
+
+    review_id: UUID
+    decision_id: UUID
+    run_id: UUID
+    horizon: str = Field(min_length=1)
+    realized_return: Decimal
+    max_adverse_excursion: Decimal
+    max_favorable_excursion: Decimal
+    was_correct_directionally: bool
+    error_tags: list[str]
+    reviewer_summary: str = Field(min_length=1)
+    created_at_sim_time: datetime

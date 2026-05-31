@@ -2,8 +2,9 @@
 
 from dataclasses import dataclass, field
 
-from tiko.domain.decision import TradeIntent
+from tiko.domain.decision import DecisionReview, TradeIntent
 from tiko.domain.market import Candle, MarketEvent
+from tiko.domain.memory import MemoryEntry
 from tiko.domain.order import Fill, SimOrder
 from tiko.domain.risk import RiskReview
 from tiko.domain.simulation import SimulationRun
@@ -20,6 +21,8 @@ class SimulationState:
     candles: list[Candle] = field(default_factory=list)
     events: list[MarketEvent] = field(default_factory=list)
     decisions: list[TradeIntent] = field(default_factory=list)
+    decision_reviews: list[DecisionReview] = field(default_factory=list)
+    memory_entries: list[MemoryEntry] = field(default_factory=list)
     risk_reviews: list[RiskReview] = field(default_factory=list)
     orders: list[SimOrder] = field(default_factory=list)
     fills: list[Fill] = field(default_factory=list)

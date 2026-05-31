@@ -140,6 +140,70 @@ def test_repository_backed_service_persists_created_run_and_step() -> None:
     assert repository.list_fills(run.run_id) == [result.fill]
 
 
+def test_service_creates_decision_reviews_and_memory_entries() -> None:
+    """Verify service creates posterior review and memory artifacts."""
+
+    repository = create_test_repository()
+    service = SimulationService(Settings(), repository=repository)
+    run = service.create_run(
+        name="review",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    result = service.step_run(run.run_id, confidence=0.7)
+
+    review = service.create_decision_review(
+        decision_id=result.decision.decision_id,
+        horizon="1h",
+        realized_return=Decimal("0.01"),
+        max_adverse_excursion=Decimal("-0.002"),
+        max_favorable_excursion=Decimal("0.014"),
+        was_correct_directionally=True,
+        error_tags=[],
+        reviewer_summary="Decision remained directionally correct.",
+    )
+    memory = service.create_memory_entry(
+        run_id=run.run_id,
+        decision_id=result.decision.decision_id,
+        memory_type="decision",
+        summary="Decision review memory.",
+        content={"review_id": str(review.review_id)},
+        tags=["posterior_review"],
+    )
+
+    assert service.list_decision_reviews(result.decision.decision_id) == [review]
+    assert service.list_memory_entries(run.run_id) == [memory]
+    assert repository.list_decision_reviews(result.decision.decision_id) == [review]
+    assert repository.list_memory_entries(run.run_id) == [memory]
+
+
+def test_service_rejects_memory_for_decision_from_another_run() -> None:
+    """Verify memory entries cannot reference decisions from another run."""
+
+    service = SimulationService(Settings())
+    first_run = service.create_run(
+        name="first",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    second_run = service.create_run(
+        name="second",
+        symbols=["ETHUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    result = service.step_run(first_run.run_id, confidence=0.7)
+
+    with pytest.raises(ValueError, match="must belong to the run"):
+        service.create_memory_entry(
+            run_id=second_run.run_id,
+            decision_id=result.decision.decision_id,
+            memory_type="decision",
+            summary="Invalid cross-run memory.",
+            content={},
+            tags=[],
+        )
+
+
 def test_replay_backed_service_uses_replay_candle_as_simulated_time() -> None:
     """Verify replay-backed runs consume imported candles without lookahead."""
 

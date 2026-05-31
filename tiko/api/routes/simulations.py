@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from tiko.api.dependencies import get_simulation_service
 from tiko.domain.market import MarketEvent
+from tiko.domain.memory import MemoryEntry, MemoryType
 from tiko.domain.observation import Observation
 from tiko.domain.simulation import SimulationRun
 from tiko.services import SimulationService
@@ -30,6 +31,17 @@ class SimulationStepRequest(BaseModel):
     """Represent a request to advance one simulation step."""
 
     confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+
+
+class MemoryEntryCreateRequest(BaseModel):
+    """Represent a request to create auxiliary simulation memory."""
+
+    memory_type: MemoryType
+    summary: str = Field(min_length=1)
+    content: dict[str, object] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+    available_at_sim_time: datetime | None = None
+    decision_id: UUID | None = None
 
 
 @router.get("", response_model=list[SimulationRun])
@@ -146,6 +158,70 @@ def get_simulation_observation(
         raise HTTPException(
             status_code=404, detail="Simulation run not found."
         ) from error
+
+
+@router.get("/{run_id}/memory", response_model=list[MemoryEntry])
+def list_simulation_memory(
+    run_id: UUID,
+    service: SimulationServiceDep,
+) -> list[MemoryEntry]:
+    """List auxiliary memory entries for a run.
+
+    Args:
+        run_id: Simulation run identifier.
+        service: Simulation service dependency.
+
+    Returns:
+        Memory entries for the run.
+
+    Raises:
+        HTTPException: If the run does not exist.
+    """
+
+    try:
+        return service.list_memory_entries(run_id)
+    except KeyError as error:
+        raise HTTPException(
+            status_code=404, detail="Simulation run not found."
+        ) from error
+
+
+@router.post("/{run_id}/memory", response_model=MemoryEntry)
+def create_simulation_memory(
+    run_id: UUID,
+    request: MemoryEntryCreateRequest,
+    service: SimulationServiceDep,
+) -> MemoryEntry:
+    """Create an auxiliary memory entry for a run.
+
+    Args:
+        run_id: Simulation run identifier.
+        request: Memory creation request.
+        service: Simulation service dependency.
+
+    Returns:
+        Created memory entry.
+
+    Raises:
+        HTTPException: If the run does not exist or the decision reference is invalid.
+    """
+
+    try:
+        return service.create_memory_entry(
+            run_id=run_id,
+            memory_type=request.memory_type,
+            summary=request.summary,
+            content=request.content,
+            tags=request.tags,
+            available_at_sim_time=request.available_at_sim_time,
+            decision_id=request.decision_id,
+        )
+    except KeyError as error:
+        raise HTTPException(
+            status_code=404, detail="Simulation run not found."
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.post("/{run_id}/step", response_model=SimulationStepResult)

@@ -90,6 +90,40 @@ def test_query_routes_expose_simulated_state() -> None:
     assert (
         client.get(f"/api/risk/{run_id}/reviews/latest").json()["status"] == "approved"
     )
+    decision_id = client.get("/api/decisions").json()[0]["decision_id"]
+    review_response = client.post(
+        f"/api/decisions/{decision_id}/review",
+        json={
+            "horizon": "1h",
+            "realized_return": "0.01",
+            "max_adverse_excursion": "-0.002",
+            "max_favorable_excursion": "0.014",
+            "was_correct_directionally": True,
+            "error_tags": [],
+            "reviewer_summary": "Decision remained directionally correct.",
+        },
+    )
+    memory_response = client.post(
+        f"/api/simulations/{run_id}/memory",
+        json={
+            "memory_type": "decision",
+            "summary": "Decision review memory.",
+            "content": {"decision_id": decision_id},
+            "tags": ["posterior_review"],
+            "decision_id": decision_id,
+        },
+    )
+
+    assert review_response.status_code == 200
+    assert review_response.json()["decision_id"] == decision_id
+    assert (
+        client.get(f"/api/decisions/{decision_id}/review").json()[0]["horizon"] == "1h"
+    )
+    assert memory_response.status_code == 200
+    assert (
+        client.get(f"/api/simulations/{run_id}/memory").json()[0]["memory_type"]
+        == "decision"
+    )
 
 
 def test_agent_routes_evaluate_rule_based_agent() -> None:
@@ -143,3 +177,33 @@ def test_run_specific_routes_return_404_for_unknown_run() -> None:
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Simulation run not found."
+
+
+def test_memory_route_rejects_cross_run_decision_reference() -> None:
+    """Verify memory entries cannot reference a decision from another run."""
+
+    client = create_test_client()
+    first_run_id = client.post(
+        "/api/simulations",
+        json={"name": "first", "symbols": ["BTCUSDT"]},
+    ).json()["run_id"]
+    second_run_id = client.post(
+        "/api/simulations",
+        json={"name": "second", "symbols": ["ETHUSDT"]},
+    ).json()["run_id"]
+    client.post(f"/api/simulations/{first_run_id}/step", json={"confidence": 0.7})
+    decision_id = client.get("/api/decisions").json()[0]["decision_id"]
+
+    response = client.post(
+        f"/api/simulations/{second_run_id}/memory",
+        json={
+            "memory_type": "decision",
+            "summary": "Invalid memory.",
+            "content": {},
+            "tags": [],
+            "decision_id": decision_id,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "must belong to the run" in response.json()["detail"]

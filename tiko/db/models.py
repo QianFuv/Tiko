@@ -211,6 +211,52 @@ class RiskReviewRecord(Base):
     )
 
 
+class DecisionReviewRecord(Base):
+    """Persist posterior review metrics for a structured trade intent."""
+
+    __tablename__ = "decision_reviews"
+
+    review_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    decision_id: Mapped[str] = mapped_column(
+        ForeignKey("decisions.decision_id"), nullable=False
+    )
+    run_id: Mapped[str] = mapped_column(ForeignKey("simulation_runs.run_id"))
+    horizon: Mapped[str] = mapped_column(String(32), nullable=False)
+    realized_return: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    max_adverse_excursion: Mapped[Decimal] = mapped_column(
+        ExactDecimal(), nullable=False
+    )
+    max_favorable_excursion: Mapped[Decimal] = mapped_column(
+        ExactDecimal(), nullable=False
+    )
+    was_correct_directionally: Mapped[bool] = mapped_column(nullable=False)
+    error_tags: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    reviewer_summary: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at_sim_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class MemoryEntryRecord(Base):
+    """Persist auxiliary point-in-time memory for simulation review."""
+
+    __tablename__ = "memory_entries"
+
+    memory_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("simulation_runs.run_id"))
+    decision_id: Mapped[str | None] = mapped_column(ForeignKey("decisions.decision_id"))
+    memory_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    content: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    tags: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    available_at_sim_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class OrderRecord(Base):
     """Persist an internal simulated order."""
 

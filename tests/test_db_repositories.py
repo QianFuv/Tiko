@@ -14,6 +14,8 @@ from tiko.db import (
     create_database_engine,
     create_session_factory,
 )
+from tiko.domain.decision import DecisionReview
+from tiko.domain.memory import MemoryEntry
 from tiko.services import SimulationService
 
 
@@ -55,9 +57,11 @@ def test_metadata_creates_expected_tables(sqlite_engine: Engine) -> None:
     assert table_names == {
         "accounts",
         "candles",
+        "decision_reviews",
         "decisions",
         "fills",
         "market_events",
+        "memory_entries",
         "orders",
         "risk_reviews",
         "simulation_runs",
@@ -114,6 +118,51 @@ def test_repository_persists_successful_step_artifacts(
     assert repository.get_latest_risk_review(run.run_id) == result.risk_review
     assert repository.list_orders(run.run_id) == [result.order]
     assert repository.list_fills(run.run_id) == [result.fill]
+
+
+def test_repository_persists_decision_reviews_and_memory_entries(
+    repository: SimulationRepository,
+) -> None:
+    """Verify posterior reviews and memory entries round-trip."""
+
+    service = SimulationService(Settings())
+    run = service.create_run(
+        name="memory",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    result = service.step_run(run.run_id, confidence=0.7)
+    repository.save_step_result(result)
+    review = DecisionReview(
+        review_id=result.risk_review.review_id,
+        decision_id=result.decision.decision_id,
+        run_id=run.run_id,
+        horizon="1h",
+        realized_return=Decimal("0.012"),
+        max_adverse_excursion=Decimal("-0.004"),
+        max_favorable_excursion=Decimal("0.018"),
+        was_correct_directionally=True,
+        error_tags=[],
+        reviewer_summary="Decision remained directionally correct.",
+        created_at_sim_time=result.run.current_sim_time,
+    )
+    entry = MemoryEntry(
+        memory_id=result.event.event_id,
+        run_id=run.run_id,
+        decision_id=result.decision.decision_id,
+        memory_type="decision",
+        summary="Positive follow-through after review.",
+        content={"horizon": "1h"},
+        tags=["posterior_review"],
+        available_at_sim_time=result.run.current_sim_time,
+        created_at=result.run.created_at,
+    )
+
+    repository.save_decision_review(review)
+    repository.save_memory_entry(entry)
+
+    assert repository.list_decision_reviews(result.decision.decision_id) == [review]
+    assert repository.list_memory_entries(run.run_id) == [entry]
 
 
 def test_repository_persists_rejected_step_without_order_or_fill(
