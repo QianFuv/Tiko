@@ -422,6 +422,7 @@ export type RunReviewData = {
 export type RunReportData = {
   source: DataSource;
   run: SimulationRun;
+  decisions: TradeIntent[];
   simulationReports: ReportArtifact[];
   decisionReports: ReportArtifact[];
 };

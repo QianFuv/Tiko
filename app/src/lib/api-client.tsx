@@ -676,6 +676,7 @@ export async function fetchRunReportData(
       ...decisionReportResults.map((result) => result.source),
     ]),
     run: runResult.data,
+    decisions: decisionsResult.data,
     simulationReports: simulationReportsResult.data,
     decisionReports: decisionReportResults.flatMap((result) => result.data),
   };
