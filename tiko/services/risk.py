@@ -21,6 +21,8 @@ class RiskService:
         max_leverage: Decimal = Decimal("1"),
         max_drawdown: Decimal = Decimal("1"),
         max_daily_loss: Decimal = Decimal("1"),
+        allow_short: bool = True,
+        allow_leverage: bool = True,
     ) -> None:
         """Initialize risk thresholds.
 
@@ -32,6 +34,8 @@ class RiskService:
             max_leverage: Maximum allowed leverage declared by the intent.
             max_drawdown: Maximum allowed drawdown ratio.
             max_daily_loss: Maximum allowed realized loss ratio.
+            allow_short: Whether short exposure is allowed.
+            allow_leverage: Whether leverage above 1x is allowed.
 
         Raises:
             ValueError: If max leverage is not positive.
@@ -46,6 +50,8 @@ class RiskService:
         self.max_leverage = max_leverage
         self.max_drawdown = max_drawdown
         self.max_daily_loss = max_daily_loss
+        self.allow_short = allow_short
+        self.allow_leverage = allow_leverage
 
     def review(
         self, intent: TradeIntent, account: SimAccount | None = None
@@ -81,6 +87,12 @@ class RiskService:
         if intent.data_quality_score < self.minimum_data_quality_score:
             rejection_reasons.append("data_quality_below_threshold")
             triggered_rules.append("minimum_data_quality")
+        if not self.allow_short and self._requires_short_exposure(intent):
+            rejection_reasons.append("short_exposure_not_allowed")
+            triggered_rules.append("allow_short")
+        if not self.allow_leverage and intent.max_leverage > Decimal("1"):
+            rejection_reasons.append("leverage_not_allowed")
+            triggered_rules.append("allow_leverage")
         if intent.max_leverage > self.max_leverage:
             rejection_reasons.append("leverage_exceeds_limit")
             triggered_rules.append("max_leverage")
@@ -120,6 +132,19 @@ class RiskService:
             triggered_rules=risk_rules,
             created_at_sim_time=intent.created_at_sim_time,
         )
+
+    def _requires_short_exposure(self, intent: TradeIntent) -> bool:
+        """Return whether an intent requests short exposure.
+
+        Args:
+            intent: Agent-generated trade intent.
+
+        Returns:
+            `True` when the intent opens, increases, or targets short exposure.
+        """
+
+        short_actions = {"open_short", "increase_short"}
+        return intent.target_weight < Decimal("0") or intent.action in short_actions
 
     def _circuit_breaker_reasons(
         self, account: SimAccount | None

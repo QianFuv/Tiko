@@ -101,6 +101,8 @@ class SimulationService:
             ),
             max_market_spread_bps=settings.sim_broker_max_market_spread_bps,
             min_market_depth_1pct_usd=settings.sim_broker_min_market_depth_1pct_usd,
+            allow_market=settings.sim_broker_allow_market,
+            allow_limit=settings.sim_broker_allow_limit,
         )
         self._event_bus = EventBus()
         self._observation_builder = ObservationBuilder()
@@ -333,6 +335,8 @@ class SimulationService:
             max_leverage=limits.max_leverage,
             max_drawdown=limits.max_drawdown,
             max_daily_loss=limits.max_daily_loss,
+            allow_short=self._settings.sim_broker_allow_short,
+            allow_leverage=self._settings.sim_broker_allow_leverage,
         )
 
     def _get_state(self, run_id: UUID) -> SimulationState:

@@ -107,6 +107,10 @@ class Settings(BaseSettings):
     sim_broker_min_market_depth_1pct_usd: Decimal = Field(
         default=Decimal("0"), ge=Decimal("0")
     )
+    sim_broker_allow_market: bool = True
+    sim_broker_allow_limit: bool = True
+    sim_broker_allow_short: bool = True
+    sim_broker_allow_leverage: bool = True
     synthetic_funding_rate: Decimal = Decimal("0")
     synthetic_funding_interval_steps: int = Field(default=1, ge=1)
     synthetic_seed: int = 42

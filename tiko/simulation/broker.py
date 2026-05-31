@@ -1,6 +1,7 @@
 """Internal simulated broker and matching behavior."""
 
 from decimal import Decimal
+from uuid import uuid4
 
 from tiko.domain.order import Fill, OrderRequest, SimOrder
 from tiko.simulation.fee import FeeEngine
@@ -20,6 +21,8 @@ class SimBroker:
         slippage_liquidity_multiplier: Decimal = Decimal("1.5"),
         max_market_spread_bps: Decimal = Decimal("100"),
         min_market_depth_1pct_usd: Decimal = Decimal("0"),
+        allow_market: bool = True,
+        allow_limit: bool = True,
         matching_engine: MatchingEngine | None = None,
     ) -> None:
         """Initialize broker fee and slippage parameters.
@@ -32,6 +35,8 @@ class SimBroker:
             slippage_liquidity_multiplier: Weight applied to liquidity slippage.
             max_market_spread_bps: Maximum acceptable market spread.
             min_market_depth_1pct_usd: Minimum acceptable 1% depth in USD.
+            allow_market: Whether market orders may be simulated.
+            allow_limit: Whether limit orders may be simulated.
             matching_engine: Optional matching engine override.
         """
 
@@ -42,6 +47,8 @@ class SimBroker:
         self.slippage_liquidity_multiplier = slippage_liquidity_multiplier
         self.max_market_spread_bps = max_market_spread_bps
         self.min_market_depth_1pct_usd = min_market_depth_1pct_usd
+        self.allow_market = allow_market
+        self.allow_limit = allow_limit
         self._matching_engine = matching_engine or MatchingEngine(
             fee_engine=FeeEngine(fee_bps),
             maker_fee_engine=FeeEngine(self.maker_fee_bps),
@@ -71,6 +78,8 @@ class SimBroker:
             Simulated order and optional fill records.
         """
 
+        if not self.allow_market:
+            return self._build_rejected_order(order_request), None
         return self._matching_engine.match_market_order(
             order_request, reference_price, slippage_context
         )
@@ -95,6 +104,33 @@ class SimBroker:
             Simulated order and optional fill.
         """
 
+        if not self.allow_limit:
+            return self._build_rejected_order(order_request), None
         return self._matching_engine.match_limit_order(
             order_request, reference_price, available_quantity, time_in_force
+        )
+
+    def _build_rejected_order(self, order_request: OrderRequest) -> SimOrder:
+        """Build a rejected order record for disabled broker order types.
+
+        Args:
+            order_request: Source order request.
+
+        Returns:
+            Rejected simulated order record.
+        """
+
+        return SimOrder(
+            order_id=uuid4(),
+            run_id=order_request.run_id,
+            account_id=order_request.account_id,
+            decision_id=order_request.decision_id,
+            symbol=order_request.symbol,
+            side=order_request.side,
+            order_type=order_request.order_type,
+            quantity=order_request.quantity,
+            limit_price=order_request.limit_price,
+            status="rejected",
+            submitted_at_sim_time=order_request.submitted_at_sim_time,
+            updated_at_sim_time=order_request.submitted_at_sim_time,
         )

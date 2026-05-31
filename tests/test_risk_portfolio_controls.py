@@ -140,6 +140,37 @@ def test_risk_rejects_excess_leverage() -> None:
     assert review.triggered_rules == ["max_leverage"]
 
 
+def test_risk_rejects_short_exposure_when_disabled() -> None:
+    """Verify risk review blocks short exposure when broker config forbids it."""
+
+    review = RiskService(
+        minimum_confidence=0.6,
+        allow_short=False,
+    ).review(create_intent(target_weight=Decimal("-0.10")))
+
+    assert review.status == "rejected"
+    assert review.approved_target_weight == Decimal("0")
+    assert review.max_order_notional == Decimal("0")
+    assert review.reasons == ["short_exposure_not_allowed"]
+    assert review.triggered_rules == ["allow_short"]
+
+
+def test_risk_rejects_leverage_when_disabled() -> None:
+    """Verify risk review blocks leverage when broker config forbids it."""
+
+    review = RiskService(
+        minimum_confidence=0.6,
+        max_leverage=Decimal("3"),
+        allow_leverage=False,
+    ).review(create_intent(max_leverage=Decimal("2")))
+
+    assert review.status == "rejected"
+    assert review.approved_target_weight == Decimal("0")
+    assert review.max_order_notional == Decimal("0")
+    assert review.reasons == ["leverage_not_allowed"]
+    assert review.triggered_rules == ["allow_leverage"]
+
+
 def test_risk_resizes_oversized_long_and_short_intents() -> None:
     """Verify oversized signed target weights are capped by risk."""
 

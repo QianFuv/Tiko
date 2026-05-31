@@ -499,6 +499,19 @@ def test_sim_broker_preserves_immediate_fill_defaults() -> None:
     assert fill.order_id == order.order_id
 
 
+def test_sim_broker_rejects_market_orders_when_disabled() -> None:
+    """Verify broker market permission can reject simulated orders."""
+
+    order, fill = SimBroker(allow_market=False).submit_market_order(
+        create_order_request("buy"),
+        reference_price=Decimal("100"),
+    )
+
+    assert order.status == "rejected"
+    assert order.order_type == "market"
+    assert fill is None
+
+
 def test_sim_broker_passes_slippage_context_to_market_matching() -> None:
     """Verify broker market submissions pass slippage context to matching."""
 
@@ -556,6 +569,20 @@ def test_sim_broker_uses_maker_fee_for_limit_orders() -> None:
     assert fill.price == Decimal("100")
     assert fill.fee == Decimal("0.04")
     assert fill.slippage_bps == Decimal("0")
+
+
+def test_sim_broker_rejects_limit_orders_when_disabled() -> None:
+    """Verify broker limit permission can reject simulated orders."""
+
+    order, fill = SimBroker(allow_limit=False).submit_limit_order(
+        create_limit_order_request("sell", Decimal("99")),
+        reference_price=Decimal("100"),
+    )
+
+    assert order.status == "rejected"
+    assert order.order_type == "limit"
+    assert order.limit_price == Decimal("99")
+    assert fill is None
 
 
 def test_sim_broker_passes_available_depth_to_limit_matching() -> None:
