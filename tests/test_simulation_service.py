@@ -1,5 +1,6 @@
 """Tests for deterministic in-memory simulation service behavior."""
 
+import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -19,7 +20,12 @@ from tiko.domain.market import Candle
 from tiko.domain.order import Fill
 from tiko.domain.reporting import ReportArtifact
 from tiko.domain.runtime import BackgroundJob
-from tiko.services import ReportArtifactStore, ReportRenderService, SimulationService
+from tiko.services import (
+    RealtimeFanoutService,
+    ReportArtifactStore,
+    ReportRenderService,
+    SimulationService,
+)
 from tiko.simulation.replay import MarketReplayExhausted
 from tiko.workers.agent_worker import handle_agent_inference_job
 
@@ -133,6 +139,38 @@ def create_completed_agent_inference_job(
             "completed_at": now,
         }
     )
+
+
+class FakeRedisPublisher:
+    """Capture Redis-compatible publish calls for realtime fanout tests."""
+
+    def __init__(self) -> None:
+        """Initialize the fake publisher."""
+
+        self.messages: list[tuple[str, str]] = []
+
+    def ping(self) -> bool:
+        """Return a successful connectivity result.
+
+        Returns:
+            Always `True` for tests.
+        """
+
+        return True
+
+    def publish(self, channel: str, message: str) -> int:
+        """Capture one published message.
+
+        Args:
+            channel: Redis Pub/Sub channel.
+            message: Serialized message payload.
+
+        Returns:
+            Simulated subscriber count.
+        """
+
+        self.messages.append((channel, message))
+        return 1
 
 
 def test_simulation_step_creates_internal_order_and_fill() -> None:
@@ -353,6 +391,104 @@ def test_repository_backed_service_persists_created_run_and_step() -> None:
         result.portfolio_snapshot
     ]
     assert repository.list_metric_snapshots(run.run_id) == [result.metric_snapshot]
+
+
+def test_simulation_step_publishes_realtime_fanout_envelopes() -> None:
+    """Verify simulation steps publish architecture realtime topics."""
+
+    publisher = FakeRedisPublisher()
+    fanout = RealtimeFanoutService(client=publisher, channel_prefix="tiko:test")
+    service = SimulationService(Settings(), realtime_fanout=fanout)
+    run = service.create_run(
+        name="realtime-step",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    service.step_run(run.run_id, confidence=0.7)
+
+    published_envelopes = [
+        json.loads(message) for _channel, message in publisher.messages
+    ]
+    published_topics = {str(envelope["topic"]) for envelope in published_envelopes}
+    assert published_topics == {
+        "agent.run",
+        "decision.created",
+        "fill.created",
+        "market.candle",
+        "order.updated",
+        "portfolio.updated",
+        "risk.reviewed",
+        "simulation.heartbeat",
+        "simulation.status",
+    }
+    assert all(
+        channel.startswith(f"tiko:test:{run.run_id}:")
+        for channel, _message in publisher.messages
+    )
+    assert len(service.list_realtime_fanout_receipts()) == 9
+    assert all(receipt.published for receipt in service.list_realtime_fanout_receipts())
+    heartbeat = next(
+        envelope
+        for envelope in published_envelopes
+        if envelope["topic"] == "simulation.heartbeat"
+    )
+    assert heartbeat["payload"]["run_id"] == str(run.run_id)
+    assert heartbeat["payload"]["event_queue_depth"] == 0
+    assert heartbeat["payload"]["worker_status"] == "healthy"
+
+
+def test_rejected_simulation_steps_skip_order_fill_fanout_topics() -> None:
+    """Verify rejected steps publish only artifacts that exist."""
+
+    publisher = FakeRedisPublisher()
+    fanout = RealtimeFanoutService(client=publisher, channel_prefix="tiko:test")
+    service = SimulationService(
+        Settings(minimum_trade_confidence=0.55),
+        realtime_fanout=fanout,
+    )
+    run = service.create_run(
+        name="rejected-realtime-step",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    service.step_run(run.run_id, confidence=0.2)
+
+    published_topics = {
+        str(json.loads(message)["topic"]) for _channel, message in publisher.messages
+    }
+    assert "order.updated" not in published_topics
+    assert "fill.created" not in published_topics
+    assert published_topics == {
+        "agent.run",
+        "decision.created",
+        "market.candle",
+        "portfolio.updated",
+        "risk.reviewed",
+        "simulation.heartbeat",
+        "simulation.status",
+    }
+    assert len(service.list_realtime_fanout_receipts()) == 7
+
+
+def test_simulation_step_without_fanout_keeps_existing_behavior() -> None:
+    """Verify the optional fanout path stays disabled by default."""
+
+    service = SimulationService(Settings())
+    run = service.create_run(
+        name="no-realtime-step",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    result = service.step_run(run.run_id, confidence=0.7)
+
+    assert result.order is not None
+    assert result.fill is not None
+    assert service.list_orders() == [result.order]
+    assert service.list_fills() == [result.fill]
+    assert service.list_realtime_fanout_receipts() == []
 
 
 def test_service_applies_agent_inference_job_trace_state() -> None:

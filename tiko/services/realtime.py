@@ -2,9 +2,25 @@
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Protocol
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import redis
+
+from tiko.simulation.state import SimulationStepResult
+
+STREAM_PAYLOAD_ID_KEYS = (
+    "event_id",
+    "agent_run_id",
+    "decision_id",
+    "review_id",
+    "order_id",
+    "fill_id",
+    "snapshot_id",
+    "alert_id",
+    "run_id",
+)
 
 
 class RedisPublishClient(Protocol):
@@ -192,3 +208,151 @@ class RealtimeFanoutService:
         if isinstance(value, str) and value.isdecimal():
             return int(value)
         raise ValueError("Redis publish response must be an integer subscriber count.")
+
+
+def build_step_result_envelopes(
+    result: SimulationStepResult,
+) -> list[dict[str, object]]:
+    """Build realtime envelopes for one completed simulation step.
+
+    Args:
+        result: Simulation step result.
+
+    Returns:
+        Realtime event envelopes in publish order.
+    """
+
+    run_id = result.run.run_id
+    simulated_time = result.run.current_sim_time
+    envelopes = [
+        build_stream_event(
+            topic="market.candle",
+            run_id=run_id,
+            simulated_time=result.event.simulated_time,
+            payload=result.event.model_dump(mode="json"),
+        ),
+        build_stream_event(
+            topic="agent.run",
+            run_id=run_id,
+            simulated_time=result.agent_run.completed_at_sim_time,
+            payload=result.agent_run.model_dump(mode="json"),
+        ),
+        build_stream_event(
+            topic="decision.created",
+            run_id=run_id,
+            simulated_time=result.decision.created_at_sim_time,
+            payload=result.decision.model_dump(mode="json"),
+        ),
+        build_stream_event(
+            topic="risk.reviewed",
+            run_id=run_id,
+            simulated_time=result.risk_review.created_at_sim_time,
+            payload=result.risk_review.model_dump(mode="json"),
+        ),
+    ]
+    if result.order is not None:
+        envelopes.append(
+            build_stream_event(
+                topic="order.updated",
+                run_id=run_id,
+                simulated_time=result.order.updated_at_sim_time,
+                payload=result.order.model_dump(mode="json"),
+            )
+        )
+    if result.fill is not None:
+        envelopes.append(
+            build_stream_event(
+                topic="fill.created",
+                run_id=run_id,
+                simulated_time=result.fill.filled_at_sim_time,
+                payload=result.fill.model_dump(mode="json"),
+            )
+        )
+    envelopes.extend(
+        [
+            build_stream_event(
+                topic="portfolio.updated",
+                run_id=run_id,
+                simulated_time=result.portfolio_snapshot.simulated_time,
+                payload=result.portfolio_snapshot.model_dump(mode="json"),
+            ),
+            build_stream_event(
+                topic="simulation.status",
+                run_id=run_id,
+                simulated_time=simulated_time,
+                payload={
+                    "run_id": str(run_id),
+                    "status": result.run.status,
+                    "current_sim_time": simulated_time.isoformat(),
+                    "speed_multiplier": str(result.run.speed_multiplier),
+                },
+            ),
+            build_stream_event(
+                topic="simulation.heartbeat",
+                run_id=run_id,
+                simulated_time=simulated_time,
+                payload={
+                    "run_id": str(run_id),
+                    "wall_time": datetime.now(UTC).isoformat(),
+                    "simulated_time": simulated_time.isoformat(),
+                    "status": result.run.status,
+                    "clock_lag_ms": 0,
+                    "event_queue_depth": 0,
+                    "worker_status": "healthy",
+                },
+            ),
+        ]
+    )
+    return envelopes
+
+
+def build_stream_event(
+    topic: str,
+    run_id: UUID,
+    simulated_time: datetime,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    """Build a realtime event envelope.
+
+    Args:
+        topic: Realtime topic.
+        run_id: Simulation run identifier.
+        simulated_time: Simulated event time.
+        payload: JSON-serializable event payload.
+
+    Returns:
+        Realtime event envelope.
+    """
+
+    return {
+        "event_id": str(
+            uuid5(
+                NAMESPACE_URL,
+                (
+                    f"stream-event:{run_id}:{topic}:"
+                    f"{simulated_time.isoformat()}:{_payload_identity(payload)}"
+                ),
+            )
+        ),
+        "topic": topic,
+        "run_id": str(run_id),
+        "simulated_time": simulated_time.isoformat(),
+        "payload": payload,
+    }
+
+
+def _payload_identity(payload: dict[str, object]) -> str:
+    """Extract stable source identity from a realtime payload.
+
+    Args:
+        payload: Realtime event payload.
+
+    Returns:
+        Stable identity string for event ID generation.
+    """
+
+    for key in STREAM_PAYLOAD_ID_KEYS:
+        value = payload.get(key)
+        if value is not None:
+            return f"{key}:{value}"
+    return "payload:none"

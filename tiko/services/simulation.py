@@ -38,6 +38,11 @@ from tiko.domain.runtime import BackgroundJob
 from tiko.domain.simulation import SimulationRun
 from tiko.observation import ObservationBuilder
 from tiko.services.portfolio import PortfolioService
+from tiko.services.realtime import (
+    RealtimeFanoutReceipt,
+    RealtimeFanoutService,
+    build_step_result_envelopes,
+)
 from tiko.services.risk import RiskService
 from tiko.simulation.broker import SimBroker
 from tiko.simulation.clock import advance_simulated_time
@@ -61,17 +66,23 @@ class SimulationService:
     """Coordinate deterministic simulation runs with optional persistence."""
 
     def __init__(
-        self, settings: Settings, repository: SimulationRepository | None = None
+        self,
+        settings: Settings,
+        repository: SimulationRepository | None = None,
+        realtime_fanout: RealtimeFanoutService | None = None,
     ) -> None:
         """Initialize service dependencies and state.
 
         Args:
             settings: Application settings.
             repository: Optional persistence repository.
+            realtime_fanout: Optional realtime fanout publisher.
         """
 
         self._settings = settings
         self._repository = repository
+        self._realtime_fanout = realtime_fanout
+        self._realtime_fanout_receipts: list[RealtimeFanoutReceipt] = []
         self._states: dict[UUID, SimulationState] = {}
         self._portfolio_service = PortfolioService()
         self._broker = SimBroker()
@@ -582,6 +593,7 @@ class SimulationService:
         )
         if self._repository is not None:
             self._repository.save_step_result(result)
+        self._publish_step_result(result)
         return result
 
     def _next_candle(self, state: SimulationState) -> Candle:
@@ -1028,6 +1040,15 @@ class SimulationService:
         """
 
         return [event for state in self._list_states() for event in state.events]
+
+    def list_realtime_fanout_receipts(self) -> list[RealtimeFanoutReceipt]:
+        """List realtime fanout receipts recorded by this service.
+
+        Returns:
+            Realtime fanout receipts in publish order.
+        """
+
+        return list(self._realtime_fanout_receipts)
 
     def list_candles(self, run_id: UUID) -> list[Candle]:
         """List candles observed by a simulation run.
@@ -2203,6 +2224,20 @@ class SimulationService:
                 if decision.decision_id == decision_id:
                     return state, decision
         raise KeyError(decision_id)
+
+    def _publish_step_result(self, result: SimulationStepResult) -> None:
+        """Publish realtime envelopes for a completed simulation step.
+
+        Args:
+            result: Completed simulation step result.
+        """
+
+        if self._realtime_fanout is None:
+            return
+        receipts = self._realtime_fanout.publish_many(
+            build_step_result_envelopes(result)
+        )
+        self._realtime_fanout_receipts.extend(receipts)
 
     def _require_mapping(
         self, payload: dict[str, object], key: str
