@@ -10,6 +10,17 @@ from pydantic import Field
 from tiko.domain.base import DomainModel
 
 
+class RiskLimits(DomainModel):
+    """Represent active run-level risk limits."""
+
+    run_id: UUID
+    minimum_confidence: float = Field(ge=0.0, le=1.0)
+    minimum_data_quality_score: float = Field(ge=0.0, le=1.0)
+    max_target_weight: Decimal = Field(ge=Decimal("0"), le=Decimal("1"))
+    max_order_notional: Decimal = Field(ge=Decimal("0"))
+    live_trading_allowed: bool = False
+
+
 class RiskReview(DomainModel):
     """Represent the result of independent risk review for a trade intent."""
 

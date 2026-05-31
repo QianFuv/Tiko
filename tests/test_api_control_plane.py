@@ -1,5 +1,7 @@
 """Smoke tests for the FastAPI simulation control plane."""
 
+from decimal import Decimal
+
 from fastapi.testclient import TestClient
 
 from tiko.api.dependencies import reset_simulation_service
@@ -203,6 +205,69 @@ def test_simulation_lifecycle_routes_update_status_speed_and_audit() -> None:
         "risk.pause",
         "risk.resume",
         "simulation.stop",
+    ]
+
+
+def test_risk_limit_update_requires_operator_and_affects_reviews() -> None:
+    """Verify risk limit updates are authorized, audited, and applied."""
+
+    client = create_test_client()
+    run_id = client.post(
+        "/api/simulations",
+        json={"name": "risk-limit-demo", "symbols": ["BTCUSDT"]},
+        headers=OPERATOR_HEADERS,
+    ).json()["run_id"]
+    request = {
+        "minimum_confidence": 0.8,
+        "minimum_data_quality_score": 0.9,
+        "max_target_weight": "0.05",
+        "max_order_notional": "1000",
+    }
+
+    viewer_response = client.put(
+        f"/api/risk/{run_id}/limits",
+        json=request,
+        headers=VIEWER_HEADERS,
+    )
+    update_response = client.put(
+        f"/api/risk/{run_id}/limits",
+        json=request,
+        headers=OPERATOR_HEADERS,
+    )
+    get_response = client.get(f"/api/risk/{run_id}/limits")
+    unknown_response = client.put(
+        "/api/risk/00000000-0000-0000-0000-000000000000/limits",
+        json=request,
+        headers=OPERATOR_HEADERS,
+    )
+    step_response = client.post(
+        f"/api/simulations/{run_id}/step",
+        json={"confidence": 0.95},
+        headers=OPERATOR_HEADERS,
+    )
+    review_response = client.get(f"/api/risk/{run_id}/reviews/latest")
+
+    assert viewer_response.status_code == 403
+    assert update_response.status_code == 200
+    assert get_response.status_code == 200
+    assert unknown_response.status_code == 404
+    assert update_response.json()["live_trading_allowed"] is False
+    assert Decimal(str(get_response.json()["max_target_weight"])) == Decimal("0.05")
+    assert Decimal(str(get_response.json()["max_order_notional"])) == Decimal("1000")
+    assert step_response.status_code == 200
+    assert review_response.json()["status"] == "resized"
+    assert Decimal(str(review_response.json()["approved_target_weight"])) == Decimal(
+        "0.05"
+    )
+    assert review_response.json()["triggered_rules"] == ["max_target_weight"]
+    audit_actions = [
+        entry["action"]
+        for entry in client.get("/api/audit/logs", headers=ADMIN_HEADERS).json()
+    ]
+    assert audit_actions == [
+        "simulation.create",
+        "risk.limits.update",
+        "simulation.step",
     ]
 
 

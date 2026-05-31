@@ -25,7 +25,7 @@ from tiko.domain.reporting import (
     AlertStatus,
     ReportArtifact,
 )
-from tiko.domain.risk import RiskReview
+from tiko.domain.risk import RiskLimits, RiskReview
 from tiko.domain.simulation import SimulationRun
 from tiko.observation import ObservationBuilder
 from tiko.services.portfolio import PortfolioService
@@ -55,12 +55,6 @@ class SimulationService:
         self._settings = settings
         self._repository = repository
         self._states: dict[UUID, SimulationState] = {}
-        self._risk_service = RiskService(
-            minimum_confidence=settings.minimum_trade_confidence,
-            minimum_data_quality_score=settings.minimum_data_quality_score,
-            max_target_weight=settings.max_target_weight,
-            max_order_notional=settings.max_order_notional,
-        )
         self._portfolio_service = PortfolioService()
         self._broker = SimBroker()
         self._event_bus = EventBus()
@@ -124,7 +118,11 @@ class SimulationService:
             },
             created_at=datetime.now(UTC),
         )
-        self._states[run_id] = SimulationState(run=run, market_replay=market_replay)
+        self._states[run_id] = SimulationState(
+            run=run,
+            risk_limits=self._build_default_risk_limits(run_id),
+            market_replay=market_replay,
+        )
         if self._repository is not None:
             self._repository.save_run(run)
         return run
@@ -137,6 +135,93 @@ class SimulationService:
         """
 
         return [state.run for state in self._states.values()]
+
+    def get_risk_limits(self, run_id: UUID) -> RiskLimits:
+        """Return active risk limits for a simulation run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Active run-level risk limits.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        return self._states[run_id].risk_limits
+
+    def update_risk_limits(
+        self,
+        run_id: UUID,
+        minimum_confidence: float,
+        minimum_data_quality_score: float,
+        max_target_weight: Decimal,
+        max_order_notional: Decimal,
+    ) -> RiskLimits:
+        """Update active risk limits for future simulation steps.
+
+        Args:
+            run_id: Simulation run identifier.
+            minimum_confidence: Minimum confidence required for approval.
+            minimum_data_quality_score: Minimum observation quality required.
+            max_target_weight: Maximum absolute target portfolio weight.
+            max_order_notional: Maximum simulated order notional.
+
+        Returns:
+            Updated run-level risk limits.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        state = self._states[run_id]
+        limits = RiskLimits(
+            run_id=run_id,
+            minimum_confidence=minimum_confidence,
+            minimum_data_quality_score=minimum_data_quality_score,
+            max_target_weight=max_target_weight,
+            max_order_notional=max_order_notional,
+            live_trading_allowed=False,
+        )
+        state.risk_limits = limits
+        return limits
+
+    def _build_default_risk_limits(self, run_id: UUID) -> RiskLimits:
+        """Build risk limits from application settings for one run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Default risk limits with live trading disabled.
+        """
+
+        return RiskLimits(
+            run_id=run_id,
+            minimum_confidence=self._settings.minimum_trade_confidence,
+            minimum_data_quality_score=self._settings.minimum_data_quality_score,
+            max_target_weight=self._settings.max_target_weight,
+            max_order_notional=self._settings.max_order_notional,
+            live_trading_allowed=False,
+        )
+
+    def _build_risk_service(self, limits: RiskLimits) -> RiskService:
+        """Build a risk service from run-level limits.
+
+        Args:
+            limits: Active risk limits.
+
+        Returns:
+            Configured risk service.
+        """
+
+        return RiskService(
+            minimum_confidence=limits.minimum_confidence,
+            minimum_data_quality_score=limits.minimum_data_quality_score,
+            max_target_weight=limits.max_target_weight,
+            max_order_notional=limits.max_order_notional,
+        )
 
     def get_run(self, run_id: UUID) -> SimulationRun:
         """Get one simulation run by ID.
@@ -255,7 +340,7 @@ class SimulationService:
             confidence=confidence,
             simulated_time=next_time,
         )
-        risk_review = self._risk_service.review(intent)
+        risk_review = self._build_risk_service(state.risk_limits).review(intent)
         order = None
         fill = None
         order_request = self._portfolio_service.create_order_request(

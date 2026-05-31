@@ -7,7 +7,7 @@ from tiko.domain.market import Candle, MarketEvent
 from tiko.domain.memory import MemoryEntry
 from tiko.domain.order import Fill, SimOrder
 from tiko.domain.reporting import Alert, ReportArtifact
-from tiko.domain.risk import RiskReview
+from tiko.domain.risk import RiskLimits, RiskReview
 from tiko.domain.simulation import SimulationRun
 from tiko.simulation.replay import MarketReplay
 
@@ -17,6 +17,7 @@ class SimulationState:
     """Hold mutable process-local state for one simulation run."""
 
     run: SimulationRun
+    risk_limits: RiskLimits
     step_index: int = 0
     market_replay: MarketReplay | None = None
     candles: list[Candle] = field(default_factory=list)

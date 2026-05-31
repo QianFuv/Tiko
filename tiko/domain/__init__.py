@@ -40,7 +40,7 @@ from tiko.domain.reporting import (
     ReportArtifact,
     ReportType,
 )
-from tiko.domain.risk import RiskReview
+from tiko.domain.risk import RiskLimits, RiskReview
 from tiko.domain.rl import EnvironmentStep, RewardBreakdown, RewardComponents, RlAction
 from tiko.domain.runtime import (
     BackgroundJob,
@@ -100,6 +100,7 @@ __all__ = [
     "PluginType",
     "Position",
     "Principal",
+    "RiskLimits",
     "RiskReview",
     "ReportArtifact",
     "ReportType",

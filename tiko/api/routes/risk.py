@@ -5,16 +5,15 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from tiko.api.dependencies import (
     get_audit_service,
     get_simulation_service,
     require_permission,
 )
-from tiko.core.config import get_settings
 from tiko.domain.reporting import Alert, AlertCategory, AlertSeverity, AlertStatus
-from tiko.domain.risk import RiskReview
+from tiko.domain.risk import RiskLimits, RiskReview
 from tiko.domain.security import Principal
 from tiko.services import AuditService, SimulationService
 
@@ -26,15 +25,13 @@ ManageAlertsPrincipalDep = Annotated[
 ]
 
 
-class RiskLimitsResponse(BaseModel):
-    """Represent active risk limits for a simulation run."""
+class RiskLimitsUpdateRequest(BaseModel):
+    """Represent a request to update run-level risk limits."""
 
-    run_id: UUID
-    minimum_confidence: float
-    minimum_data_quality_score: float
-    max_target_weight: Decimal
-    max_order_notional: Decimal
-    live_trading_allowed: bool
+    minimum_confidence: float = Field(ge=0.0, le=1.0)
+    minimum_data_quality_score: float = Field(ge=0.0, le=1.0)
+    max_target_weight: Decimal = Field(ge=Decimal("0"), le=Decimal("1"))
+    max_order_notional: Decimal = Field(ge=Decimal("0"))
 
 
 class AlertCreateRequest(BaseModel):
@@ -51,11 +48,11 @@ class AlertStatusUpdateRequest(BaseModel):
     status: AlertStatus
 
 
-@router.get("/{run_id}/limits", response_model=RiskLimitsResponse)
+@router.get("/{run_id}/limits", response_model=RiskLimits)
 def get_risk_limits(
     run_id: UUID,
     service: SimulationServiceDep,
-) -> RiskLimitsResponse:
+) -> RiskLimits:
     """Return configured risk limits for a run.
 
     Args:
@@ -70,20 +67,62 @@ def get_risk_limits(
     """
 
     try:
-        service.get_run(run_id)
+        return service.get_risk_limits(run_id)
     except KeyError as error:
         raise HTTPException(
             status_code=404, detail="Simulation run not found."
         ) from error
-    settings = get_settings()
-    return RiskLimitsResponse(
-        run_id=run_id,
-        minimum_confidence=settings.minimum_trade_confidence,
-        minimum_data_quality_score=settings.minimum_data_quality_score,
-        max_target_weight=settings.max_target_weight,
-        max_order_notional=settings.max_order_notional,
-        live_trading_allowed=False,
+
+
+@router.put("/{run_id}/limits", response_model=RiskLimits)
+def update_risk_limits(
+    run_id: UUID,
+    request: RiskLimitsUpdateRequest,
+    service: SimulationServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManageAlertsPrincipalDep,
+) -> RiskLimits:
+    """Update configured risk limits for a run.
+
+    Args:
+        run_id: Simulation run identifier.
+        request: Risk limit update request.
+        service: Simulation service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
+
+    Returns:
+        Updated risk limits.
+
+    Raises:
+        HTTPException: If the run does not exist.
+    """
+
+    try:
+        limits = service.update_risk_limits(
+            run_id=run_id,
+            minimum_confidence=request.minimum_confidence,
+            minimum_data_quality_score=request.minimum_data_quality_score,
+            max_target_weight=request.max_target_weight,
+            max_order_notional=request.max_order_notional,
+        )
+    except KeyError as error:
+        raise HTTPException(
+            status_code=404, detail="Simulation run not found."
+        ) from error
+    audit_service.record(
+        principal=principal,
+        action="risk.limits.update",
+        resource_type="simulation_run",
+        resource_id=str(run_id),
+        metadata={
+            "minimum_confidence": limits.minimum_confidence,
+            "minimum_data_quality_score": limits.minimum_data_quality_score,
+            "max_target_weight": str(limits.max_target_weight),
+            "max_order_notional": str(limits.max_order_notional),
+        },
     )
+    return limits
 
 
 @router.get("/{run_id}/alerts", response_model=list[Alert])
@@ -250,13 +289,13 @@ def get_latest_risk_review(
         ) from error
 
 
-@router.post("/{run_id}/pause", response_model=RiskLimitsResponse)
+@router.post("/{run_id}/pause", response_model=RiskLimits)
 def pause_run_from_risk(
     run_id: UUID,
     service: SimulationServiceDep,
     audit_service: AuditServiceDep,
     principal: ManageAlertsPrincipalDep,
-) -> RiskLimitsResponse:
+) -> RiskLimits:
     """Pause a run from risk controls.
 
     Args:
@@ -282,13 +321,13 @@ def pause_run_from_risk(
     )
 
 
-@router.post("/{run_id}/resume", response_model=RiskLimitsResponse)
+@router.post("/{run_id}/resume", response_model=RiskLimits)
 def resume_run_from_risk(
     run_id: UUID,
     service: SimulationServiceDep,
     audit_service: AuditServiceDep,
     principal: ManageAlertsPrincipalDep,
-) -> RiskLimitsResponse:
+) -> RiskLimits:
     """Resume a run from risk controls.
 
     Args:
@@ -321,7 +360,7 @@ def update_risk_controlled_run_status(
     service: SimulationService,
     audit_service: AuditService,
     principal: Principal,
-) -> RiskLimitsResponse:
+) -> RiskLimits:
     """Update run status through risk controls and audit the command.
 
     Args:
