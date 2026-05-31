@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Callable, Mapping, Sequence
+from uuid import UUID
 
 from tiko.domain.runtime import BackgroundJob, JobType, WorkerHeartbeat
 from tiko.services.runtime import RuntimeService
@@ -9,6 +10,7 @@ from tiko.workers import agent_worker, backtest_worker, report_worker, rl_worker
 from tiko.workers.definitions import WorkerDefinition, WorkerExecutionResult
 
 JobHandler = Callable[[BackgroundJob], dict[str, object]]
+JobFinishedHandler = Callable[[BackgroundJob], None]
 
 
 def build_worker_definitions() -> tuple[WorkerDefinition, ...]:
@@ -76,6 +78,7 @@ def process_worker_jobs(
     definition: WorkerDefinition,
     handlers: Mapping[JobType, JobHandler] | None = None,
     max_jobs: int = 1,
+    on_job_finished: JobFinishedHandler | None = None,
 ) -> WorkerExecutionResult:
     """Process queued jobs supported by one worker definition.
 
@@ -84,6 +87,7 @@ def process_worker_jobs(
         definition: Worker role definition.
         handlers: Optional handlers keyed by runtime job type.
         max_jobs: Maximum jobs to claim during this execution pass.
+        on_job_finished: Optional callback receiving completed or failed jobs.
 
     Returns:
         Structured execution summary.
@@ -107,6 +111,8 @@ def process_worker_jobs(
     claimed_job_ids = []
     completed_job_ids = []
     failed_job_ids = []
+    callback_error_job_ids: list[UUID] = []
+    callback_error_messages: list[str] = []
 
     for _ in range(max_jobs):
         job = service.claim_next_job(
@@ -123,15 +129,33 @@ def process_worker_jobs(
                 f"No handler registered for job type {job.job_type}.",
             )
             failed_job_ids.append(failed_job.job_id)
+            _notify_job_finished(
+                on_job_finished,
+                failed_job,
+                callback_error_job_ids,
+                callback_error_messages,
+            )
             continue
         try:
             result = handler(job)
         except Exception as error:
             failed_job = service.fail_job(job.job_id, str(error))
             failed_job_ids.append(failed_job.job_id)
+            _notify_job_finished(
+                on_job_finished,
+                failed_job,
+                callback_error_job_ids,
+                callback_error_messages,
+            )
         else:
             completed_job = service.complete_job(job.job_id, result)
             completed_job_ids.append(completed_job.job_id)
+            _notify_job_finished(
+                on_job_finished,
+                completed_job,
+                callback_error_job_ids,
+                callback_error_messages,
+            )
 
     remaining_queue_depth = service.count_queued_jobs(definition.job_types)
     service.record_heartbeat(
@@ -146,7 +170,33 @@ def process_worker_jobs(
         completed_job_ids=tuple(completed_job_ids),
         failed_job_ids=tuple(failed_job_ids),
         remaining_queue_depth=remaining_queue_depth,
+        callback_error_job_ids=tuple(callback_error_job_ids),
+        callback_error_messages=tuple(callback_error_messages),
     )
+
+
+def _notify_job_finished(
+    handler: JobFinishedHandler | None,
+    job: BackgroundJob,
+    callback_error_job_ids: list[UUID],
+    callback_error_messages: list[str],
+) -> None:
+    """Notify a finished-job hook and record callback failures.
+
+    Args:
+        handler: Optional finished-job callback.
+        job: Completed or failed runtime job.
+        callback_error_job_ids: Mutable callback error job ID accumulator.
+        callback_error_messages: Mutable callback error message accumulator.
+    """
+
+    if handler is None:
+        return
+    try:
+        handler(job)
+    except Exception as error:
+        callback_error_job_ids.append(job.job_id)
+        callback_error_messages.append(str(error))
 
 
 def main() -> int:

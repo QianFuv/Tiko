@@ -337,8 +337,8 @@ def test_backtest_worker_fails_empty_candle_payloads() -> None:
     assert failed_job.error_message == "Backtest payload requires at least one candle."
 
 
-def test_experiment_service_applies_completed_worker_jobs() -> None:
-    """Verify worker result metrics complete queued experiments."""
+def test_experiment_service_applies_completed_worker_jobs_through_hooks() -> None:
+    """Verify finished-job hooks complete queued experiments."""
 
     runtime_service = RuntimeService()
     experiment_service = ExperimentService()
@@ -370,13 +370,27 @@ def test_experiment_service_applies_completed_worker_jobs() -> None:
         if definition.worker_name == "backtest-worker"
     )
 
-    result = process_worker_jobs(runtime_service, definition, max_jobs=1)
-    completed_job = runtime_service.get_job(job.job_id)
-    completed_experiment = experiment_service.apply_runtime_job(completed_job)
+    def apply_finished_job(finished_job: BackgroundJob) -> None:
+        """Apply finished experiment jobs to experiment service state.
+
+        Args:
+            finished_job: Completed or failed runtime job.
+        """
+
+        experiment_service.apply_runtime_job(finished_job)
+
+    result = process_worker_jobs(
+        runtime_service,
+        definition,
+        max_jobs=1,
+        on_job_finished=apply_finished_job,
+    )
+    completed_experiment = experiment_service.get_experiment(experiment.experiment_id)
     runtime_result = completed_experiment.metrics["runtime_result"]
     assert isinstance(runtime_result, dict)
 
     assert result.completed_job_ids == (job.job_id,)
+    assert result.callback_error_job_ids == ()
     assert completed_experiment.status == "completed"
     assert completed_experiment.completed_at is not None
     assert completed_experiment.metrics["queued"] is True
@@ -384,6 +398,103 @@ def test_experiment_service_applies_completed_worker_jobs() -> None:
     assert completed_experiment.metrics["job_id"] == str(job.job_id)
     assert completed_experiment.metrics["returns_by_symbol"] == {"BTCUSDT": "0.1"}
     assert runtime_result["job_type"] == "experiment_run"
+
+
+def test_experiment_service_applies_failed_worker_jobs_through_hooks() -> None:
+    """Verify finished-job hooks receive failed experiment jobs."""
+
+    runtime_service = RuntimeService()
+    experiment_service = ExperimentService()
+    experiment = experiment_service.create_experiment(
+        name="failed worker backtest",
+        kind="backtest",
+        hypothesis="Worker failures update the experiment record.",
+        dataset_id=uuid4(),
+        parameters={},
+    )
+    job = runtime_service.create_job(
+        job_type="experiment_run",
+        resource_type="experiment",
+        resource_id=str(experiment.experiment_id),
+        payload={"candles": []},
+    )
+    experiment_service.queue_run(experiment.experiment_id, job_id=job.job_id)
+    definition = next(
+        definition
+        for definition in build_worker_definitions()
+        if definition.worker_name == "backtest-worker"
+    )
+
+    def apply_finished_job(finished_job: BackgroundJob) -> None:
+        """Apply finished experiment jobs to experiment service state.
+
+        Args:
+            finished_job: Completed or failed runtime job.
+        """
+
+        experiment_service.apply_runtime_job(finished_job)
+
+    result = process_worker_jobs(
+        runtime_service,
+        definition,
+        max_jobs=1,
+        on_job_finished=apply_finished_job,
+    )
+    failed_experiment = experiment_service.get_experiment(experiment.experiment_id)
+
+    assert result.failed_job_ids == (job.job_id,)
+    assert result.callback_error_job_ids == ()
+    assert failed_experiment.status == "failed"
+    assert failed_experiment.completed_at is not None
+    assert failed_experiment.metrics["failed"] is True
+    assert failed_experiment.metrics["job_id"] == str(job.job_id)
+    assert (
+        failed_experiment.metrics["error_message"]
+        == "Backtest payload requires at least one candle."
+    )
+
+
+def test_worker_process_jobs_reports_finished_hook_errors() -> None:
+    """Verify hook failures are reported without changing job status."""
+
+    service = RuntimeService()
+    job = service.create_job(
+        job_type="backtest",
+        resource_type="dataset",
+        resource_id="dataset-1",
+        payload={
+            "candles": [
+                candle.model_dump(mode="json") for candle in create_rl_candles()
+            ],
+        },
+    )
+    definition = next(
+        definition
+        for definition in build_worker_definitions()
+        if definition.worker_name == "backtest-worker"
+    )
+
+    def fail_finished_job(finished_job: BackgroundJob) -> None:
+        """Raise a deterministic finished-job hook error.
+
+        Args:
+            finished_job: Completed or failed runtime job.
+        """
+
+        raise RuntimeError(f"hook failed for {finished_job.resource_id}")
+
+    result = process_worker_jobs(
+        service,
+        definition,
+        max_jobs=1,
+        on_job_finished=fail_finished_job,
+    )
+    completed_job = service.get_job(job.job_id)
+
+    assert result.completed_job_ids == (job.job_id,)
+    assert result.callback_error_job_ids == (job.job_id,)
+    assert result.callback_error_messages == ("hook failed for dataset-1",)
+    assert completed_job.status == "completed"
 
 
 def test_agent_worker_runs_rule_based_inference_jobs() -> None:

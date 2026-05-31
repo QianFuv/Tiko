@@ -24,3 +24,5 @@ class WorkerExecutionResult:
     completed_job_ids: tuple[UUID, ...]
     failed_job_ids: tuple[UUID, ...]
     remaining_queue_depth: int
+    callback_error_job_ids: tuple[UUID, ...] = ()
+    callback_error_messages: tuple[str, ...] = ()
