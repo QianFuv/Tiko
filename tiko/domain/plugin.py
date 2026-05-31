@@ -20,6 +20,7 @@ PluginType = Literal[
 ]
 PluginStatus = Literal["draft", "validated", "enabled", "archived", "rejected"]
 FileSystemAccess = Literal["none", "sandbox", "readonly"]
+CredentialScope = Literal["none", "market_data"]
 
 
 class PluginPermissions(DomainModel):
@@ -33,6 +34,9 @@ class PluginPermissions(DomainModel):
     network_access: bool = False
     file_system_access: FileSystemAccess = "sandbox"
     provider_allowlist: list[str] = Field(default_factory=list)
+    methods_allowlist: list[str] = Field(default_factory=list)
+    rate_limit_per_minute: int | None = Field(default=None, gt=0)
+    credential_scope: CredentialScope = "none"
 
 
 class PluginManifest(DomainModel):

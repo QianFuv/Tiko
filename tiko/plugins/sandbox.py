@@ -1,5 +1,6 @@
 """Plugin sandbox policy validation."""
 
+from tiko.data import FORBIDDEN_PRIVATE_METHODS
 from tiko.domain.plugin import (
     PluginManifest,
     SandboxResult,
@@ -36,8 +37,26 @@ def validate_plugin_manifest(manifest: PluginManifest) -> SandboxResult:
             )
         if not permissions.read_market_data:
             violations.append("Network plugins must request read_market_data only.")
+        if (
+            permissions.read_portfolio
+            or permissions.write_market_events
+            or permissions.write_features
+        ):
+            violations.append("Network plugins must only request read_market_data.")
         if len(permissions.provider_allowlist) == 0:
             violations.append("Network plugins require a provider allowlist.")
+        if len(permissions.methods_allowlist) == 0:
+            violations.append("Network plugins require a methods allowlist.")
+        forbidden_methods = _forbidden_network_methods(permissions.methods_allowlist)
+        if forbidden_methods:
+            violations.append(
+                "Network plugin methods are not allowed: "
+                f"{', '.join(forbidden_methods)}."
+            )
+        if permissions.rate_limit_per_minute is None:
+            violations.append(
+                "Network plugins require a positive rate_limit_per_minute."
+            )
     if manifest.plugin_type == "market_data_connector" and permissions.write_features:
         warnings.append("Market data connectors should not write features directly.")
     if len(manifest.tests) == 0:
@@ -137,5 +156,24 @@ def _network_policy_passes(manifest: PluginManifest) -> bool:
         manifest.plugin_type == "market_data_connector"
         and permissions.read_market_data
         and len(permissions.provider_allowlist) > 0
+        and len(permissions.methods_allowlist) > 0
+        and not _forbidden_network_methods(permissions.methods_allowlist)
+        and permissions.rate_limit_per_minute is not None
+        and not permissions.read_portfolio
+        and not permissions.write_market_events
+        and not permissions.write_features
         and not permissions.write_orders
     )
+
+
+def _forbidden_network_methods(methods: list[str]) -> list[str]:
+    """List forbidden private methods requested by a network plugin.
+
+    Args:
+        methods: Requested network method allowlist.
+
+    Returns:
+        Forbidden private methods present in the allowlist.
+    """
+
+    return sorted(set(methods).intersection(FORBIDDEN_PRIVATE_METHODS))

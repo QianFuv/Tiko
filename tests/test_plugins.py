@@ -68,6 +68,9 @@ def test_sandbox_restricts_network_to_allowlisted_market_data() -> None:
                 read_market_data=True,
                 network_access=True,
                 provider_allowlist=["binance"],
+                methods_allowlist=["fetchTicker"],
+                rate_limit_per_minute=60,
+                credential_scope="market_data",
             ),
         }
     )
@@ -76,7 +79,56 @@ def test_sandbox_restricts_network_to_allowlisted_market_data() -> None:
     safe_result = validate_plugin_manifest(safe_manifest)
 
     assert unsafe_result.passed is False
+    assert any(
+        "provider allowlist" in violation for violation in unsafe_result.violations
+    )
+    assert any(
+        "methods allowlist" in violation for violation in unsafe_result.violations
+    )
     assert safe_result.passed is True
+
+
+def test_sandbox_rejects_network_private_methods_and_missing_rate_limit() -> None:
+    """Verify network plugins must be method-bounded and rate-limited."""
+
+    private_method_manifest = create_safe_manifest().model_copy(
+        update={
+            "plugin_type": "market_data_connector",
+            "permissions": PluginPermissions(
+                read_market_data=True,
+                network_access=True,
+                provider_allowlist=["binance"],
+                methods_allowlist=["fetchBalance"],
+                rate_limit_per_minute=60,
+                credential_scope="market_data",
+            ),
+        }
+    )
+    missing_rate_limit_manifest = create_safe_manifest().model_copy(
+        update={
+            "plugin_type": "market_data_connector",
+            "permissions": PluginPermissions(
+                read_market_data=True,
+                network_access=True,
+                provider_allowlist=["binance"],
+                methods_allowlist=["fetchTicker"],
+                credential_scope="market_data",
+            ),
+        }
+    )
+
+    private_method_result = validate_plugin_manifest(private_method_manifest)
+    missing_rate_limit_result = validate_plugin_manifest(missing_rate_limit_manifest)
+
+    assert private_method_result.passed is False
+    assert any(
+        "fetchBalance" in violation for violation in private_method_result.violations
+    )
+    assert missing_rate_limit_result.passed is False
+    assert any(
+        "rate_limit_per_minute" in violation
+        for violation in missing_rate_limit_result.violations
+    )
 
 
 def test_sandbox_requires_manifest_tests() -> None:

@@ -43,6 +43,7 @@ from tiko.domain.model import (
 from tiko.domain.observation import Observation
 from tiko.domain.order import Fill, OrderRequest, SimOrder
 from tiko.domain.plugin import (
+    CredentialScope,
     FileSystemAccess,
     PluginManifest,
     PluginPermissions,
@@ -105,6 +106,7 @@ __all__ = [
     "AuditLogEntry",
     "BackgroundJob",
     "Candle",
+    "CredentialScope",
     "DatasetQualityIssue",
     "DatasetQualityReport",
     "DatasetRecord",
