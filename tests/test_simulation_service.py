@@ -1,6 +1,7 @@
 """Tests for deterministic in-memory simulation service behavior."""
 
 import json
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -16,10 +17,16 @@ from tiko.db import (
     create_database_engine,
     create_session_factory,
 )
-from tiko.domain.market import Candle
+from tiko.domain.account import Position
+from tiko.domain.market import Candle, FeatureSnapshot, MarketEvent, OrderBookSnapshot
+from tiko.domain.memory import MemoryEntry
+from tiko.domain.observation import Observation, ObservationDataQuality
 from tiko.domain.order import Fill
 from tiko.domain.reporting import ReportArtifact
+from tiko.domain.risk import RiskLimits
 from tiko.domain.runtime import BackgroundJob
+from tiko.domain.simulation import SimulationRun
+from tiko.observation import ObservationBuilder
 from tiko.services import (
     RealtimeFanoutService,
     ReportArtifactStore,
@@ -28,6 +35,77 @@ from tiko.services import (
 )
 from tiko.simulation.replay import MarketReplayExhausted
 from tiko.workers.agent_worker import handle_agent_inference_job
+
+
+class LowQualityObservationBuilder(ObservationBuilder):
+    """Build observations with a forced data-quality result for service tests."""
+
+    def __init__(self, score: float, warnings: list[str]) -> None:
+        """Initialize forced data-quality values.
+
+        Args:
+            score: Forced data-quality score.
+            warnings: Forced data-quality warning codes.
+        """
+
+        super().__init__()
+        self.quality_score = score
+        self.quality_warnings = warnings
+
+    def build(
+        self,
+        run: SimulationRun,
+        symbol: str,
+        as_of: datetime,
+        candles: Sequence[Candle],
+        events: Sequence[MarketEvent] | None = None,
+        orderbooks: Sequence[OrderBookSnapshot] | None = None,
+        feature_snapshots: Sequence[FeatureSnapshot] | None = None,
+        positions: Sequence[Position] | None = None,
+        risk_limits: RiskLimits | None = None,
+        memory_entries: Sequence[MemoryEntry] | None = None,
+        observation_id: UUID | None = None,
+    ) -> Observation:
+        """Build an observation with forced data-quality metadata.
+
+        Args:
+            run: Simulation run associated with the observation.
+            symbol: Symbol to observe.
+            as_of: Observation timestamp.
+            candles: Candidate candles.
+            events: Optional candidate market events.
+            orderbooks: Optional candidate order book snapshots.
+            feature_snapshots: Optional candidate feature snapshots.
+            positions: Optional candidate simulated positions.
+            risk_limits: Optional active risk limits.
+            memory_entries: Optional candidate memory entries.
+            observation_id: Optional stable observation identifier.
+
+        Returns:
+            Observation with forced data-quality metadata.
+        """
+
+        observation = super().build(
+            run=run,
+            symbol=symbol,
+            as_of=as_of,
+            candles=candles,
+            events=events,
+            orderbooks=orderbooks,
+            feature_snapshots=feature_snapshots,
+            positions=positions,
+            risk_limits=risk_limits,
+            memory_entries=memory_entries,
+            observation_id=observation_id,
+        )
+        return observation.model_copy(
+            update={
+                "data_quality": ObservationDataQuality(
+                    score=self.quality_score,
+                    warnings=list(self.quality_warnings),
+                )
+            }
+        )
 
 
 def create_test_repository() -> SimulationRepository:
@@ -590,6 +668,36 @@ def test_low_confidence_intent_is_rejected_without_order() -> None:
     assert service.list_fills() == []
     assert service.list_ledger_entries(run.run_id) == []
     assert service.list_portfolio_snapshots(run.run_id) == [result.portfolio_snapshot]
+
+
+def test_low_observation_data_quality_is_rejected_without_order() -> None:
+    """Verify observation data quality flows into risk rejection."""
+
+    service = SimulationService(Settings(minimum_data_quality_score=0.8))
+    service._observation_builder = LowQualityObservationBuilder(
+        score=0.5,
+        warnings=["missing_orderbook"],
+    )
+    run = service.create_run(
+        name="low-quality",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    result = service.step_run(run.run_id, confidence=0.7)
+
+    assert result.observation.data_quality.score == 0.5
+    assert result.observation.data_quality.warnings == ["missing_orderbook"]
+    assert result.decision.data_quality_score == 0.5
+    assert result.risk_review.status == "rejected"
+    assert result.risk_review.reasons == ["data_quality_below_threshold"]
+    assert result.risk_review.triggered_rules == ["minimum_data_quality"]
+    assert result.order is None
+    assert result.fill is None
+    assert result.ledger_entry is None
+    assert service.list_orders() == []
+    assert service.list_fills() == []
+    assert service.list_ledger_entries(run.run_id) == []
 
 
 def test_agent_trace_respects_configured_role_settings() -> None:

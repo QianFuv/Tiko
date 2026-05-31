@@ -608,6 +608,7 @@ class SimulationService:
             run_id=run_id,
             symbol=symbol,
             confidence=confidence,
+            data_quality_score=observation.data_quality.score,
             simulated_time=next_time,
         )
         risk_review = self._build_risk_service(state.risk_limits).review(
@@ -2962,6 +2963,7 @@ class SimulationService:
         run_id: UUID,
         symbol: str,
         confidence: float,
+        data_quality_score: float,
         simulated_time: datetime,
     ) -> TradeIntent:
         """Create deterministic synthetic trade intent for a step.
@@ -2970,6 +2972,7 @@ class SimulationService:
             run_id: Simulation run identifier.
             symbol: Symbol for the intent.
             confidence: Synthetic confidence score.
+            data_quality_score: Observation data-quality score.
             simulated_time: Simulated decision time.
 
         Returns:
@@ -2990,7 +2993,7 @@ class SimulationService:
             thesis="Synthetic trend-following seed decision.",
             evidence=[{"type": "synthetic_candle"}],
             invalidation_conditions=["confidence_below_threshold"],
-            data_quality_score=1.0,
+            data_quality_score=data_quality_score,
             created_at_sim_time=simulated_time,
         )
 
