@@ -18,6 +18,7 @@ Permission = Literal[
     "manage_alerts",
     "manage_datasets",
     "manage_experiments",
+    "manage_runtime",
     "read_audit",
 ]
 

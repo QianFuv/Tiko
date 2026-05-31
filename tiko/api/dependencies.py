@@ -15,6 +15,7 @@ from tiko.services import (
     ExperimentService,
     ModelRegistryService,
     PluginRegistryService,
+    RuntimeService,
     SimulationService,
 )
 
@@ -85,6 +86,17 @@ def get_experiment_service() -> ExperimentService:
     return ExperimentService()
 
 
+@lru_cache
+def get_runtime_service() -> RuntimeService:
+    """Return the process-local runtime service singleton.
+
+    Returns:
+        In-memory runtime service.
+    """
+
+    return RuntimeService()
+
+
 def get_current_principal(
     role_header: Annotated[str | None, Header(alias="X-Tiko-Role")] = None,
     user_header: Annotated[str | None, Header(alias="X-Tiko-User")] = None,
@@ -151,3 +163,4 @@ def reset_simulation_service() -> None:
     get_audit_service.cache_clear()
     get_dataset_service.cache_clear()
     get_experiment_service.cache_clear()
+    get_runtime_service.cache_clear()

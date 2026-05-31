@@ -17,6 +17,7 @@ from tiko.api.routes import (
     portfolio,
     reports,
     risk,
+    runtime,
     simulations,
     websocket,
 )
@@ -47,6 +48,7 @@ def create_app() -> FastAPI:
     application.include_router(portfolio.router, prefix=settings.api_prefix)
     application.include_router(orders.router, prefix=settings.api_prefix)
     application.include_router(risk.router, prefix=settings.api_prefix)
+    application.include_router(runtime.router, prefix=settings.api_prefix)
     application.include_router(websocket.router)
     return application
 

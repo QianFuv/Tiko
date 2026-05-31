@@ -198,6 +198,7 @@ def test_experiment_routes_create_queue_and_audit(tmp_path: Path) -> None:
     assert queued["status"] == "queued"
     assert queued["queued_at"] is not None
     assert queued["metrics"]["queued"] is True
+    assert "job_id" in queued["metrics"]
 
     audit_response = client.get("/api/audit/logs", headers=ADMIN_HEADERS)
     assert [entry["action"] for entry in audit_response.json()] == [

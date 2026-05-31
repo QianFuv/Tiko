@@ -35,6 +35,16 @@ from tiko.domain.reporting import (
 )
 from tiko.domain.risk import RiskReview
 from tiko.domain.rl import EnvironmentStep, RewardBreakdown, RewardComponents, RlAction
+from tiko.domain.runtime import (
+    BackgroundJob,
+    JobStatus,
+    JobType,
+    WatchdogCheck,
+    WatchdogReport,
+    WatchdogSeverity,
+    WorkerHeartbeat,
+    WorkerStatus,
+)
 from tiko.domain.security import AuditLogEntry, Permission, Principal, Role
 from tiko.domain.simulation import SimulationRun
 
@@ -45,6 +55,7 @@ __all__ = [
     "AlertSeverity",
     "AlertStatus",
     "AuditLogEntry",
+    "BackgroundJob",
     "Candle",
     "DatasetQualityIssue",
     "DatasetQualityReport",
@@ -58,6 +69,8 @@ __all__ = [
     "ExperimentStatus",
     "Fill",
     "FileSystemAccess",
+    "JobStatus",
+    "JobType",
     "MarketEvent",
     "MemoryEntry",
     "MemoryType",
@@ -89,4 +102,9 @@ __all__ = [
     "SimOrder",
     "SimulationRun",
     "TradeIntent",
+    "WatchdogCheck",
+    "WatchdogReport",
+    "WatchdogSeverity",
+    "WorkerHeartbeat",
+    "WorkerStatus",
 ]

@@ -78,11 +78,14 @@ class ExperimentService:
 
         return self._experiments[experiment_id]
 
-    def queue_run(self, experiment_id: UUID) -> ExperimentRecord:
+    def queue_run(
+        self, experiment_id: UUID, job_id: UUID | None = None
+    ) -> ExperimentRecord:
         """Queue an experiment run without executing heavy work in-process.
 
         Args:
             experiment_id: Experiment identifier.
+            job_id: Optional runtime job identifier.
 
         Returns:
             Queued experiment record.
@@ -92,11 +95,14 @@ class ExperimentService:
         """
 
         experiment = self._experiments[experiment_id]
+        metrics = experiment.metrics | {"queued": True}
+        if job_id is not None:
+            metrics["job_id"] = str(job_id)
         queued_experiment = experiment.model_copy(
             update={
                 "status": "queued",
                 "queued_at": datetime.now(UTC),
-                "metrics": experiment.metrics | {"queued": True},
+                "metrics": metrics,
             }
         )
         self._experiments[experiment_id] = queued_experiment

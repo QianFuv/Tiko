@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from tiko.core.auth import ROLE_PERMISSIONS, has_permission
 from tiko.domain import (
     Asset,
+    BackgroundJob,
     Candle,
     DatasetQualityReport,
     DatasetRecord,
@@ -22,6 +23,8 @@ from tiko.domain import (
     SimOrder,
     SimulationRun,
     TradeIntent,
+    WatchdogReport,
+    WorkerHeartbeat,
 )
 
 
@@ -279,3 +282,44 @@ def test_dataset_and_experiment_schemas_validate_research_state() -> None:
         ExperimentRecord.model_validate(
             experiment.model_dump() | {"kind": "live_trade"}
         )
+
+
+def test_runtime_schemas_validate_worker_and_job_state() -> None:
+    """Verify runtime schemas constrain jobs, heartbeats, and reports."""
+
+    job = BackgroundJob(
+        job_id=uuid4(),
+        job_type="experiment_run",
+        resource_type="experiment",
+        resource_id=str(uuid4()),
+        status="queued",
+        payload={"priority": "normal"},
+        created_at=current_time(),
+        updated_at=current_time(),
+    )
+    heartbeat = WorkerHeartbeat(
+        heartbeat_id=uuid4(),
+        worker_name="backtest-worker",
+        worker_status="healthy",
+        event_queue_depth=0,
+        clock_lag_ms=10,
+        last_seen_at=current_time(),
+    )
+    report = WatchdogReport(
+        report_id=uuid4(),
+        checked_at=current_time(),
+        worker_status=heartbeat.worker_status,
+        queued_job_count=1,
+        unhealthy_workers=[],
+        checks=[],
+    )
+
+    assert job.status == "queued"
+    assert report.worker_status == "healthy"
+
+    with pytest.raises(ValidationError):
+        WorkerHeartbeat.model_validate(
+            heartbeat.model_dump() | {"event_queue_depth": -1}
+        )
+    with pytest.raises(ValidationError):
+        BackgroundJob.model_validate(job.model_dump() | {"job_type": "live_order"})

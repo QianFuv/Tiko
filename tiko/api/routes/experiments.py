@@ -10,16 +10,23 @@ from tiko.api.dependencies import (
     get_audit_service,
     get_dataset_service,
     get_experiment_service,
+    get_runtime_service,
     require_permission,
 )
 from tiko.domain.experiment import ExperimentKind, ExperimentRecord
 from tiko.domain.security import Principal
-from tiko.services import AuditService, DatasetService, ExperimentService
+from tiko.services import (
+    AuditService,
+    DatasetService,
+    ExperimentService,
+    RuntimeService,
+)
 
 router = APIRouter(prefix="/experiments", tags=["experiments"])
 ExperimentServiceDep = Annotated[ExperimentService, Depends(get_experiment_service)]
 DatasetServiceDep = Annotated[DatasetService, Depends(get_dataset_service)]
 AuditServiceDep = Annotated[AuditService, Depends(get_audit_service)]
+RuntimeServiceDep = Annotated[RuntimeService, Depends(get_runtime_service)]
 ManageExperimentPrincipalDep = Annotated[
     Principal, Depends(require_permission("manage_experiments"))
 ]
@@ -128,6 +135,7 @@ def get_experiment(
 def queue_experiment_run(
     experiment_id: UUID,
     service: ExperimentServiceDep,
+    runtime_service: RuntimeServiceDep,
     audit_service: AuditServiceDep,
     principal: ManageExperimentPrincipalDep,
 ) -> ExperimentRecord:
@@ -136,6 +144,7 @@ def queue_experiment_run(
     Args:
         experiment_id: Experiment identifier.
         service: Experiment service dependency.
+        runtime_service: Runtime service dependency.
         audit_service: Audit service dependency.
         principal: Authorized caller principal.
 
@@ -147,7 +156,17 @@ def queue_experiment_run(
     """
 
     try:
-        experiment = service.queue_run(experiment_id)
+        source_experiment = service.get_experiment(experiment_id)
+        job = runtime_service.create_job(
+            job_type="experiment_run",
+            resource_type="experiment",
+            resource_id=str(experiment_id),
+            payload={
+                "dataset_id": str(source_experiment.dataset_id),
+                "kind": source_experiment.kind,
+            },
+        )
+        experiment = service.queue_run(experiment_id, job_id=job.job_id)
     except KeyError as error:
         raise HTTPException(status_code=404, detail="Experiment not found.") from error
     audit_service.record(
@@ -155,6 +174,6 @@ def queue_experiment_run(
         action="experiment.run.queue",
         resource_type="experiment",
         resource_id=str(experiment_id),
-        metadata={"status": experiment.status},
+        metadata={"status": experiment.status, "job_id": str(job.job_id)},
     )
     return experiment
