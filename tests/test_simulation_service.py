@@ -202,6 +202,13 @@ def test_simulation_step_creates_internal_order_and_fill() -> None:
         "system",
         "observation",
         "assistant",
+        "critic",
+    ]
+    assert result.agent_messages[3].content["decision_id"] == str(
+        result.decision.decision_id
+    )
+    assert result.agent_messages[3].content["invalidation_conditions"] == [
+        "confidence_below_threshold"
     ]
     assert result.order is not None
     assert result.fill is not None
@@ -377,7 +384,7 @@ def test_low_confidence_intent_is_rejected_without_order() -> None:
     assert result.risk_review.status == "rejected"
     assert result.observation.symbol == "BTCUSDT"
     assert result.agent_run.decision_id == result.decision.decision_id
-    assert len(result.agent_messages) == 3
+    assert len(result.agent_messages) == 4
     assert result.order is None
     assert result.fill is None
     assert result.ledger_entry is None

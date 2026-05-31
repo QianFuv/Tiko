@@ -210,6 +210,10 @@ def _build_agent_messages(
                 "evidence": intent.evidence,
             },
         ),
+        (
+            "critic",
+            _build_critic_message_content(intent),
+        ),
     )
     return tuple(
         AgentMessage(
@@ -224,3 +228,25 @@ def _build_agent_messages(
         )
         for index, (role, content) in enumerate(message_specs)
     )
+
+
+def _build_critic_message_content(intent: TradeIntent) -> dict[str, object]:
+    """Build deterministic critic trace content for one worker intent.
+
+    Args:
+        intent: Source trade intent.
+
+    Returns:
+        Critic trace content.
+    """
+
+    return {
+        "decision_id": str(intent.decision_id),
+        "reviewed_action": intent.action,
+        "evidence_count": len(intent.evidence),
+        "invalidation_conditions": intent.invalidation_conditions,
+        "risk_challenges": [
+            "Does the evidence support the requested target weight?",
+            "Can independent risk review resize or reject this intent?",
+        ],
+    }

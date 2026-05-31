@@ -373,6 +373,10 @@ def test_agent_traceability_schemas_validate_known_roles() -> None:
 
     assert trace.agent_run.decision_id == decision.decision_id
     assert trace.messages[0].role == "assistant"
+    assert (
+        AgentMessage.model_validate(message.model_dump() | {"role": "critic"}).role
+        == "critic"
+    )
 
     with pytest.raises(ValidationError):
         AgentMessage.model_validate(message.model_dump() | {"role": "tool"})

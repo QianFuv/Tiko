@@ -580,6 +580,7 @@ def test_agent_worker_runs_rule_based_inference_jobs() -> None:
         "system",
         "observation",
         "assistant",
+        "critic",
     ]
     assert all(
         message["agent_run_id"] == agent_run["agent_run_id"]
@@ -593,6 +594,12 @@ def test_agent_worker_runs_rule_based_inference_jobs() -> None:
     assistant_message = agent_messages[2]
     assert isinstance(assistant_message, dict)
     assert assistant_message["content"]["decision_id"] == intent["decision_id"]
+    critic_message = agent_messages[3]
+    assert isinstance(critic_message, dict)
+    assert critic_message["content"]["decision_id"] == intent["decision_id"]
+    assert critic_message["content"]["invalidation_conditions"] == [
+        "price_direction_reverses"
+    ]
 
 
 def test_agent_worker_fails_unsupported_agent_types() -> None:

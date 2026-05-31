@@ -807,6 +807,7 @@ def test_agent_routes_evaluate_rule_based_agent() -> None:
         "system",
         "observation",
         "assistant",
+        "critic",
     ]
     assert (
         client.post(

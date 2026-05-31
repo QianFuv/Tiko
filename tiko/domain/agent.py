@@ -12,7 +12,7 @@ from tiko.domain.order import Fill, SimOrder
 from tiko.domain.risk import RiskReview
 
 AgentRunStatus = Literal["completed", "failed", "replayed"]
-AgentMessageRole = Literal["system", "observation", "assistant", "risk"]
+AgentMessageRole = Literal["system", "observation", "assistant", "critic", "risk"]
 
 
 class AgentRun(DomainModel):

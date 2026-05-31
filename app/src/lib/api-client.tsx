@@ -52,6 +52,7 @@ const DEMO_REVIEW_ID = "00000000-0000-4000-8000-000000000401";
 const DEMO_AGENT_RUN_ID = "00000000-0000-4000-8000-000000000501";
 const DEMO_OBSERVATION_MESSAGE_ID = "00000000-0000-4000-8000-000000000601";
 const DEMO_ASSISTANT_MESSAGE_ID = "00000000-0000-4000-8000-000000000602";
+const DEMO_CRITIC_MESSAGE_ID = "00000000-0000-4000-8000-000000000603";
 const DEMO_DECISION_REVIEW_ID = "00000000-0000-4000-8000-000000000701";
 const DEMO_MEMORY_ID = "00000000-0000-4000-8000-000000000801";
 const DEMO_DATASET_ID = "00000000-0000-4000-8000-000000000901";
@@ -1687,6 +1688,22 @@ function buildDemoAgentMessages(agentRunId: string): AgentMessage[] {
         action: "open_long",
         thesis:
           "Momentum remains positive while confidence and data quality satisfy policy gates.",
+      },
+      created_at_sim_time: DEMO_TIME,
+    },
+    {
+      message_id: DEMO_CRITIC_MESSAGE_ID,
+      agent_run_id: agentRunId,
+      role: "critic",
+      content: {
+        decision_id: DEMO_DECISION_ID,
+        reviewed_action: "open_long",
+        evidence_count: 2,
+        invalidation_conditions: ["momentum_fails"],
+        risk_challenges: [
+          "Does the evidence support the requested target weight?",
+          "Can independent risk review resize or reject this intent?",
+        ],
       },
       created_at_sim_time: DEMO_TIME,
     },

@@ -2500,11 +2500,16 @@ class SimulationService:
             (
                 "assistant",
                 {
+                    "decision_id": str(decision.decision_id),
                     "action": decision.action,
                     "confidence": decision.confidence,
                     "thesis": decision.thesis,
                     "evidence": decision.evidence,
                 },
+            ),
+            (
+                "critic",
+                self._build_critic_message_content(decision),
             ),
         ]
         return [
@@ -2520,3 +2525,24 @@ class SimulationService:
             )
             for index, (role, content) in enumerate(message_specs)
         ]
+
+    def _build_critic_message_content(self, decision: TradeIntent) -> dict[str, object]:
+        """Build deterministic critic trace content for one decision.
+
+        Args:
+            decision: Source trade intent.
+
+        Returns:
+            Critic trace content.
+        """
+
+        return {
+            "decision_id": str(decision.decision_id),
+            "reviewed_action": decision.action,
+            "evidence_count": len(decision.evidence),
+            "invalidation_conditions": decision.invalidation_conditions,
+            "risk_challenges": [
+                "Does the evidence support the requested target weight?",
+                "Can independent risk review resize or reject this intent?",
+            ],
+        }

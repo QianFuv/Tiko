@@ -163,7 +163,7 @@ export type AgentRun = {
 export type AgentMessage = {
   message_id: string;
   agent_run_id: string;
-  role: "system" | "observation" | "assistant" | "risk";
+  role: "system" | "observation" | "assistant" | "critic" | "risk";
   content: Record<string, unknown>;
   created_at_sim_time: string;
 };
