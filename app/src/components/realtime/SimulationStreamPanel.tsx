@@ -14,12 +14,7 @@ import {
   type SimulationStreamTopic,
 } from "@/lib/websocket";
 
-type StreamConnectionStatus =
-  | "connecting"
-  | "open"
-  | "complete"
-  | "closed"
-  | "unavailable";
+type StreamConnectionStatus = "connecting" | "open" | "closed" | "unavailable";
 
 type IncomingStreamEvent = SimulationStreamEvent & {
   type: "event";
@@ -73,7 +68,11 @@ export function SimulationStreamPanel({
       setConnectionStatus("open");
       setErrorMessage(null);
       setCompletedAt(null);
-      websocket.send(JSON.stringify(buildSimulationSubscription()));
+      websocket.send(
+        JSON.stringify(
+          buildSimulationSubscription(SIMULATION_STREAM_TOPICS, true),
+        ),
+      );
     });
 
     websocket.addEventListener("message", (event: MessageEvent<unknown>) => {
@@ -91,7 +90,6 @@ export function SimulationStreamPanel({
         return;
       }
       if (isReplayCompleteMessage(message)) {
-        setConnectionStatus("complete");
         setCompletedAt(new Date().toISOString());
       }
     });
@@ -108,9 +106,7 @@ export function SimulationStreamPanel({
       if (!isActive) {
         return;
       }
-      setConnectionStatus((currentStatus) =>
-        currentStatus === "complete" ? currentStatus : "closed",
-      );
+      setConnectionStatus("closed");
     });
 
     return () => {
@@ -141,7 +137,7 @@ export function SimulationStreamPanel({
           />
           <StreamStat
             label="Replay"
-            value={completedAt ? formatDateTime(completedAt) : "Running"}
+            value={completedAt ? formatDateTime(completedAt) : "Recovering"}
           />
         </div>
 
@@ -309,9 +305,6 @@ function formatConnectionStatus(status: StreamConnectionStatus): string {
   if (status === "open") {
     return "Open";
   }
-  if (status === "complete") {
-    return "Complete";
-  }
   if (status === "closed") {
     return "Closed";
   }
@@ -328,7 +321,7 @@ function formatConnectionStatus(status: StreamConnectionStatus): string {
  * @returns CSS class list.
  */
 function connectionStatusClass(status: StreamConnectionStatus): string {
-  if (status === "open" || status === "complete") {
+  if (status === "open") {
     return "border-[#9bc5ae] bg-[#f4fbf6] text-[#173f2a]";
   }
   if (status === "unavailable") {

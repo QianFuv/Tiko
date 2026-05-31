@@ -20,6 +20,7 @@ export type SimulationStreamTopic = (typeof SIMULATION_STREAM_TOPICS)[number];
 export type SimulationSubscriptionPayload = {
   type: "subscribe";
   topics: SimulationStreamTopic[];
+  live?: boolean;
 };
 
 export type SimulationStreamEvent = {
@@ -59,15 +60,21 @@ export function buildSimulationWebSocketUrl(
  * Build the standard simulation stream subscription payload.
  *
  * @param topics - Optional topics to subscribe to.
+ * @param live - Whether the backend should keep streaming live fanout events.
  * @returns Subscription payload.
  */
 export function buildSimulationSubscription(
   topics: readonly SimulationStreamTopic[] = SIMULATION_STREAM_TOPICS,
+  live = false,
 ): SimulationSubscriptionPayload {
-  return {
+  const payload: SimulationSubscriptionPayload = {
     type: "subscribe",
     topics: [...topics],
   };
+  if (live) {
+    payload.live = true;
+  }
+  return payload;
 }
 
 /**
