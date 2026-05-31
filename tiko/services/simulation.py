@@ -142,6 +142,8 @@ class SimulationService:
             Simulation runs in insertion order.
         """
 
+        if self._repository is not None:
+            return self._repository.list_runs()
         return [state.run for state in self._states.values()]
 
     def get_risk_limits(self, run_id: UUID) -> RiskLimits:
@@ -157,7 +159,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        return self._states[run_id].risk_limits
+        return self._get_state(run_id).risk_limits
 
     def update_risk_limits(
         self,
@@ -183,7 +185,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        state = self._states[run_id]
+        state = self._get_state(run_id)
         limits = RiskLimits(
             run_id=run_id,
             minimum_confidence=minimum_confidence,
@@ -231,6 +233,80 @@ class SimulationService:
             max_order_notional=limits.max_order_notional,
         )
 
+    def _get_state(self, run_id: UUID) -> SimulationState:
+        """Return process-local state, hydrating persisted artifacts if needed.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Simulation state for the run.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        state = self._states.get(run_id)
+        if state is not None:
+            return state
+        if self._repository is None:
+            raise KeyError(run_id)
+
+        run = self._repository.get_run(run_id)
+        if run is None:
+            raise KeyError(run_id)
+        agent_runs = self._repository.list_agent_runs(run_id)
+        agent_messages = [
+            message
+            for agent_run in agent_runs
+            for message in self._repository.list_agent_messages(agent_run.agent_run_id)
+        ]
+        decisions = self._repository.list_decisions(run_id)
+        candles = self._repository.list_candles(run_id)
+        hydrated_state = SimulationState(
+            run=run,
+            risk_limits=self._build_default_risk_limits(run_id),
+            step_index=len(candles),
+            candles=candles,
+            orderbook_snapshots=self._repository.list_orderbook_snapshots(run_id),
+            feature_snapshots=self._repository.list_feature_snapshots(run_id),
+            events=self._repository.list_market_events(run_id),
+            observations=self._repository.list_observation_snapshots(run_id),
+            agent_runs=agent_runs,
+            agent_messages=agent_messages,
+            decisions=decisions,
+            decision_reviews=[
+                review
+                for decision in decisions
+                for review in self._repository.list_decision_reviews(
+                    decision.decision_id
+                )
+            ],
+            memory_entries=self._repository.list_memory_entries(run_id),
+            reports=self._repository.list_reports(run_id),
+            alerts=self._repository.list_alerts(run_id),
+            risk_reviews=self._repository.list_risk_reviews(run_id),
+            orders=self._repository.list_orders(run_id),
+            fills=self._repository.list_fills(run_id),
+            positions=self._repository.list_positions(run_id),
+            ledger_entries=self._repository.list_ledger_entries(run_id),
+            portfolio_snapshots=self._repository.list_portfolio_snapshots(run_id),
+            metric_snapshots=self._repository.list_metric_snapshots(run_id),
+        )
+        self._states[run_id] = hydrated_state
+        return hydrated_state
+
+    def _list_states(self) -> list[SimulationState]:
+        """List process-local or hydrated states in run creation order.
+
+        Returns:
+            Simulation states.
+        """
+
+        if self._repository is None:
+            return list(self._states.values())
+        return [self._get_state(run.run_id) for run in self._repository.list_runs()]
+
     def get_run(self, run_id: UUID) -> SimulationRun:
         """Get one simulation run by ID.
 
@@ -244,7 +320,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        return self._states[run_id].run
+        return self._get_state(run_id).run
 
     def update_run_status(
         self,
@@ -264,7 +340,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        state = self._states[run_id]
+        state = self._get_state(run_id)
         account_status = {
             "created": "active",
             "running": "active",
@@ -301,7 +377,7 @@ class SimulationService:
 
         if speed_multiplier <= Decimal("0"):
             raise ValueError("Simulation speed multiplier must be positive.")
-        state = self._states[run_id]
+        state = self._get_state(run_id)
         updated_run = state.run.model_copy(
             update={"speed_multiplier": speed_multiplier}
         )
@@ -321,7 +397,7 @@ class SimulationService:
             Step result with generated decision, risk, order, and fill artifacts.
         """
 
-        state = self._states[run_id]
+        state = self._get_state(run_id)
         try:
             candle = self._next_candle(state)
         except MarketReplayExhausted:
@@ -527,7 +603,9 @@ class SimulationService:
             Simulated orders.
         """
 
-        return [order for state in self._states.values() for order in state.orders]
+        if self._repository is not None:
+            return self._repository.list_orders()
+        return [order for state in self._list_states() for order in state.orders]
 
     def get_order(self, order_id: UUID) -> SimOrder:
         """Get one simulated order by ID.
@@ -554,7 +632,9 @@ class SimulationService:
             Simulated fills.
         """
 
-        return [fill for state in self._states.values() for fill in state.fills]
+        if self._repository is not None:
+            return self._repository.list_fills()
+        return [fill for state in self._list_states() for fill in state.fills]
 
     def get_fill(self, fill_id: UUID) -> Fill:
         """Get one simulated fill by ID.
@@ -581,8 +661,10 @@ class SimulationService:
             Structured trade intents.
         """
 
+        if self._repository is not None:
+            return self._repository.list_decisions()
         return [
-            decision for state in self._states.values() for decision in state.decisions
+            decision for state in self._list_states() for decision in state.decisions
         ]
 
     def get_decision(self, decision_id: UUID) -> TradeIntent:
@@ -609,15 +691,13 @@ class SimulationService:
         """
 
         stored_runs = [
-            agent_run
-            for state in self._states.values()
-            for agent_run in state.agent_runs
+            agent_run for state in self._list_states() for agent_run in state.agent_runs
         ]
         if stored_runs:
             return stored_runs
         return [
             self._build_agent_run(decision)
-            for state in self._states.values()
+            for state in self._list_states()
             for decision in state.decisions
         ]
 
@@ -652,7 +732,11 @@ class SimulationService:
             KeyError: If no agent run exists for the ID.
         """
 
-        for state in self._states.values():
+        if self._repository is not None:
+            messages = self._repository.list_agent_messages(agent_run_id)
+            if messages:
+                return messages
+        for state in self._list_states():
             messages = [
                 message
                 for message in state.agent_messages
@@ -794,7 +878,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        return list(self._states[run_id].events)
+        return list(self._get_state(run_id).events)
 
     def list_all_events(self) -> list[MarketEvent]:
         """List market events across all simulation runs.
@@ -803,7 +887,7 @@ class SimulationService:
             Market events across runs.
         """
 
-        return [event for state in self._states.values() for event in state.events]
+        return [event for state in self._list_states() for event in state.events]
 
     def list_candles(self, run_id: UUID) -> list[Candle]:
         """List candles observed by a simulation run.
@@ -818,7 +902,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        return list(self._states[run_id].candles)
+        return list(self._get_state(run_id).candles)
 
     def list_orderbook_snapshots(self, run_id: UUID) -> list[OrderBookSnapshot]:
         """List order book snapshots observed by a simulation run.
@@ -833,7 +917,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        return list(self._states[run_id].orderbook_snapshots)
+        return list(self._get_state(run_id).orderbook_snapshots)
 
     def list_feature_snapshots(self, run_id: UUID) -> list[FeatureSnapshot]:
         """List feature snapshots generated for a simulation run.
@@ -848,7 +932,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        return list(self._states[run_id].feature_snapshots)
+        return list(self._get_state(run_id).feature_snapshots)
 
     def inject_market_event(
         self,
@@ -887,7 +971,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        state = self._states[run_id]
+        state = self._get_state(run_id)
         event = MarketEvent(
             event_id=uuid4(),
             type=type_,
@@ -899,6 +983,8 @@ class SimulationService:
         )
         self._event_bus.publish(event)
         state.events.append(event)
+        if self._repository is not None:
+            self._repository.save_market_event(run_id, event)
         return event
 
     def build_observation(self, run_id: UUID, symbol: str) -> Observation:
@@ -915,7 +1001,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        state = self._states[run_id]
+        state = self._get_state(run_id)
         return self._observation_builder.build(
             run=state.run,
             symbol=symbol,
@@ -937,7 +1023,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        return list(self._states[run_id].observations)
+        return list(self._get_state(run_id).observations)
 
     def get_latest_risk_review(self, run_id: UUID) -> RiskReview | None:
         """Return the latest risk review for a run.
@@ -949,7 +1035,7 @@ class SimulationService:
             Latest risk review or `None`.
         """
 
-        reviews = self._states[run_id].risk_reviews
+        reviews = self._get_state(run_id).risk_reviews
         return reviews[-1] if reviews else None
 
     def list_risk_reviews(self, run_id: UUID) -> list[RiskReview]:
@@ -965,7 +1051,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        return list(self._states[run_id].risk_reviews)
+        return list(self._get_state(run_id).risk_reviews)
 
     def list_positions(self, run_id: UUID) -> list[Position]:
         """Derive current simulated positions from fills.
@@ -980,7 +1066,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        state = self._states[run_id]
+        state = self._get_state(run_id)
         if state.positions or not state.fills:
             return list(state.positions)
         state.positions = self._derive_positions(state)
@@ -999,7 +1085,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        return list(self._states[run_id].ledger_entries)
+        return list(self._get_state(run_id).ledger_entries)
 
     def list_portfolio_snapshots(self, run_id: UUID) -> list[PortfolioSnapshot]:
         """List portfolio snapshots for a run.
@@ -1014,7 +1100,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        return list(self._states[run_id].portfolio_snapshots)
+        return list(self._get_state(run_id).portfolio_snapshots)
 
     def list_metric_snapshots(self, run_id: UUID) -> list[MetricSnapshot]:
         """List metric snapshots for a run.
@@ -1029,7 +1115,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        return list(self._states[run_id].metric_snapshots)
+        return list(self._get_state(run_id).metric_snapshots)
 
     def _derive_positions(self, state: SimulationState) -> list[Position]:
         """Derive net simulated positions from state fills.
@@ -1290,7 +1376,7 @@ class SimulationService:
             ValueError: If the related decision is outside the run.
         """
 
-        state = self._states[run_id]
+        state = self._get_state(run_id)
         if decision_id is not None and not any(
             decision.decision_id == decision_id for decision in state.decisions
         ):
@@ -1325,7 +1411,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        return list(self._states[run_id].memory_entries)
+        return list(self._get_state(run_id).memory_entries)
 
     def create_simulation_report(self, run_id: UUID) -> ReportArtifact:
         """Create a structured simulation report from current run state.
@@ -1340,7 +1426,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        state = self._states[run_id]
+        state = self._get_state(run_id)
         run = state.run
         report = ReportArtifact(
             report_id=uuid4(),
@@ -1444,7 +1530,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        return list(self._states[run_id].reports)
+        return list(self._get_state(run_id).reports)
 
     def list_decision_reports(self, decision_id: UUID) -> list[ReportArtifact]:
         """List decision reports for one decision.
@@ -1484,7 +1570,11 @@ class SimulationService:
             KeyError: If no report exists for the ID.
         """
 
-        for state in self._states.values():
+        if self._repository is not None:
+            report = self._repository.get_report(report_id)
+            if report is not None:
+                return report
+        for state in self._list_states():
             for report in state.reports:
                 if report.report_id == report_id:
                     return report
@@ -1512,7 +1602,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        state = self._states[run_id]
+        state = self._get_state(run_id)
         alert = Alert(
             alert_id=uuid4(),
             run_id=run_id,
@@ -1541,7 +1631,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        return list(self._states[run_id].alerts)
+        return list(self._get_state(run_id).alerts)
 
     def update_alert_status(
         self, run_id: UUID, alert_id: UUID, status: AlertStatus
@@ -1560,7 +1650,7 @@ class SimulationService:
             KeyError: If no run or alert exists for the ID.
         """
 
-        state = self._states[run_id]
+        state = self._get_state(run_id)
         for index, alert in enumerate(state.alerts):
             if alert.alert_id == alert_id:
                 updated_alert = alert.model_copy(update={"status": status})
@@ -1583,7 +1673,7 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        state = self._states[run_id]
+        state = self._get_state(run_id)
         return build_run_benchmark(
             run=state.run,
             decisions=state.decisions,
@@ -1627,7 +1717,11 @@ class SimulationService:
             KeyError: If no decision exists for the ID.
         """
 
-        for state in self._states.values():
+        if self._repository is not None:
+            for decision in self._repository.list_decisions():
+                if decision.decision_id == decision_id:
+                    return self._get_state(decision.run_id), decision
+        for state in self._list_states():
             for decision in state.decisions:
                 if decision.decision_id == decision_id:
                     return state, decision

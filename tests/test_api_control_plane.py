@@ -666,6 +666,87 @@ def test_simulation_websocket_returns_event_snapshot() -> None:
     assert len(payload["events"]) == 1
 
 
+def test_configured_database_persists_api_state_after_cache_reset(
+    tmp_path, monkeypatch
+) -> None:
+    """Verify configured API persistence survives service cache reset."""
+
+    database_path = tmp_path / "api.sqlite"
+    monkeypatch.setenv(
+        "TIKO_DATABASE_URL",
+        f"sqlite+pysqlite:///{database_path.as_posix()}",
+    )
+    client = create_test_client()
+    run_id = client.post(
+        "/api/simulations",
+        json={"name": "persistent-api", "symbols": ["BTCUSDT"]},
+        headers=OPERATOR_HEADERS,
+    ).json()["run_id"]
+    client.post(
+        f"/api/simulations/{run_id}/step",
+        json={"confidence": 0.7},
+        headers=OPERATOR_HEADERS,
+    )
+    client.post(
+        "/api/market/events/inject",
+        json={
+            "run_id": run_id,
+            "type": "news_event",
+            "symbol": "BTCUSDT",
+            "payload": {"headline": "Synthetic restart event."},
+            "source": "manual",
+        },
+        headers=OPERATOR_HEADERS,
+    )
+    model_id = client.post(
+        "/api/models",
+        json={
+            "name": "persistent-rl",
+            "version": "0.1.0",
+            "model_type": "rl",
+            "algorithm": "discrete_policy",
+            "training_dataset_id": "00000000-0000-4000-8000-000000000901",
+            "validation_dataset_id": "00000000-0000-4000-8000-000000000902",
+            "metrics": {"reward": "0.12"},
+            "artifact_uri": "memory://persistent-rl",
+            "status": "draft",
+        },
+        headers=RESEARCHER_HEADERS,
+    ).json()["model_id"]
+    plugin_id = client.post(
+        "/api/plugins",
+        json={
+            "name": "persistent_synthetic_event_generator",
+            "version": "0.1.0",
+            "plugin_type": "event_generation",
+            "description": "Generate synthetic events for persisted API tests.",
+            "permissions": {"write_market_events": True},
+            "inputs": ["run_id", "symbols"],
+            "output_schema": "MarketEvent",
+            "tests": ["test_schema_valid"],
+        },
+        headers=RESEARCHER_HEADERS,
+    ).json()["plugin_id"]
+
+    reset_simulation_service()
+    persisted_client = TestClient(create_app())
+    try:
+        assert persisted_client.get("/api/simulations").json()[0]["run_id"] == run_id
+        assert len(persisted_client.get("/api/decisions").json()) == 1
+        assert len(persisted_client.get("/api/orders").json()) == 1
+        assert len(persisted_client.get("/api/fills").json()) == 1
+        assert len(persisted_client.get(f"/api/risk/{run_id}/reviews").json()) == 1
+        assert len(persisted_client.get("/api/market/events").json()) == 2
+        assert persisted_client.get(f"/api/models/{model_id}").json()["name"] == (
+            "persistent-rl"
+        )
+        assert persisted_client.get(f"/api/plugins/{plugin_id}").json()["status"] == (
+            "validated"
+        )
+    finally:
+        reset_simulation_service()
+
+
 def test_run_specific_routes_return_404_for_unknown_run() -> None:
     """Verify run-specific routes return clear not-found responses."""
 

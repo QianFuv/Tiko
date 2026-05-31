@@ -74,6 +74,8 @@ class ModelRegistryService:
             Model registry entries.
         """
 
+        if self._repository is not None:
+            return self._repository.list_model_registry_entries()
         return sorted(self._entries.values(), key=lambda entry: entry.created_at)
 
     def get_model(self, model_id: UUID) -> ModelRegistryEntry:
@@ -89,6 +91,11 @@ class ModelRegistryService:
             KeyError: If no model exists for the ID.
         """
 
+        if self._repository is not None:
+            entry = self._repository.get_model_registry_entry(model_id)
+            if entry is None:
+                raise KeyError(model_id)
+            return entry
         return self._entries[model_id]
 
     def update_status(self, model_id: UUID, status: ModelStatus) -> ModelRegistryEntry:
@@ -105,7 +112,7 @@ class ModelRegistryService:
             KeyError: If no model exists for the ID.
         """
 
-        entry = self._entries[model_id].model_copy(update={"status": status})
+        entry = self.get_model(model_id).model_copy(update={"status": status})
         self._entries[model_id] = entry
         if self._repository is not None:
             self._repository.save_model_registry_entry(entry)

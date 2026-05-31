@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     safety_mode: str = "simulation_only"
     allow_private_exchange_methods: bool = False
     allow_trading_credentials: bool = False
+    database_url: str | None = None
     default_base_currency: str = "USDT"
     default_initial_equity: int = Field(default=100_000, ge=1)
     minimum_trade_confidence: float = Field(default=0.55, ge=0.0, le=1.0)

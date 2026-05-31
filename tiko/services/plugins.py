@@ -56,6 +56,8 @@ class PluginRegistryService:
             Plugin registry entries.
         """
 
+        if self._repository is not None:
+            return self._repository.list_plugin_registry_entries()
         return sorted(self._entries.values(), key=lambda entry: entry.created_at)
 
     def get_plugin(self, plugin_id: UUID) -> PluginRegistryEntry:
@@ -71,6 +73,11 @@ class PluginRegistryService:
             KeyError: If no plugin exists for the ID.
         """
 
+        if self._repository is not None:
+            entry = self._repository.get_plugin_registry_entry(plugin_id)
+            if entry is None:
+                raise KeyError(plugin_id)
+            return entry
         return self._entries[plugin_id]
 
     def update_status(
@@ -89,7 +96,7 @@ class PluginRegistryService:
             KeyError: If no plugin exists for the ID.
         """
 
-        entry = self._entries[plugin_id].model_copy(update={"status": status})
+        entry = self.get_plugin(plugin_id).model_copy(update={"status": status})
         self._entries[plugin_id] = entry
         if self._repository is not None:
             self._repository.save_plugin_registry_entry(entry)

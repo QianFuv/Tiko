@@ -650,6 +650,18 @@ class SimulationRepository:
             ).all()
             return [self._to_market_event(record) for record in records]
 
+    def save_market_event(self, run_id: UUID, event: MarketEvent) -> None:
+        """Persist one market event for a simulation run.
+
+        Args:
+            run_id: Simulation run identifier.
+            event: Market event to persist.
+        """
+
+        with self._session_factory() as session:
+            self._merge_market_event(session, run_id, event)
+            session.commit()
+
     def list_observation_snapshots(self, run_id: UUID) -> list[Observation]:
         """List observation snapshots persisted for a simulation run.
 
@@ -849,6 +861,24 @@ class SimulationRepository:
             if record is None:
                 return None
             return self._to_risk_review(record)
+
+    def list_risk_reviews(self, run_id: UUID) -> list[RiskReview]:
+        """List persisted risk reviews for a simulation run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Risk reviews ordered by simulated creation time.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(RiskReviewRecord)
+                .where(RiskReviewRecord.run_id == str(run_id))
+                .order_by(RiskReviewRecord.created_at_sim_time)
+            ).all()
+            return [self._to_risk_review(record) for record in records]
 
     def save_decision_review(self, review: DecisionReview) -> None:
         """Persist a posterior decision review.

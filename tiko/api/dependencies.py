@@ -5,9 +5,16 @@ from functools import lru_cache
 from typing import Annotated, cast
 
 from fastapi import Depends, Header, HTTPException
+from sqlalchemy import Engine
 
 from tiko.core.auth import has_permission
 from tiko.core.config import get_settings
+from tiko.db import (
+    SimulationRepository,
+    create_all_tables,
+    create_database_engine,
+    create_session_factory,
+)
 from tiko.domain.security import Permission, Principal, Role
 from tiko.services import (
     AuditService,
@@ -21,14 +28,44 @@ from tiko.services import (
 
 
 @lru_cache
+def get_database_engine() -> Engine | None:
+    """Return the configured database engine when persistence is enabled.
+
+    Returns:
+        SQLAlchemy engine or `None` when no database URL is configured.
+    """
+
+    settings = get_settings()
+    if settings.database_url is None:
+        return None
+    engine = create_database_engine(settings.database_url)
+    create_all_tables(engine)
+    return engine
+
+
+@lru_cache
+def get_persistence_repository() -> SimulationRepository | None:
+    """Return the shared persistence repository when configured.
+
+    Returns:
+        SQLAlchemy repository or `None` for process-local mode.
+    """
+
+    engine = get_database_engine()
+    if engine is None:
+        return None
+    return SimulationRepository(create_session_factory(engine))
+
+
+@lru_cache
 def get_simulation_service() -> SimulationService:
     """Return the process-local simulation service singleton.
 
     Returns:
-        In-memory simulation service.
+        Simulation service.
     """
 
-    return SimulationService(get_settings())
+    return SimulationService(get_settings(), repository=get_persistence_repository())
 
 
 @lru_cache
@@ -36,10 +73,10 @@ def get_model_registry_service() -> ModelRegistryService:
     """Return the process-local model registry service singleton.
 
     Returns:
-        In-memory model registry service.
+        Model registry service.
     """
 
-    return ModelRegistryService()
+    return ModelRegistryService(repository=get_persistence_repository())
 
 
 @lru_cache
@@ -47,10 +84,10 @@ def get_plugin_registry_service() -> PluginRegistryService:
     """Return the process-local plugin registry service singleton.
 
     Returns:
-        In-memory plugin registry service.
+        Plugin registry service.
     """
 
-    return PluginRegistryService()
+    return PluginRegistryService(repository=get_persistence_repository())
 
 
 @lru_cache
@@ -58,10 +95,10 @@ def get_audit_service() -> AuditService:
     """Return the process-local audit service singleton.
 
     Returns:
-        In-memory audit service.
+        Audit service.
     """
 
-    return AuditService()
+    return AuditService(repository=get_persistence_repository())
 
 
 @lru_cache
@@ -69,10 +106,10 @@ def get_dataset_service() -> DatasetService:
     """Return the process-local dataset service singleton.
 
     Returns:
-        In-memory dataset service.
+        Dataset service.
     """
 
-    return DatasetService()
+    return DatasetService(repository=get_persistence_repository())
 
 
 @lru_cache
@@ -80,10 +117,10 @@ def get_experiment_service() -> ExperimentService:
     """Return the process-local experiment service singleton.
 
     Returns:
-        In-memory experiment service.
+        Experiment service.
     """
 
-    return ExperimentService()
+    return ExperimentService(repository=get_persistence_repository())
 
 
 @lru_cache
@@ -157,6 +194,7 @@ def require_permission(
 def reset_simulation_service() -> None:
     """Clear the cached simulation service for tests."""
 
+    engine = get_database_engine()
     get_simulation_service.cache_clear()
     get_model_registry_service.cache_clear()
     get_plugin_registry_service.cache_clear()
@@ -164,3 +202,8 @@ def reset_simulation_service() -> None:
     get_dataset_service.cache_clear()
     get_experiment_service.cache_clear()
     get_runtime_service.cache_clear()
+    get_persistence_repository.cache_clear()
+    get_database_engine.cache_clear()
+    get_settings.cache_clear()
+    if engine is not None:
+        engine.dispose()

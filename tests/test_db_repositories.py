@@ -20,7 +20,7 @@ from tiko.db import (
 from tiko.domain.dataset import DatasetQualityIssue, DatasetQualityReport, DatasetRecord
 from tiko.domain.decision import DecisionReview
 from tiko.domain.experiment import ExperimentRecord
-from tiko.domain.market import Asset, Candle
+from tiko.domain.market import Asset, Candle, MarketEvent
 from tiko.domain.memory import MemoryEntry
 from tiko.domain.model import ModelRegistryEntry
 from tiko.domain.plugin import PluginManifest, PluginPermissions, PluginRegistryEntry
@@ -32,6 +32,8 @@ from tiko.services import (
     AuditService,
     DatasetService,
     ExperimentService,
+    ModelRegistryService,
+    PluginRegistryService,
     SimulationService,
 )
 
@@ -337,6 +339,33 @@ def test_repository_persists_control_plane_registry(
     assert repository.list_simulation_definitions() == [definition]
 
 
+def test_repository_persists_manual_market_events(
+    repository: SimulationRepository,
+) -> None:
+    """Verify manually injected market events persist independently."""
+
+    service = SimulationService(Settings())
+    run = service.create_run(
+        name="manual-event",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    event = MarketEvent(
+        event_id=uuid4(),
+        type="news_event",
+        symbol="BTCUSDT",
+        simulated_time=run.current_sim_time,
+        payload={"headline": "Synthetic market shock."},
+        source="manual",
+        confidence=0.9,
+    )
+    repository.save_run(run)
+
+    repository.save_market_event(run.run_id, event)
+
+    assert repository.list_market_events(run.run_id) == [event]
+
+
 def test_repository_persists_assets(repository: SimulationRepository) -> None:
     """Verify asset metadata round-trips through the repository."""
 
@@ -495,6 +524,7 @@ def test_repository_persists_successful_step_artifacts(
         result.agent_messages
     )
     assert repository.list_decisions(run.run_id) == [result.decision]
+    assert repository.list_risk_reviews(run.run_id) == [result.risk_review]
     assert repository.get_latest_risk_review(run.run_id) == result.risk_review
     assert repository.list_orders(run.run_id) == [result.order]
     assert repository.list_fills(run.run_id) == [result.fill]
@@ -576,6 +606,32 @@ def test_repository_persists_model_registry_entries(
     assert repository.list_model_registry_entries() == [entry]
 
 
+def test_model_registry_service_reads_through_repository(
+    repository: SimulationRepository,
+) -> None:
+    """Verify repository-backed model service reads persisted entries."""
+
+    service = ModelRegistryService(repository)
+    entry = service.register_model(
+        name="baseline-rl",
+        version="0.1.0",
+        model_type="rl",
+        algorithm="discrete_policy",
+        training_dataset_id=uuid4(),
+        validation_dataset_id=uuid4(),
+        metrics={"reward": "0.12"},
+        artifact_uri="memory://baseline-rl",
+        status="draft",
+    )
+    persisted_service = ModelRegistryService(repository)
+
+    assert persisted_service.list_models() == [entry]
+    assert persisted_service.get_model(entry.model_id) == entry
+    promoted = persisted_service.promote_model(entry.model_id)
+    assert promoted.status == "paper_enabled"
+    assert ModelRegistryService(repository).get_model(entry.model_id) == promoted
+
+
 def test_repository_persists_plugin_registry_entries(
     repository: SimulationRepository,
 ) -> None:
@@ -603,6 +659,32 @@ def test_repository_persists_plugin_registry_entries(
 
     assert repository.get_plugin_registry_entry(entry.plugin_id) == entry
     assert repository.list_plugin_registry_entries() == [entry]
+
+
+def test_plugin_registry_service_reads_through_repository(
+    repository: SimulationRepository,
+) -> None:
+    """Verify repository-backed plugin service reads persisted entries."""
+
+    service = PluginRegistryService(repository)
+    manifest = PluginManifest(
+        name="synthetic_liquidity_shock_generator",
+        version="0.1.0",
+        plugin_type="event_generation",
+        description="Generate synthetic liquidity shocks for simulations.",
+        permissions=PluginPermissions(write_market_events=True),
+        inputs=["run_id", "symbols"],
+        output_schema="MarketEvent",
+        tests=["test_schema_valid"],
+    )
+    entry = service.register_plugin(manifest)
+    persisted_service = PluginRegistryService(repository)
+
+    assert persisted_service.list_plugins() == [entry]
+    assert persisted_service.get_plugin(entry.plugin_id) == entry
+    enabled = persisted_service.update_status(entry.plugin_id, "enabled")
+    assert enabled.status == "enabled"
+    assert PluginRegistryService(repository).get_plugin(entry.plugin_id) == enabled
 
 
 def test_repository_persists_reports_and_alerts(
