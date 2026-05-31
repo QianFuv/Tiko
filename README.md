@@ -1,5 +1,10 @@
 # Tiko
 
+> **T**eam **I**nsights, **K**inetic **O**utputs.
+>
+> We pool data and intelligence (Team Insights) to drive powerful, real-time
+> simulation results (Kinetic Outputs), all within a zero-risk sandbox.
+
 Tiko is a cryptocurrency simulation trading agent platform built with a FastAPI
 backend, a Python simulation runtime, and a Next.js frontend.
 
