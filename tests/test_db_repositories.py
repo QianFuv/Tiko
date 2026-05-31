@@ -658,7 +658,12 @@ def test_repository_persists_successful_step_artifacts(
     assert repository.list_agent_messages(result.agent_run.agent_run_id) == list(
         result.agent_messages
     )
-    assert repository.list_decisions(run.run_id) == [result.decision]
+    persisted_decision = repository.list_decisions(run.run_id)[0]
+    assert persisted_decision == result.decision
+    assert persisted_decision.observation_id == result.observation.observation_id
+    assert persisted_decision.agent_run_id == result.agent_run.agent_run_id
+    assert persisted_decision.input_data_as_of == result.observation.as_of
+    assert persisted_decision.status == "converted_to_order"
     assert repository.list_risk_reviews(run.run_id) == [result.risk_review]
     assert repository.get_latest_risk_review(run.run_id) == result.risk_review
     assert repository.list_orders(run.run_id) == [result.order]

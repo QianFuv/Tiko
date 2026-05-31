@@ -276,6 +276,10 @@ def test_simulation_step_creates_internal_order_and_fill() -> None:
     assert result.observation.positions == []
     assert result.observation.risk_limits == service.get_risk_limits(run.run_id)
     assert result.agent_run.decision_id == result.decision.decision_id
+    assert result.decision.observation_id == result.observation.observation_id
+    assert result.decision.agent_run_id == result.agent_run.agent_run_id
+    assert result.decision.input_data_as_of == result.observation.as_of
+    assert result.decision.status == "converted_to_order"
     assert result.agent_messages[0].role == "system"
     assert result.agent_messages[1].role == "observation"
     assert [
@@ -642,6 +646,7 @@ def test_low_confidence_intent_is_rejected_without_order() -> None:
     result = service.step_run(run.run_id, confidence=0.2)
 
     assert result.risk_review.status == "rejected"
+    assert result.decision.status == "rejected"
     assert result.observation.symbol == "BTCUSDT"
     assert result.agent_run.decision_id == result.decision.decision_id
     assert result.agent_messages[0].role == "system"
@@ -758,6 +763,7 @@ def test_daily_loss_circuit_blocks_after_prior_simulated_loss() -> None:
     assert first_result.risk_review.status == "approved"
     assert first_result.fill is not None
     assert second_result.risk_review.status == "circuit_blocked"
+    assert second_result.decision.status == "circuit_blocked"
     assert second_result.risk_review.reasons == ["daily_loss_limit_exceeded"]
     assert second_result.order is None
     assert second_result.fill is None
@@ -1069,10 +1075,14 @@ def test_service_applies_agent_inference_job_trace_state() -> None:
     second_trace = service.apply_agent_inference_job(job)
 
     assert trace == second_trace
+    observation = service.list_observation_snapshots(run.run_id)[0]
     assert (
-        str(service.list_observation_snapshots(run.run_id)[0].observation_id)
-        == (trace.messages[1].content["observation_id"])
+        str(observation.observation_id) == trace.messages[1].content["observation_id"]
     )
+    assert trace.decision.observation_id == observation.observation_id
+    assert trace.decision.agent_run_id == trace.agent_run.agent_run_id
+    assert trace.decision.input_data_as_of == observation.as_of
+    assert trace.decision.status == "schema_validated"
     assert service.list_decisions() == [trace.decision]
     assert service.list_agent_runs() == [trace.agent_run]
     assert service.list_agent_messages(trace.agent_run.agent_run_id) == trace.messages
@@ -1164,8 +1174,10 @@ def test_service_creates_decision_reviews_and_memory_entries() -> None:
     )
 
     assert service.list_decision_reviews(result.decision.decision_id) == [review]
+    assert service.get_decision(result.decision.decision_id).status == "reviewed"
     assert service.list_memory_entries(run.run_id) == [memory]
     assert repository.list_decision_reviews(result.decision.decision_id) == [review]
+    assert repository.list_decisions(run.run_id)[0].status == "reviewed"
     assert repository.list_memory_entries(run.run_id) == [memory]
 
 
@@ -1192,6 +1204,7 @@ def test_decision_report_includes_trace_and_posterior_sections() -> None:
     )
 
     report = service.create_decision_report(result.decision.decision_id)
+    reviewed_decision = service.get_decision(result.decision.decision_id)
 
     observation = report.sections["observation"]
     final_trade_intent = report.sections["final_trade_intent"]
@@ -1207,6 +1220,7 @@ def test_decision_report_includes_trace_and_posterior_sections() -> None:
     assert isinstance(posterior_performance, dict)
     assert observation["observation_id"] == str(result.observation.observation_id)
     assert final_trade_intent["decision_id"] == str(result.decision.decision_id)
+    assert final_trade_intent["status"] == "reviewed"
     subreport_contents = [subreport["content"] for subreport in agent_subreports]
     assert [content.get("agent_role") for content in subreport_contents[2:-1]] == [
         "coordinator",
@@ -1237,7 +1251,7 @@ def test_decision_report_includes_trace_and_posterior_sections() -> None:
     assert latest_posterior["review_id"] == str(review.review_id)
     assert latest_posterior["realized_return"] == "0.01"
     assert report.sections["review_conclusion"] == review.reviewer_summary
-    assert report.sections["decision"] == result.decision.model_dump(mode="json")
+    assert report.sections["decision"] == reviewed_decision.model_dump(mode="json")
     assert repository.list_reports(run.run_id) == [report]
 
 

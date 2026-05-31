@@ -117,6 +117,49 @@ def test_trade_intent_rejects_unknown_action() -> None:
         )
 
 
+def test_trade_intent_models_decision_provenance_status() -> None:
+    """Verify trade intents can carry architecture decision provenance fields."""
+
+    observation_id = uuid4()
+    agent_run_id = uuid4()
+    input_data_as_of = current_time()
+    intent = TradeIntent(
+        decision_id=uuid4(),
+        run_id=uuid4(),
+        observation_id=observation_id,
+        agent_run_id=agent_run_id,
+        input_data_as_of=input_data_as_of,
+        agent_id="trader",
+        symbol="BTCUSDT",
+        market_type="perp",
+        action="open_long",
+        target_weight=Decimal("0.2"),
+        max_leverage=Decimal("1"),
+        confidence=0.7,
+        expected_holding_period="4h",
+        thesis="Momentum continuation.",
+        evidence=[],
+        invalidation_conditions=[],
+        data_quality_score=0.95,
+        status="converted_to_order",
+        created_at_sim_time=current_time(),
+    )
+
+    assert intent.observation_id == observation_id
+    assert intent.agent_run_id == agent_run_id
+    assert intent.input_data_as_of == input_data_as_of
+    assert intent.status == "converted_to_order"
+    assert (
+        TradeIntent.model_validate(
+            intent.model_dump() | {"agent_run_id": None, "status": "created"}
+        ).agent_run_id
+        is None
+    )
+
+    with pytest.raises(ValidationError):
+        TradeIntent.model_validate(intent.model_dump() | {"status": "live"})
+
+
 def test_order_and_fill_schemas_model_simulated_execution() -> None:
     """Verify order and fill schemas encode internal simulated execution only."""
 

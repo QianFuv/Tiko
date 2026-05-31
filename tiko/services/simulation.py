@@ -21,7 +21,7 @@ from tiko.domain.account import (
 )
 from tiko.domain.agent import AgentMessage, AgentMessageRole, AgentRun, DecisionTrace
 from tiko.domain.comparison import RunBenchmark, RunComparison
-from tiko.domain.decision import DecisionReview, TradeIntent
+from tiko.domain.decision import DecisionReview, DecisionStatus, TradeIntent
 from tiko.domain.market import Candle, FeatureSnapshot, MarketEvent, OrderBookSnapshot
 from tiko.domain.memory import MemoryEntry, MemorySearchResult, MemoryType
 from tiko.domain.observation import Observation
@@ -339,6 +339,31 @@ class SimulationService:
             allow_leverage=self._settings.sim_broker_allow_leverage,
         )
 
+    def _apply_step_decision_status(
+        self,
+        decision: TradeIntent,
+        risk_review: RiskReview,
+        order_request: OrderRequest | None,
+    ) -> TradeIntent:
+        """Attach the current decision lifecycle status for a completed step.
+
+        Args:
+            decision: Source trade intent.
+            risk_review: Risk review produced for the decision.
+            order_request: Portfolio order request produced from the review.
+
+        Returns:
+            Trade intent with current lifecycle status.
+        """
+
+        if risk_review.status in {"rejected", "circuit_blocked"}:
+            status: DecisionStatus = risk_review.status
+        elif order_request is None:
+            status = "no_order"
+        else:
+            status = "converted_to_order"
+        return decision.model_copy(update={"status": status})
+
     def _get_state(self, run_id: UUID) -> SimulationState:
         """Return process-local state, hydrating persisted artifacts if needed.
 
@@ -611,9 +636,11 @@ class SimulationService:
         intent = self._create_trade_intent(
             run_id=run_id,
             symbol=symbol,
+            observation_id=observation.observation_id,
             confidence=confidence,
             data_quality_score=observation.data_quality.score,
             events=observation.events,
+            input_data_as_of=observation.as_of,
             simulated_time=next_time,
         )
         risk_review = self._build_risk_service(state.risk_limits).review(
@@ -628,6 +655,7 @@ class SimulationService:
             reference_price=candle.close,
             positions=state.positions,
         )
+        intent = self._apply_step_decision_status(intent, risk_review, order_request)
         account = decision_run.account
         ledger_update: LedgerUpdate | None = None
         if order_request is not None:
@@ -1075,6 +1103,11 @@ class SimulationService:
             for item in self._require_mapping_sequence(job.result, "agent_messages")
         )
         self._validate_agent_trace_payload(observation, decision, agent_run, messages)
+        decision = self._enrich_agent_trace_decision(
+            observation=observation,
+            decision=decision,
+            agent_run=agent_run,
+        )
         state = self._get_state(decision.run_id)
         if not any(
             candidate.observation_id == observation.observation_id
@@ -1915,7 +1948,10 @@ class SimulationService:
             created_at_sim_time=state.run.current_sim_time,
         )
         state.decision_reviews.append(review)
+        reviewed_decision = decision.model_copy(update={"status": "reviewed"})
+        self._replace_state_decision(state, reviewed_decision)
         if self._repository is not None:
+            self._repository.save_decision(reviewed_decision)
             self._repository.save_decision_review(review)
         return review
 
@@ -2868,6 +2904,25 @@ class SimulationService:
                     return state, decision
         raise KeyError(decision_id)
 
+    def _replace_state_decision(
+        self, state: SimulationState, updated_decision: TradeIntent
+    ) -> None:
+        """Replace one decision in process-local simulation state.
+
+        Args:
+            state: Simulation state that owns the decision.
+            updated_decision: Replacement decision record.
+
+        Raises:
+            KeyError: If the decision is not present in state.
+        """
+
+        for index, decision in enumerate(state.decisions):
+            if decision.decision_id == updated_decision.decision_id:
+                state.decisions[index] = updated_decision
+                return
+        raise KeyError(updated_decision.decision_id)
+
     def _publish_realtime_envelopes(
         self,
         envelopes: Sequence[dict[str, object]],
@@ -2956,20 +3011,62 @@ class SimulationService:
             raise ValueError(
                 "Agent inference decision symbol does not match observation."
             )
+        if (
+            decision.observation_id is not None
+            and decision.observation_id != observation.observation_id
+        ):
+            raise ValueError(
+                "Agent inference decision observation_id does not match observation."
+            )
         if agent_run.run_id != decision.run_id:
             raise ValueError("Agent run run_id does not match decision.")
         if agent_run.decision_id != decision.decision_id:
             raise ValueError("Agent run decision_id does not match decision.")
+        if (
+            decision.agent_run_id is not None
+            and decision.agent_run_id != agent_run.agent_run_id
+        ):
+            raise ValueError(
+                "Agent inference decision agent_run_id does not match agent run."
+            )
         if any(message.agent_run_id != agent_run.agent_run_id for message in messages):
             raise ValueError("Agent message agent_run_id does not match agent run.")
+
+    def _enrich_agent_trace_decision(
+        self,
+        observation: Observation,
+        decision: TradeIntent,
+        agent_run: AgentRun,
+    ) -> TradeIntent:
+        """Attach persisted trace provenance to a worker-provided decision.
+
+        Args:
+            observation: Source observation snapshot.
+            decision: Worker-provided trade intent.
+            agent_run: Worker-provided agent run.
+
+        Returns:
+            Trade intent enriched for trace persistence.
+        """
+
+        return decision.model_copy(
+            update={
+                "observation_id": observation.observation_id,
+                "agent_run_id": agent_run.agent_run_id,
+                "input_data_as_of": observation.as_of,
+                "status": "schema_validated",
+            }
+        )
 
     def _create_trade_intent(
         self,
         run_id: UUID,
         symbol: str,
+        observation_id: UUID,
         confidence: float,
         data_quality_score: float,
         events: Sequence[MarketEvent],
+        input_data_as_of: datetime,
         simulated_time: datetime,
     ) -> TradeIntent:
         """Create deterministic synthetic trade intent for a step.
@@ -2977,18 +3074,24 @@ class SimulationService:
         Args:
             run_id: Simulation run identifier.
             symbol: Symbol for the intent.
+            observation_id: Observation snapshot that produced the intent.
             confidence: Synthetic confidence score.
             data_quality_score: Observation data-quality score.
             events: Point-in-time market events included in the observation.
+            input_data_as_of: Point-in-time data availability timestamp.
             simulated_time: Simulated decision time.
 
         Returns:
             Structured trade intent.
         """
 
+        decision_id = uuid4()
         return TradeIntent(
-            decision_id=uuid4(),
+            decision_id=decision_id,
             run_id=run_id,
+            observation_id=observation_id,
+            agent_run_id=self._build_agent_run_id(decision_id),
+            input_data_as_of=input_data_as_of,
             agent_id="synthetic_trader",
             symbol=symbol,
             market_type="synthetic",
@@ -3032,6 +3135,18 @@ class SimulationService:
             )
         return evidence
 
+    def _build_agent_run_id(self, decision_id: UUID) -> UUID:
+        """Build the deterministic agent-run identifier for a decision.
+
+        Args:
+            decision_id: Source decision identifier.
+
+        Returns:
+            Deterministic agent-run identifier.
+        """
+
+        return uuid5(NAMESPACE_URL, f"agent-run:{decision_id}")
+
     def _build_agent_run(self, decision: TradeIntent) -> AgentRun:
         """Build a deterministic agent run for a decision.
 
@@ -3043,7 +3158,8 @@ class SimulationService:
         """
 
         return AgentRun(
-            agent_run_id=uuid5(NAMESPACE_URL, f"agent-run:{decision.decision_id}"),
+            agent_run_id=decision.agent_run_id
+            or self._build_agent_run_id(decision.decision_id),
             run_id=decision.run_id,
             decision_id=decision.decision_id,
             agent_id=decision.agent_id,

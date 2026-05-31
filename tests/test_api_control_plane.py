@@ -603,10 +603,24 @@ def test_query_routes_expose_simulated_state() -> None:
     trace_response = client.get(f"/api/decisions/{decision_id}/trace")
 
     assert decision_response.status_code == 200
-    assert decision_response.json()["decision_id"] == decision_id
+    decision_payload = decision_response.json()
+    assert decision_payload["decision_id"] == decision_id
+    assert decision_payload["status"] == "converted_to_order"
     assert trace_response.status_code == 200
     trace_payload = trace_response.json()
     assert trace_payload["decision"]["decision_id"] == decision_id
+    assert trace_payload["decision"]["status"] == "converted_to_order"
+    assert (
+        decision_payload["observation_id"]
+        == trace_payload["decision"]["observation_id"]
+    )
+    assert (
+        decision_payload["agent_run_id"] == trace_payload["agent_run"]["agent_run_id"]
+    )
+    assert (
+        decision_payload["input_data_as_of"]
+        == trace_payload["decision"]["input_data_as_of"]
+    )
     assert trace_payload["risk_review"]["status"] == "approved"
     assert trace_payload["order"]["status"] == "filled"
     assert trace_payload["fill"]["symbol"] == "BTCUSDT"
@@ -694,6 +708,7 @@ def test_query_routes_expose_simulated_state() -> None:
 
     assert review_response.status_code == 200
     assert review_response.json()["decision_id"] == decision_id
+    assert client.get(f"/api/decisions/{decision_id}").json()["status"] == "reviewed"
     assert (
         client.get(f"/api/decisions/{decision_id}/review").json()[0]["horizon"] == "1h"
     )

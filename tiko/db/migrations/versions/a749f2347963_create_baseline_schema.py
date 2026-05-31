@@ -247,6 +247,9 @@ def upgrade() -> None:
         "decisions",
         sa.Column("decision_id", sa.String(length=36), nullable=False),
         sa.Column("run_id", sa.String(length=36), nullable=False),
+        sa.Column("observation_id", sa.String(length=36), nullable=False),
+        sa.Column("agent_run_id", sa.String(length=36), nullable=False),
+        sa.Column("input_data_as_of", sa.DateTime(timezone=True), nullable=False),
         sa.Column("agent_id", sa.String(length=128), nullable=False),
         sa.Column("symbol", sa.String(length=32), nullable=False),
         sa.Column("market_type", sa.String(length=32), nullable=False),
@@ -260,6 +263,7 @@ def upgrade() -> None:
         sa.Column("evidence", sa.JSON(), nullable=False),
         sa.Column("invalidation_conditions", sa.JSON(), nullable=False),
         sa.Column("data_quality_score", sa.Float(), nullable=False),
+        sa.Column("status", sa.String(length=32), nullable=False),
         sa.Column("created_at_sim_time", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(
             ["run_id"],

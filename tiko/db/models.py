@@ -425,6 +425,11 @@ class DecisionRecord(Base):
 
     decision_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("simulation_runs.run_id"))
+    observation_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    agent_run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    input_data_as_of: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     agent_id: Mapped[str] = mapped_column(String(128), nullable=False)
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     market_type: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -438,6 +443,7 @@ class DecisionRecord(Base):
     evidence: Mapped[list[dict[str, object]]] = mapped_column(JSON, nullable=False)
     invalidation_conditions: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     data_quality_score: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
     created_at_sim_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

@@ -65,7 +65,7 @@ from tiko.domain.dataset import (
     DatasetSource,
     DatasetStatus,
 )
-from tiko.domain.decision import DecisionReview, TradeIntent
+from tiko.domain.decision import DecisionReview, DecisionStatus, TradeIntent
 from tiko.domain.experiment import ExperimentKind, ExperimentRecord, ExperimentStatus
 from tiko.domain.market import (
     Asset,
@@ -234,6 +234,17 @@ class SimulationRepository:
             self._merge_agent_run(session, agent_run)
             for message in agent_messages:
                 self._merge_agent_message(session, message)
+            session.commit()
+
+    def save_decision(self, decision: TradeIntent) -> None:
+        """Persist one structured trade intent.
+
+        Args:
+            decision: Trade intent to persist.
+        """
+
+        with self._session_factory() as session:
+            self._merge_decision(session, decision)
             session.commit()
 
     def get_run(self, run_id: UUID) -> SimulationRun | None:
@@ -1560,12 +1571,24 @@ class SimulationRepository:
         Args:
             session: Active SQLAlchemy session.
             decision: Trade intent to merge.
+
+        Raises:
+            ValueError: If provenance fields required for persistence are missing.
         """
 
+        if decision.observation_id is None:
+            raise ValueError("Persisted decisions require observation_id.")
+        if decision.agent_run_id is None:
+            raise ValueError("Persisted decisions require agent_run_id.")
+        if decision.input_data_as_of is None:
+            raise ValueError("Persisted decisions require input_data_as_of.")
         session.merge(
             DecisionRecord(
                 decision_id=str(decision.decision_id),
                 run_id=str(decision.run_id),
+                observation_id=str(decision.observation_id),
+                agent_run_id=str(decision.agent_run_id),
+                input_data_as_of=decision.input_data_as_of,
                 agent_id=decision.agent_id,
                 symbol=decision.symbol,
                 market_type=decision.market_type,
@@ -1579,6 +1602,7 @@ class SimulationRepository:
                 evidence=decision.evidence,
                 invalidation_conditions=decision.invalidation_conditions,
                 data_quality_score=decision.data_quality_score,
+                status=decision.status,
                 created_at_sim_time=decision.created_at_sim_time,
             )
         )
@@ -2335,6 +2359,9 @@ class SimulationRepository:
         return TradeIntent(
             decision_id=UUID(record.decision_id),
             run_id=UUID(record.run_id),
+            observation_id=UUID(record.observation_id),
+            agent_run_id=UUID(record.agent_run_id),
+            input_data_as_of=self._aware_datetime(record.input_data_as_of),
             agent_id=record.agent_id,
             symbol=record.symbol,
             market_type=cast(MarketType, record.market_type),
@@ -2348,6 +2375,7 @@ class SimulationRepository:
             evidence=[dict(item) for item in record.evidence],
             invalidation_conditions=list(record.invalidation_conditions),
             data_quality_score=record.data_quality_score,
+            status=cast(DecisionStatus, record.status),
             created_at_sim_time=self._aware_datetime(record.created_at_sim_time),
         )
 

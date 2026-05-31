@@ -45,6 +45,8 @@ class RuleBasedTraderAgent:
         return TradeIntent(
             decision_id=uuid4(),
             run_id=observation.run_id,
+            observation_id=observation.observation_id,
+            input_data_as_of=observation.as_of,
             agent_id=self.agent_id,
             symbol=observation.symbol,
             market_type="synthetic",

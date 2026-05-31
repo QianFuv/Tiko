@@ -9,12 +9,28 @@ from pydantic import Field
 
 from tiko.domain.base import DomainModel
 
+DecisionStatus = Literal[
+    "created",
+    "schema_validated",
+    "risk_reviewed",
+    "approved",
+    "rejected",
+    "resized",
+    "circuit_blocked",
+    "converted_to_order",
+    "no_order",
+    "reviewed",
+]
+
 
 class TradeIntent(DomainModel):
     """Represent the only executable-adjacent output allowed from agents."""
 
     decision_id: UUID
     run_id: UUID
+    observation_id: UUID | None = None
+    agent_run_id: UUID | None = None
+    input_data_as_of: datetime | None = None
     agent_id: str = Field(min_length=1)
     symbol: str = Field(min_length=1)
     market_type: Literal["spot", "perp", "synthetic"]
@@ -38,6 +54,7 @@ class TradeIntent(DomainModel):
     evidence: list[dict[str, object]]
     invalidation_conditions: list[str]
     data_quality_score: float = Field(ge=0.0, le=1.0)
+    status: DecisionStatus = "created"
     created_at_sim_time: datetime
 
 
