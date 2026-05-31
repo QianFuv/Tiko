@@ -167,6 +167,7 @@ class Settings(BaseSettings):
     max_target_weight: Decimal = Field(
         default=Decimal("0.25"), ge=Decimal("0"), le=Decimal("1")
     )
+    min_order_notional: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
     max_order_notional: Decimal = Field(default=Decimal("25000"), ge=Decimal("0"))
     max_leverage: Decimal = Field(default=Decimal("1"), gt=Decimal("0"))
     max_drawdown: Decimal = Field(default=Decimal("0.20"), ge=Decimal("0"))

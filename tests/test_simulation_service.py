@@ -487,6 +487,30 @@ def test_service_routes_limit_order_when_market_orders_are_disabled() -> None:
     assert service.list_fills() == [result.fill]
 
 
+def test_service_skips_order_below_configured_min_notional() -> None:
+    """Verify minimum notional setting blocks broker submission."""
+
+    service = SimulationService(Settings(min_order_notional=Decimal("20000")))
+    run = service.create_run(
+        name="min-notional",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    result = service.step_run(run.run_id, confidence=0.7)
+
+    assert result.risk_review.status == "approved"
+    assert result.decision.status == "no_order"
+    assert result.portfolio_order_plan.status == "no_order"
+    assert result.portfolio_order_plan.reason == "notional_below_minimum"
+    assert result.order is None
+    assert result.fill is None
+    assert result.ledger_entry is None
+    assert service.list_orders() == []
+    assert service.list_fills() == []
+    assert service.list_ledger_entries(run.run_id) == []
+
+
 def test_service_create_run_accepts_configured_simulation_fields() -> None:
     """Verify run creation stores configured simulation settings."""
 

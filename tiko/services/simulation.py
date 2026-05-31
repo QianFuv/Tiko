@@ -93,6 +93,7 @@ class SimulationService:
         if not settings.sim_broker_allow_market and settings.sim_broker_allow_limit:
             portfolio_order_type = "limit"
         self._portfolio_service = PortfolioService(
+            min_order_notional=settings.min_order_notional,
             taker_fee_bps=settings.sim_broker_taker_fee_bps,
             maker_fee_bps=settings.sim_broker_maker_fee_bps,
             estimated_slippage_bps=settings.sim_broker_slippage_bps,

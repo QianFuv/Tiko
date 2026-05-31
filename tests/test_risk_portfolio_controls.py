@@ -354,6 +354,52 @@ def test_portfolio_plan_skips_quantity_below_lot_size() -> None:
     assert plan.order_request is None
 
 
+def test_portfolio_plan_skips_notional_below_minimum() -> None:
+    """Verify portfolio plan blocks orders below minimum executable notional."""
+
+    intent = create_intent(target_weight=Decimal("0.00001"))
+    review = RiskService(minimum_confidence=0.5).review(intent)
+
+    plan = PortfolioService(min_order_notional=Decimal("5")).create_order_plan(
+        account=create_account(),
+        intent=intent,
+        risk_review=review,
+        reference_price=Decimal("100"),
+    )
+
+    assert plan.status == "no_order"
+    assert plan.reason == "notional_below_minimum"
+    assert "below minimum order notional 5" in plan.sizing_explanation
+    assert plan.order_request is None
+
+
+def test_portfolio_plan_allows_notional_equal_to_minimum() -> None:
+    """Verify minimum notional is inclusive for executable orders."""
+
+    intent = create_intent(target_weight=Decimal("0.10"))
+    review = RiskService(minimum_confidence=0.5).review(intent)
+
+    plan = PortfolioService(
+        min_order_notional=Decimal("10000.000000")
+    ).create_order_plan(
+        account=create_account(),
+        intent=intent,
+        risk_review=review,
+        reference_price=Decimal("100"),
+    )
+
+    assert plan.status == "order_created"
+    assert plan.expected_notional == Decimal("10000.000000")
+    assert plan.order_request is not None
+
+
+def test_portfolio_rejects_negative_min_order_notional() -> None:
+    """Verify minimum notional configuration cannot be negative."""
+
+    with pytest.raises(ValueError, match="min_order_notional"):
+        PortfolioService(min_order_notional=Decimal("-1"))
+
+
 def test_risk_circuit_breakers_block_loss_and_drawdown_breaches() -> None:
     """Verify account-state circuit breakers stop simulated execution."""
 
