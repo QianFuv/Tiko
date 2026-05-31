@@ -743,15 +743,38 @@ def test_plugin_registry_routes_validate_sandbox_policy() -> None:
         "permissions": {"write_market_events": True},
         "inputs": ["run_id", "symbols"],
         "output_schema": "MarketEvent",
-        "tests": ["test_schema_valid"],
+        "tests": [
+            "test_schema_valid",
+            "test_no_write_orders",
+            "test_network_policy",
+        ],
     }
 
+    viewer_sandbox_response = client.post(
+        "/api/plugins/sandbox-tests",
+        json=safe_manifest,
+        headers=VIEWER_HEADERS,
+    )
+    sandbox_response = client.post(
+        "/api/plugins/sandbox-tests",
+        json=safe_manifest,
+        headers=RESEARCHER_HEADERS,
+    )
     create_response = client.post(
         "/api/plugins",
         json=safe_manifest,
         headers=RESEARCHER_HEADERS,
     )
 
+    assert viewer_sandbox_response.status_code == 403
+    assert sandbox_response.status_code == 200
+    sandbox_report = sandbox_response.json()
+    assert sandbox_report["passed"] is True
+    assert [result["name"] for result in sandbox_report["results"]] == [
+        "test_schema_valid",
+        "test_no_write_orders",
+        "test_network_policy",
+    ]
     assert create_response.status_code == 200
     plugin_id = create_response.json()["plugin_id"]
     assert client.get("/api/plugins").json()[0]["plugin_id"] == plugin_id

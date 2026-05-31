@@ -44,6 +44,8 @@ from tiko.domain.plugin import (
     PluginStatus,
     PluginType,
     SandboxResult,
+    SandboxTestReport,
+    SandboxTestResult,
 )
 from tiko.domain.registry import (
     ProjectRecord,
@@ -141,6 +143,8 @@ __all__ = [
     "RunBenchmark",
     "RunComparison",
     "SandboxResult",
+    "SandboxTestReport",
+    "SandboxTestResult",
     "SimAccount",
     "SimOrder",
     "SimulationDefinition",

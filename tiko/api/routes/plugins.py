@@ -11,8 +11,14 @@ from tiko.api.dependencies import (
     get_plugin_registry_service,
     require_permission,
 )
-from tiko.domain.plugin import PluginManifest, PluginRegistryEntry, PluginStatus
+from tiko.domain.plugin import (
+    PluginManifest,
+    PluginRegistryEntry,
+    PluginStatus,
+    SandboxTestReport,
+)
 from tiko.domain.security import Principal
+from tiko.plugins import run_plugin_sandbox_tests
 from tiko.services import AuditService, PluginRegistryService
 
 router = APIRouter(prefix="/plugins", tags=["plugins"])
@@ -79,6 +85,38 @@ def register_plugin(
         return entry
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/sandbox-tests", response_model=SandboxTestReport)
+def run_sandbox_tests(
+    manifest: PluginManifest,
+    audit_service: AuditServiceDep,
+    principal: ManagePluginsPrincipalDep,
+) -> SandboxTestReport:
+    """Run sandbox policy tests for a plugin manifest.
+
+    Args:
+        manifest: Plugin manifest.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
+
+    Returns:
+        Sandbox test execution report.
+    """
+
+    report = run_plugin_sandbox_tests(manifest)
+    audit_service.record(
+        principal=principal,
+        action="plugin.sandbox_tests.run",
+        resource_type="plugin_manifest",
+        resource_id=manifest.name,
+        metadata={
+            "plugin_type": manifest.plugin_type,
+            "passed": report.passed,
+            "test_count": len(report.results),
+        },
+    )
+    return report
 
 
 @router.get("/{plugin_id}", response_model=PluginRegistryEntry)

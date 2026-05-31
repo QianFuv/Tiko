@@ -1,7 +1,7 @@
 """Tests for plugin sandbox policy validation."""
 
 from tiko.domain.plugin import PluginManifest, PluginPermissions
-from tiko.plugins import validate_plugin_manifest
+from tiko.plugins import run_plugin_sandbox_tests, validate_plugin_manifest
 
 
 def create_safe_manifest() -> PluginManifest:
@@ -88,3 +88,65 @@ def test_sandbox_requires_manifest_tests() -> None:
 
     assert result.passed is False
     assert "tests" in result.violations[0]
+
+
+def test_sandbox_executes_supported_manifest_tests() -> None:
+    """Verify sandbox test execution reports per-test evidence."""
+
+    manifest = create_safe_manifest().model_copy(
+        update={
+            "tests": [
+                "test_schema_valid",
+                "test_no_write_orders",
+                "test_network_policy",
+            ]
+        }
+    )
+
+    report = run_plugin_sandbox_tests(manifest)
+
+    assert report.passed is True
+    assert report.validation.passed is True
+    assert [result.name for result in report.results] == [
+        "test_schema_valid",
+        "test_no_write_orders",
+        "test_network_policy",
+    ]
+    assert all(result.passed for result in report.results)
+
+
+def test_sandbox_test_report_flags_forbidden_order_writes() -> None:
+    """Verify sandbox test execution fails unsafe order-writing manifests."""
+
+    manifest = create_safe_manifest().model_copy(
+        update={
+            "permissions": PluginPermissions(
+                write_market_events=True,
+                write_orders=True,
+            ),
+            "tests": ["test_no_write_orders"],
+        }
+    )
+
+    report = run_plugin_sandbox_tests(manifest)
+
+    assert report.passed is False
+    assert report.validation.passed is False
+    assert report.results[0].passed is False
+    assert "order-writing" in report.results[0].message
+
+
+def test_sandbox_test_report_fails_unsupported_tests() -> None:
+    """Verify unsupported declared sandbox tests fail explicitly."""
+
+    manifest = create_safe_manifest().model_copy(
+        update={"tests": ["test_unknown_policy"]}
+    )
+
+    report = run_plugin_sandbox_tests(manifest)
+
+    assert report.passed is False
+    assert report.validation.passed is True
+    assert report.results[0].name == "test_unknown_policy"
+    assert report.results[0].passed is False
+    assert "Unsupported sandbox test" in report.results[0].message

@@ -56,6 +56,22 @@ class SandboxResult(DomainModel):
     warnings: list[str]
 
 
+class SandboxTestResult(DomainModel):
+    """Represent one executed sandbox policy test result."""
+
+    name: str = Field(min_length=1)
+    passed: bool
+    message: str = Field(min_length=1)
+
+
+class SandboxTestReport(DomainModel):
+    """Represent sandbox policy test execution output."""
+
+    passed: bool
+    validation: SandboxResult
+    results: list[SandboxTestResult]
+
+
 class PluginRegistryEntry(DomainModel):
     """Represent a validated plugin registry entry."""
 
