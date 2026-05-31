@@ -366,6 +366,27 @@ def test_simulation_step_is_deterministic_for_observable_market_values() -> None
     assert first_result.fill.price == second_result.fill.price
 
 
+def test_synthetic_seed_controls_generated_candles() -> None:
+    """Verify synthetic candle output is deterministic by configured seed."""
+
+    first_service = SimulationService(Settings(synthetic_seed=100))
+    second_service = SimulationService(Settings(synthetic_seed=100))
+    third_service = SimulationService(Settings(synthetic_seed=101))
+    start_time = datetime(2026, 1, 1, tzinfo=UTC)
+    first_run = first_service.create_run("first-seed", ["BTCUSDT"], start_time)
+    second_run = second_service.create_run("second-seed", ["BTCUSDT"], start_time)
+    third_run = third_service.create_run("third-seed", ["BTCUSDT"], start_time)
+
+    first_result = first_service.step_run(first_run.run_id)
+    second_result = second_service.step_run(second_run.run_id)
+    third_result = third_service.step_run(third_run.run_id)
+
+    assert first_result.candle.close == second_result.candle.close
+    assert first_result.candle.close != third_result.candle.close
+    assert first_result.candle.close == Decimal("50093")
+    assert third_result.candle.close == Decimal("50094")
+
+
 def test_service_returns_latest_orderbook_snapshot_for_symbol() -> None:
     """Verify order book lookup returns latest read-only simulated snapshots."""
 

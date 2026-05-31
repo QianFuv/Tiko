@@ -24,7 +24,7 @@ def base_price_for_symbol(symbol: str) -> Decimal:
 
 
 def generate_synthetic_candle(
-    symbol: str, step_index: int, close_time: datetime
+    symbol: str, step_index: int, close_time: datetime, seed: int = 42
 ) -> Candle:
     """Generate a deterministic synthetic candle for a simulation step.
 
@@ -32,14 +32,16 @@ def generate_synthetic_candle(
         symbol: Market symbol.
         step_index: Zero-based simulation step index.
         close_time: Candle close timestamp.
+        seed: Deterministic scenario seed.
 
     Returns:
         Point-in-time synthetic candle.
     """
 
     base_price = base_price_for_symbol(symbol)
+    seed_offset = Decimal(seed - 42)
     step_offset = Decimal(step_index + 1) * Decimal("25")
-    open_price = base_price + step_offset
+    open_price = base_price + seed_offset + step_offset
     close_price = open_price + Decimal("10")
     high_price = close_price + Decimal("5")
     low_price = open_price - Decimal("5")

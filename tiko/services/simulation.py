@@ -674,7 +674,10 @@ class SimulationService:
             return state.market_replay.next_candle()
         next_time = advance_simulated_time(state.run.current_sim_time, 3600)
         return generate_synthetic_candle(
-            state.run.symbols[0], state.step_index, next_time
+            state.run.symbols[0],
+            state.step_index,
+            next_time,
+            seed=self._settings.synthetic_seed,
         )
 
     def _build_orderbook_snapshot(self, candle: Candle) -> OrderBookSnapshot:
