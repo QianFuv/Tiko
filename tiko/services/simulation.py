@@ -41,6 +41,8 @@ from tiko.services.portfolio import PortfolioService
 from tiko.services.realtime import (
     RealtimeFanoutReceipt,
     RealtimeFanoutService,
+    build_alert_envelope,
+    build_market_event_envelope,
     build_step_result_envelopes,
 )
 from tiko.services.risk import RiskService
@@ -1255,8 +1257,12 @@ class SimulationService:
         )
         self._event_bus.publish(event)
         state.events.append(event)
+        realtime_envelope = build_market_event_envelope(run_id, event)
+        state.realtime_events.append(realtime_envelope)
         if self._repository is not None:
             self._repository.save_market_event(run_id, event)
+            self._repository.save_realtime_events([realtime_envelope])
+        self._publish_realtime_envelopes([realtime_envelope])
         return event
 
     def build_observation(self, run_id: UUID, symbol: str) -> Observation:
@@ -2193,8 +2199,12 @@ class SimulationService:
             created_at=datetime.now(UTC),
         )
         state.alerts.append(alert)
+        realtime_envelope = build_alert_envelope(alert)
+        state.realtime_events.append(realtime_envelope)
         if self._repository is not None:
             self._repository.save_alert(alert)
+            self._repository.save_realtime_events([realtime_envelope])
+        self._publish_realtime_envelopes([realtime_envelope])
         return alert
 
     def list_alerts(self, run_id: UUID) -> list[Alert]:

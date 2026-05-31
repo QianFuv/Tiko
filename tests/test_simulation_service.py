@@ -595,6 +595,65 @@ def test_repository_backed_step_persists_realtime_events() -> None:
     }
 
 
+def test_manual_market_events_persist_and_publish_realtime_envelopes() -> None:
+    """Verify manual market event injection emits canonical realtime envelopes."""
+
+    repository = create_test_repository()
+    publisher = FakeRedisPublisher()
+    fanout = RealtimeFanoutService(client=publisher, channel_prefix="tiko:test")
+    service = SimulationService(
+        Settings(), repository=repository, realtime_fanout=fanout
+    )
+    run = service.create_run(
+        name="manual-realtime-events",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    news_event = service.inject_market_event(
+        run_id=run.run_id,
+        type_="news_event",
+        symbol="BTCUSDT",
+        payload={"headline": "Synthetic macro headline."},
+        source="manual",
+        confidence=1.0,
+        simulated_time=datetime(2026, 1, 1, 0, 5, tzinfo=UTC),
+    )
+    candle_event = service.inject_market_event(
+        run_id=run.run_id,
+        type_="candle_closed",
+        symbol="BTCUSDT",
+        payload={"close": "50000"},
+        source="manual",
+        confidence=1.0,
+        simulated_time=datetime(2026, 1, 1, 1, tzinfo=UTC),
+    )
+
+    realtime_events = service.list_realtime_events(run.run_id)
+    published_envelopes = [
+        json.loads(message) for _channel, message in publisher.messages
+    ]
+    events_by_topic = {
+        str(event["topic"]): event
+        for event in repository.list_realtime_events(run.run_id)
+    }
+    market_event_payload = events_by_topic["market.event"]["payload"]
+    candle_event_payload = events_by_topic["market.candle"]["payload"]
+    assert repository.list_realtime_events(run.run_id) == realtime_events
+    assert set(events_by_topic) == {"market.candle", "market.event"}
+    assert isinstance(market_event_payload, dict)
+    assert isinstance(candle_event_payload, dict)
+    assert market_event_payload["event_id"] == str(news_event.event_id)
+    assert candle_event_payload["event_id"] == str(candle_event.event_id)
+    assert published_envelopes == realtime_events
+    assert [channel for channel, _message in publisher.messages] == [
+        f"tiko:test:{run.run_id}:market.event",
+        f"tiko:test:{run.run_id}:market.candle",
+    ]
+    assert len(service.list_realtime_fanout_receipts()) == 2
+    assert all(receipt.published for receipt in service.list_realtime_fanout_receipts())
+
+
 def test_service_applies_agent_inference_job_trace_state() -> None:
     """Verify completed agent inference jobs update service trace state."""
 
@@ -1050,6 +1109,16 @@ def test_service_creates_reports_and_updates_alerts() -> None:
     assert service.list_alerts(run.run_id) == [updated_alert]
     assert repository.list_reports(run.run_id) == [report]
     assert repository.list_alerts(run.run_id) == [updated_alert]
+    alert_realtime_events = [
+        event
+        for event in repository.list_realtime_events(run.run_id)
+        if event["topic"] == "alert.created"
+    ]
+    alert_event_payload = alert_realtime_events[0]["payload"]
+    assert len(alert_realtime_events) == 1
+    assert isinstance(alert_event_payload, dict)
+    assert alert_event_payload["alert_id"] == str(alert.alert_id)
+    assert alert_event_payload["status"] == "open"
 
 
 def test_report_renderer_creates_markdown_documents() -> None:

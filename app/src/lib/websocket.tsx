@@ -4,6 +4,7 @@
 
 export const SIMULATION_STREAM_TOPICS = [
   "market.candle",
+  "market.event",
   "agent.run",
   "decision.created",
   "risk.reviewed",

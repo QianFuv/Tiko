@@ -21,6 +21,7 @@ LIVE_CONTROL_TIMEOUT_SECONDS = 0.01
 
 SimulationStreamTopic = Literal[
     "market.candle",
+    "market.event",
     "agent.run",
     "decision.created",
     "risk.reviewed",
@@ -33,6 +34,7 @@ SimulationStreamTopic = Literal[
 ]
 SUPPORTED_TOPICS: tuple[SimulationStreamTopic, ...] = (
     "market.candle",
+    "market.event",
     "agent.run",
     "decision.created",
     "risk.reviewed",

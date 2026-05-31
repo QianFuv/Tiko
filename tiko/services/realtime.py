@@ -9,6 +9,8 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 import redis
 
+from tiko.domain.market import MarketEvent
+from tiko.domain.reporting import Alert
 from tiko.simulation.state import SimulationStepResult
 
 STREAM_PAYLOAD_ID_KEYS = (
@@ -480,6 +482,47 @@ def build_step_result_envelopes(
         ]
     )
     return envelopes
+
+
+def build_market_event_envelope(
+    run_id: UUID,
+    event: MarketEvent,
+) -> dict[str, object]:
+    """Build a realtime envelope for one market event.
+
+    Args:
+        run_id: Simulation run identifier.
+        event: Market event to expose through the realtime stream.
+
+    Returns:
+        Realtime event envelope.
+    """
+
+    topic = "market.candle" if event.type == "candle_closed" else "market.event"
+    return build_stream_event(
+        topic=topic,
+        run_id=run_id,
+        simulated_time=event.simulated_time,
+        payload=event.model_dump(mode="json"),
+    )
+
+
+def build_alert_envelope(alert: Alert) -> dict[str, object]:
+    """Build a realtime envelope for one created alert.
+
+    Args:
+        alert: Alert to expose through the realtime stream.
+
+    Returns:
+        Realtime event envelope.
+    """
+
+    return build_stream_event(
+        topic="alert.created",
+        run_id=alert.run_id,
+        simulated_time=alert.created_at_sim_time,
+        payload=alert.model_dump(mode="json"),
+    )
 
 
 def build_stream_event(

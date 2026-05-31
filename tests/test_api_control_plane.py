@@ -1114,6 +1114,50 @@ def test_simulation_websocket_filters_subscription_topics() -> None:
     assert completion["type"] == "replay_complete"
 
 
+def test_simulation_websocket_replays_manual_market_event_topic() -> None:
+    """Verify WebSocket replay exposes persisted manual market event envelopes."""
+
+    client = create_test_client()
+    run_id = client.post(
+        "/api/simulations",
+        json={"name": "ws-market-event-demo", "symbols": ["BTCUSDT"]},
+        headers=OPERATOR_HEADERS,
+    ).json()["run_id"]
+    inject_response = client.post(
+        "/api/market/events/inject",
+        json={
+            "run_id": run_id,
+            "type": "news_event",
+            "symbol": "BTCUSDT",
+            "payload": {"headline": "Synthetic macro headline."},
+            "source": "manual",
+        },
+        headers=OPERATOR_HEADERS,
+    )
+    stored_event = next(
+        event
+        for event in get_simulation_service().list_realtime_events(UUID(run_id))
+        if event["topic"] == "market.event"
+    )
+
+    with client.websocket_connect(f"/ws/simulations/{run_id}") as websocket:
+        websocket.send_json({"type": "subscribe", "topics": ["market.event"]})
+        snapshot = websocket.receive_json()
+        replay_event = websocket.receive_json()
+        completion = websocket.receive_json()
+
+    assert inject_response.status_code == 200
+    assert snapshot["topics"] == ["market.event"]
+    assert replay_event["type"] == "event"
+    assert replay_event["topic"] == "market.event"
+    assert replay_event["event_id"] == stored_event["event_id"]
+    assert replay_event["payload"]["event_id"] == inject_response.json()["event_id"]
+    assert replay_event["payload"]["payload"]["headline"] == (
+        "Synthetic macro headline."
+    )
+    assert completion["type"] == "replay_complete"
+
+
 def test_simulation_websocket_streams_live_fanout_after_replay(monkeypatch) -> None:
     """Verify live WebSocket mode streams fanout events after recovery replay."""
 
