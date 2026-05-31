@@ -1,8 +1,10 @@
+import { revalidatePath } from "next/cache";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import type { ReactElement } from "react";
 
 import { MetricCard } from "@/components/metric/MetricCard";
-import { fetchDatasetDetailData } from "@/lib/api-client";
+import { fetchDatasetDetailData, getApiBaseUrl } from "@/lib/api-client";
 import {
   formatDataSource,
   formatDateTime,
@@ -10,6 +12,14 @@ import {
   shortId,
 } from "@/lib/format";
 import type { Candle, Metric } from "@/lib/types";
+import type { DatasetRecord, SimulationRun } from "@/lib/types";
+
+type ReplayCreatePayload = {
+  name: string;
+  symbols: string[];
+  mode: "historical_replay";
+  dataset_id: string;
+};
 
 /**
  * Render dataset details, quality, and candle sample.
@@ -104,6 +114,7 @@ export default async function DatasetDetailPage({
             issueCount={data.quality.issues.length}
           />
         </div>
+        <ReplayLaunchPanel dataset={data.dataset} />
         <CandleSample candles={data.candles} />
       </section>
     </main>
@@ -134,6 +145,51 @@ function QualityPanel({
         <DetailRow label="Issues sampled" value={formatNumber(issueCount, 0)} />
       </dl>
     </div>
+  );
+}
+
+/**
+ * Render historical replay launch controls for one dataset.
+ *
+ * @param props - Replay launch props.
+ * @returns Replay launch panel element.
+ */
+function ReplayLaunchPanel({
+  dataset,
+}: {
+  dataset: DatasetRecord;
+}): ReactElement {
+  const isDisabled =
+    dataset.status !== "validated" || dataset.symbols.length === 0;
+
+  return (
+    <form
+      action={createReplayRun}
+      className="grid gap-4 rounded-lg border border-[#d8dee4] bg-white p-5 md:grid-cols-[1fr_auto]"
+    >
+      <input name="dataset_id" type="hidden" value={dataset.dataset_id} />
+      <input name="symbols" type="hidden" value={dataset.symbols.join(",")} />
+      <label className="grid gap-2 text-sm font-medium text-[#17201b]">
+        Replay run name
+        <input
+          name="name"
+          required
+          minLength={1}
+          defaultValue={`${dataset.name} replay`}
+          disabled={isDisabled}
+          className="rounded-md border border-[#cbd4dc] px-3 py-2 text-sm font-normal text-[#17201b] outline-none focus:border-[#1f6f8b] disabled:bg-[#eef2f5] disabled:text-[#7b8580]"
+        />
+      </label>
+      <div className="flex items-end justify-end">
+        <button
+          type="submit"
+          disabled={isDisabled}
+          className="rounded-md bg-[#1f6f8b] px-4 py-2 text-sm font-semibold text-white hover:bg-[#174f63] disabled:cursor-not-allowed disabled:bg-[#9aa8ad]"
+        >
+          Start Replay
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -228,4 +284,83 @@ function formatDateRange(
     return "N/A";
   }
   return `${formatDateTime(startTime)} to ${formatDateTime(endTime)}`;
+}
+
+/**
+ * Create a historical replay run from a dataset detail form.
+ *
+ * @param formData - Submitted replay launch fields.
+ */
+async function createReplayRun(formData: FormData): Promise<void> {
+  "use server";
+
+  const payload = buildReplayCreatePayload(formData);
+  const response = await fetch(`${getApiBaseUrl()}/api/simulations`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Tiko-Role": "operator",
+      "X-Tiko-User": "frontend@app.local",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(`Replay create failed: ${await readErrorDetail(response)}`);
+  }
+  const run = (await response.json()) as SimulationRun;
+  revalidatePath("/simulations");
+  redirect(`/simulations/${run.run_id}/dashboard`);
+}
+
+/**
+ * Build a simulation create payload from replay launch form data.
+ *
+ * @param formData - Submitted replay launch fields.
+ * @returns Historical replay create payload.
+ */
+function buildReplayCreatePayload(formData: FormData): ReplayCreatePayload {
+  const symbols = readRequiredFormValue(formData, "symbols")
+    .split(",")
+    .map((symbol) => symbol.trim())
+    .filter((symbol) => symbol.length > 0);
+  if (symbols.length === 0) {
+    throw new Error("symbols is required.");
+  }
+  return {
+    name: readRequiredFormValue(formData, "name"),
+    symbols,
+    mode: "historical_replay",
+    dataset_id: readRequiredFormValue(formData, "dataset_id"),
+  };
+}
+
+/**
+ * Read a required string field from form data.
+ *
+ * @param formData - Submitted form data.
+ * @param key - Field key.
+ * @returns Trimmed field value.
+ */
+function readRequiredFormValue(formData: FormData, key: string): string {
+  const value = formData.get(key);
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${key} is required.`);
+  }
+  return value.trim();
+}
+
+/**
+ * Read a concise backend error detail from a failed response.
+ *
+ * @param response - Failed backend response.
+ * @returns Backend error detail.
+ */
+async function readErrorDetail(response: Response): Promise<string> {
+  const payload = (await response.json().catch(() => null)) as {
+    detail?: unknown;
+  } | null;
+  if (typeof payload?.detail === "string") {
+    return payload.detail;
+  }
+  return `HTTP ${response.status}`;
 }
