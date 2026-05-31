@@ -6,15 +6,17 @@ from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
 
+from tiko.core.config import Settings
 from tiko.domain.account import SimAccount
 from tiko.domain.market import Candle
 from tiko.domain.observation import Observation
 from tiko.domain.reporting import ReportArtifact
 from tiko.domain.runtime import BackgroundJob
 from tiko.domain.simulation import SimulationRun
-from tiko.runtime.scheduler import run_scheduler_once
+from tiko.runtime.scheduler import RuntimeScheduler, run_scheduler_once
 from tiko.services.experiments import ExperimentService
 from tiko.services.runtime import MAX_RUNNING_JOB_AGE_SECONDS, RuntimeService
+from tiko.services.simulation import SimulationService
 from tiko.workers import (
     build_worker_definitions,
     process_worker_jobs,
@@ -153,6 +155,36 @@ def test_scheduler_once_reports_queued_work_without_worker() -> None:
     assert "queued_work_without_healthy_worker" in {
         check.code for check in report.checks
     }
+
+
+def test_simulation_clock_scheduler_advances_due_running_runs() -> None:
+    """Verify scheduler clock ticks delegate due running simulation steps."""
+
+    simulation_service = SimulationService(Settings())
+    run_start = datetime(2026, 1, 1, tzinfo=UTC)
+    wall_start = datetime(2026, 1, 2, tzinfo=UTC)
+    run = simulation_service.create_run(
+        name="scheduler-live-clock",
+        symbols=["BTCUSDT"],
+        start_sim_time=run_start,
+    )
+    simulation_service.update_run_speed(run.run_id, Decimal("10"))
+    simulation_service.update_run_status(run.run_id, "running")
+    scheduler = RuntimeScheduler(
+        service=RuntimeService(),
+        simulation_service=simulation_service,
+    )
+
+    first_tick = scheduler.tick_simulation_clock(now=wall_start)
+    due_tick = scheduler.tick_simulation_clock(now=wall_start + timedelta(seconds=360))
+    disabled_scheduler_tick = RuntimeScheduler(RuntimeService()).tick_simulation_clock(
+        now=wall_start + timedelta(seconds=720)
+    )
+
+    assert first_tick == ()
+    assert len(due_tick) == 1
+    assert due_tick[0].run.current_sim_time == run_start + timedelta(hours=1)
+    assert disabled_scheduler_tick == ()
 
 
 def test_runtime_job_lifecycle_claims_only_eligible_jobs() -> None:

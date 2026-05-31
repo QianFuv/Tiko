@@ -248,6 +248,66 @@ def test_simulation_steps_size_orders_against_existing_target() -> None:
     assert second_notional < first_notional / Decimal("10")
 
 
+def test_live_clock_advances_running_runs_by_speed_multiplier() -> None:
+    """Verify live clock ticks advance running runs when steps are due."""
+
+    service = SimulationService(Settings())
+    run_start = datetime(2026, 1, 1, tzinfo=UTC)
+    wall_start = datetime(2026, 1, 2, tzinfo=UTC)
+    run = service.create_run(
+        name="live-clock",
+        symbols=["BTCUSDT"],
+        start_sim_time=run_start,
+    )
+    service.update_run_speed(run.run_id, Decimal("10"))
+    service.update_run_status(run.run_id, "running")
+
+    first_tick = service.advance_running_runs(now=wall_start)
+    early_tick = service.advance_running_runs(now=wall_start + timedelta(seconds=359))
+    due_tick = service.advance_running_runs(now=wall_start + timedelta(seconds=360))
+    next_due_tick = service.advance_running_runs(
+        now=wall_start + timedelta(seconds=720)
+    )
+
+    assert first_tick == []
+    assert early_tick == []
+    assert len(due_tick) == 1
+    assert due_tick[0].run.current_sim_time == run_start + timedelta(hours=1)
+    assert len(next_due_tick) == 1
+    assert next_due_tick[0].run.current_sim_time == run_start + timedelta(hours=2)
+
+
+def test_live_clock_skips_paused_runs_and_rebaselines_on_resume() -> None:
+    """Verify paused runs do not accumulate live clock advancement."""
+
+    service = SimulationService(Settings())
+    run_start = datetime(2026, 1, 1, tzinfo=UTC)
+    wall_start = datetime(2026, 1, 2, tzinfo=UTC)
+    run = service.create_run(
+        name="live-clock-pause",
+        symbols=["BTCUSDT"],
+        start_sim_time=run_start,
+    )
+    service.update_run_speed(run.run_id, Decimal("10"))
+    service.update_run_status(run.run_id, "running")
+    service.advance_running_runs(now=wall_start)
+
+    service.update_run_status(run.run_id, "paused")
+    paused_tick = service.advance_running_runs(now=wall_start + timedelta(seconds=720))
+    service.update_run_status(run.run_id, "running")
+    resumed_baseline_tick = service.advance_running_runs(
+        now=wall_start + timedelta(seconds=720)
+    )
+    resumed_due_tick = service.advance_running_runs(
+        now=wall_start + timedelta(seconds=1080)
+    )
+
+    assert paused_tick == []
+    assert resumed_baseline_tick == []
+    assert len(resumed_due_tick) == 1
+    assert resumed_due_tick[0].run.current_sim_time == run_start + timedelta(hours=1)
+
+
 def test_simulation_step_is_deterministic_for_observable_market_values() -> None:
     """Verify repeated runs with the same inputs produce the same market result."""
 
