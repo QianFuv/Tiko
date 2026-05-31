@@ -91,6 +91,7 @@ class SimulationService:
         self._broker = SimBroker(
             fee_bps=settings.sim_broker_taker_fee_bps,
             slippage_bps=settings.sim_broker_slippage_bps,
+            maker_fee_bps=settings.sim_broker_maker_fee_bps,
         )
         self._event_bus = EventBus()
         self._observation_builder = ObservationBuilder()

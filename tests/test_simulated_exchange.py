@@ -5,6 +5,8 @@ from decimal import Decimal
 from typing import Literal
 from uuid import uuid4
 
+import pytest
+
 from tiko.domain.account import Position, SimAccount
 from tiko.domain.order import Fill, OrderRequest
 from tiko.domain.simulation import SimulationRun
@@ -39,6 +41,33 @@ def create_order_request(side: Literal["buy", "sell"] = "buy") -> OrderRequest:
         side=side,
         order_type="market",
         quantity=Decimal("2"),
+        submitted_at_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+
+def create_limit_order_request(
+    side: Literal["buy", "sell"],
+    limit_price: Decimal | None,
+) -> OrderRequest:
+    """Create a limit order request for simulated exchange tests.
+
+    Args:
+        side: Order side.
+        limit_price: Optional limit price.
+
+    Returns:
+        Limit order request domain model.
+    """
+
+    return OrderRequest(
+        run_id=uuid4(),
+        account_id=uuid4(),
+        decision_id=uuid4(),
+        symbol="BTCUSDT",
+        side=side,
+        order_type="limit",
+        quantity=Decimal("2"),
+        limit_price=limit_price,
         submitted_at_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
     )
 
@@ -183,6 +212,47 @@ def test_matching_engine_creates_filled_order_and_fill() -> None:
     assert fill.slippage_bps == Decimal("2")
 
 
+def test_matching_engine_fills_crossed_limit_order_with_maker_fee() -> None:
+    """Verify crossed limit orders fill at reference price with maker fees."""
+
+    order, fill = MatchingEngine(
+        maker_fee_engine=FeeEngine(fee_bps=Decimal("2")),
+    ).match_limit_order(
+        create_limit_order_request("buy", Decimal("101")),
+        reference_price=Decimal("100"),
+    )
+
+    assert fill is not None
+    assert order.status == "filled"
+    assert order.order_id == fill.order_id
+    assert fill.price == Decimal("100")
+    assert fill.fee == Decimal("0.04")
+    assert fill.slippage_bps == Decimal("0")
+
+
+def test_matching_engine_leaves_uncrossed_limit_order_open() -> None:
+    """Verify uncrossed limit orders remain open without fills."""
+
+    order, fill = MatchingEngine().match_limit_order(
+        create_limit_order_request("buy", Decimal("99")),
+        reference_price=Decimal("100"),
+    )
+
+    assert order.status == "open"
+    assert order.limit_price == Decimal("99")
+    assert fill is None
+
+
+def test_matching_engine_requires_limit_price() -> None:
+    """Verify limit matching rejects incomplete limit requests."""
+
+    with pytest.raises(ValueError, match="limit_price"):
+        MatchingEngine().match_limit_order(
+            create_limit_order_request("sell", None),
+            reference_price=Decimal("100"),
+        )
+
+
 def test_sim_broker_preserves_immediate_fill_defaults() -> None:
     """Verify broker output remains compatible with previous behavior."""
 
@@ -195,6 +265,24 @@ def test_sim_broker_preserves_immediate_fill_defaults() -> None:
     assert fill.price == Decimal("99.98")
     assert fill.fee == Decimal("0.09998")
     assert fill.order_id == order.order_id
+
+
+def test_sim_broker_uses_maker_fee_for_limit_orders() -> None:
+    """Verify broker limit submissions use configured maker fees."""
+
+    order, fill = SimBroker(
+        fee_bps=Decimal("5"),
+        maker_fee_bps=Decimal("2"),
+    ).submit_limit_order(
+        create_limit_order_request("sell", Decimal("99")),
+        reference_price=Decimal("100"),
+    )
+
+    assert fill is not None
+    assert order.status == "filled"
+    assert fill.price == Decimal("100")
+    assert fill.fee == Decimal("0.04")
+    assert fill.slippage_bps == Decimal("0")
 
 
 def test_ledger_update_preserves_account_output_and_exposes_metadata() -> None:
