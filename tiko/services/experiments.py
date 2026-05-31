@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 from tiko.db.repositories import SimulationRepository
 from tiko.domain.experiment import ExperimentKind, ExperimentRecord
 from tiko.domain.reporting import ReportArtifact
+from tiko.domain.runtime import BackgroundJob
 
 
 class ExperimentService:
@@ -126,6 +127,130 @@ class ExperimentService:
         if self._repository is not None:
             self._repository.save_experiment(queued_experiment)
         return queued_experiment
+
+    def complete_run(
+        self,
+        experiment_id: UUID,
+        metrics: dict[str, object],
+        job_id: UUID | None = None,
+    ) -> ExperimentRecord:
+        """Mark an experiment run as completed.
+
+        Args:
+            experiment_id: Experiment identifier.
+            metrics: Result metrics to merge into the experiment record.
+            job_id: Optional runtime job identifier.
+
+        Returns:
+            Completed experiment record.
+
+        Raises:
+            KeyError: If the experiment does not exist.
+        """
+
+        experiment = self.get_experiment(experiment_id)
+        merged_metrics = experiment.metrics | metrics | {"completed": True}
+        if job_id is not None:
+            merged_metrics["job_id"] = str(job_id)
+        completed_experiment = experiment.model_copy(
+            update={
+                "status": "completed",
+                "completed_at": datetime.now(UTC),
+                "metrics": merged_metrics,
+            }
+        )
+        self._experiments[experiment_id] = completed_experiment
+        if self._repository is not None:
+            self._repository.save_experiment(completed_experiment)
+        return completed_experiment
+
+    def fail_run(
+        self,
+        experiment_id: UUID,
+        error_message: str,
+        job_id: UUID | None = None,
+    ) -> ExperimentRecord:
+        """Mark an experiment run as failed.
+
+        Args:
+            experiment_id: Experiment identifier.
+            error_message: Runtime failure reason.
+            job_id: Optional runtime job identifier.
+
+        Returns:
+            Failed experiment record.
+
+        Raises:
+            KeyError: If the experiment does not exist.
+        """
+
+        experiment = self.get_experiment(experiment_id)
+        merged_metrics = experiment.metrics | {
+            "failed": True,
+            "error_message": error_message,
+        }
+        if job_id is not None:
+            merged_metrics["job_id"] = str(job_id)
+        failed_experiment = experiment.model_copy(
+            update={
+                "status": "failed",
+                "completed_at": datetime.now(UTC),
+                "metrics": merged_metrics,
+            }
+        )
+        self._experiments[experiment_id] = failed_experiment
+        if self._repository is not None:
+            self._repository.save_experiment(failed_experiment)
+        return failed_experiment
+
+    def apply_runtime_job(self, job: BackgroundJob) -> ExperimentRecord:
+        """Apply a finished experiment runtime job to experiment state.
+
+        Args:
+            job: Completed or failed experiment runtime job.
+
+        Returns:
+            Updated experiment record.
+
+        Raises:
+            ValueError: If the job does not represent a finished experiment run.
+            KeyError: If the experiment does not exist.
+        """
+
+        if job.job_type != "experiment_run" or job.resource_type != "experiment":
+            raise ValueError("Only experiment_run jobs can update experiments.")
+        if job.status == "completed":
+            return self.complete_run(
+                UUID(job.resource_id),
+                metrics=self._build_runtime_result_metrics(job.result),
+                job_id=job.job_id,
+            )
+        if job.status == "failed":
+            return self.fail_run(
+                UUID(job.resource_id),
+                error_message=job.error_message
+                or "Runtime job failed without an error message.",
+                job_id=job.job_id,
+            )
+        raise ValueError("Only completed or failed experiment_run jobs can be applied.")
+
+    def _build_runtime_result_metrics(
+        self, result: dict[str, object]
+    ) -> dict[str, object]:
+        """Build experiment metrics from a runtime job result.
+
+        Args:
+            result: Runtime job result payload.
+
+        Returns:
+            Experiment metrics to merge.
+        """
+
+        metrics: dict[str, object] = {"runtime_result": result}
+        for key in ("backtest_summary", "returns_by_symbol"):
+            if key in result:
+                metrics[key] = result[key]
+        return metrics
 
     def create_experiment_report(self, experiment_id: UUID) -> ReportArtifact:
         """Create a structured report for one experiment.

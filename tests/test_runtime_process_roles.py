@@ -13,6 +13,7 @@ from tiko.domain.reporting import ReportArtifact
 from tiko.domain.runtime import BackgroundJob
 from tiko.domain.simulation import SimulationRun
 from tiko.runtime.scheduler import run_scheduler_once
+from tiko.services.experiments import ExperimentService
 from tiko.services.runtime import MAX_RUNNING_JOB_AGE_SECONDS, RuntimeService
 from tiko.workers import (
     build_worker_definitions,
@@ -334,6 +335,55 @@ def test_backtest_worker_fails_empty_candle_payloads() -> None:
     assert result.failed_job_ids == (job.job_id,)
     assert failed_job.status == "failed"
     assert failed_job.error_message == "Backtest payload requires at least one candle."
+
+
+def test_experiment_service_applies_completed_worker_jobs() -> None:
+    """Verify worker result metrics complete queued experiments."""
+
+    runtime_service = RuntimeService()
+    experiment_service = ExperimentService()
+    experiment = experiment_service.create_experiment(
+        name="worker backtest",
+        kind="backtest",
+        hypothesis="Worker metrics update the experiment record.",
+        dataset_id=uuid4(),
+        parameters={"window": 2},
+    )
+    job = runtime_service.create_job(
+        job_type="experiment_run",
+        resource_type="experiment",
+        resource_id=str(experiment.experiment_id),
+        payload={
+            "dataset_id": str(experiment.dataset_id),
+            "experiment_id": str(experiment.experiment_id),
+            "kind": experiment.kind,
+            "parameters": experiment.parameters,
+            "candles": [
+                candle.model_dump(mode="json") for candle in create_rl_candles()
+            ],
+        },
+    )
+    experiment_service.queue_run(experiment.experiment_id, job_id=job.job_id)
+    definition = next(
+        definition
+        for definition in build_worker_definitions()
+        if definition.worker_name == "backtest-worker"
+    )
+
+    result = process_worker_jobs(runtime_service, definition, max_jobs=1)
+    completed_job = runtime_service.get_job(job.job_id)
+    completed_experiment = experiment_service.apply_runtime_job(completed_job)
+    runtime_result = completed_experiment.metrics["runtime_result"]
+    assert isinstance(runtime_result, dict)
+
+    assert result.completed_job_ids == (job.job_id,)
+    assert completed_experiment.status == "completed"
+    assert completed_experiment.completed_at is not None
+    assert completed_experiment.metrics["queued"] is True
+    assert completed_experiment.metrics["completed"] is True
+    assert completed_experiment.metrics["job_id"] == str(job.job_id)
+    assert completed_experiment.metrics["returns_by_symbol"] == {"BTCUSDT": "0.1"}
+    assert runtime_result["job_type"] == "experiment_run"
 
 
 def test_agent_worker_runs_rule_based_inference_jobs() -> None:

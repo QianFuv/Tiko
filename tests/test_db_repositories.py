@@ -26,6 +26,7 @@ from tiko.domain.model import ModelRegistryEntry
 from tiko.domain.plugin import PluginManifest, PluginPermissions, PluginRegistryEntry
 from tiko.domain.registry import ProjectRecord, SimulationDefinition, UserProfile
 from tiko.domain.reporting import Alert, ReportArtifact
+from tiko.domain.runtime import BackgroundJob
 from tiko.domain.security import AuditLogEntry, Principal
 from tiko.plugins import validate_plugin_manifest
 from tiko.services import (
@@ -453,18 +454,78 @@ def test_experiment_service_writes_through_repository(
     )
     persisted_service = ExperimentService(repository)
 
-    queued = persisted_service.queue_run(experiment.experiment_id, job_id=uuid4())
+    job_id = uuid4()
+    queued = persisted_service.queue_run(experiment.experiment_id, job_id=job_id)
+    completed_job = BackgroundJob(
+        job_id=job_id,
+        job_type="experiment_run",
+        resource_type="experiment",
+        resource_id=str(experiment.experiment_id),
+        status="completed",
+        payload={},
+        result={
+            "backtest_summary": {"candle_count": 1},
+            "returns_by_symbol": {"BTCUSDT": "0.05"},
+        },
+        created_at=datetime(2026, 1, 1, 2, 30, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 1, 2, 31, tzinfo=UTC),
+        completed_at=datetime(2026, 1, 1, 2, 31, tzinfo=UTC),
+    )
+    completed = persisted_service.apply_runtime_job(completed_job)
     report = persisted_service.create_experiment_report(experiment.experiment_id)
 
-    assert persisted_service.list_experiments() == [queued]
-    assert persisted_service.get_experiment(experiment.experiment_id) == queued
+    assert persisted_service.list_experiments() == [completed]
+    assert persisted_service.get_experiment(experiment.experiment_id) == completed
     assert queued.status == "queued"
     assert queued.metrics["queued"] is True
+    assert completed.status == "completed"
+    assert completed.completed_at is not None
+    assert completed.metrics["completed"] is True
+    assert completed.metrics["job_id"] == str(job_id)
+    assert completed.metrics["returns_by_symbol"] == {"BTCUSDT": "0.05"}
     assert persisted_service.list_experiment_reports(experiment.experiment_id) == [
         report
     ]
     assert persisted_service.get_report(report.report_id) == report
     assert repository.get_report(report.report_id) == report
+
+
+def test_experiment_service_applies_failed_runtime_jobs() -> None:
+    """Verify failed runtime jobs update experiment failure state."""
+
+    service = ExperimentService()
+    experiment = service.create_experiment(
+        name="failed backtest",
+        kind="backtest",
+        hypothesis="Runtime failures should be visible.",
+        dataset_id=uuid4(),
+        parameters={},
+    )
+    job_id = uuid4()
+    service.queue_run(experiment.experiment_id, job_id=job_id)
+    failed_job = BackgroundJob(
+        job_id=job_id,
+        job_type="experiment_run",
+        resource_type="experiment",
+        resource_id=str(experiment.experiment_id),
+        status="failed",
+        payload={},
+        error_message="worker failed",
+        created_at=datetime(2026, 1, 1, 3, 0, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 1, 3, 1, tzinfo=UTC),
+        completed_at=datetime(2026, 1, 1, 3, 1, tzinfo=UTC),
+    )
+
+    failed = service.apply_runtime_job(failed_job)
+    invalid_job = failed_job.model_copy(update={"job_type": "report_generation"})
+
+    assert failed.status == "failed"
+    assert failed.completed_at is not None
+    assert failed.metrics["failed"] is True
+    assert failed.metrics["error_message"] == "worker failed"
+    assert failed.metrics["job_id"] == str(job_id)
+    with pytest.raises(ValueError, match="Only experiment_run"):
+        service.apply_runtime_job(invalid_job)
 
 
 def test_repository_round_trips_run_and_updates_account(
