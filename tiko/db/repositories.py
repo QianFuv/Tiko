@@ -35,9 +35,12 @@ from tiko.db.models import (
     PluginRegistryRecord,
     PortfolioSnapshotRecord,
     PositionRecord,
+    ProjectRecordRow,
     ReportRecord,
     RiskReviewRecord,
+    SimulationDefinitionRecord,
     SimulationRunRecord,
+    UserRecord,
 )
 from tiko.domain.account import (
     LedgerEntry,
@@ -78,6 +81,12 @@ from tiko.domain.plugin import (
     PluginRegistryEntry,
     PluginStatus,
     SandboxResult,
+)
+from tiko.domain.registry import (
+    ProjectRecord,
+    SimulationDefinition,
+    SimulationDefinitionMode,
+    UserProfile,
 )
 from tiko.domain.reporting import (
     Alert,
@@ -224,6 +233,158 @@ class SimulationRepository:
                 self._to_run(record, self._require_account(session, record.account_id))
                 for record in records
             ]
+
+    def save_user_profile(self, profile: UserProfile) -> None:
+        """Persist a control-plane user profile.
+
+        Args:
+            profile: User profile to persist.
+        """
+
+        with self._session_factory() as session:
+            session.merge(
+                UserRecord(
+                    user_id=profile.user_id,
+                    role=profile.role,
+                    display_name=profile.display_name,
+                    is_disabled=profile.is_disabled,
+                    created_at=profile.created_at,
+                )
+            )
+            session.commit()
+
+    def get_user_profile(self, user_id: str) -> UserProfile | None:
+        """Load one control-plane user profile.
+
+        Args:
+            user_id: User identifier.
+
+        Returns:
+            User profile or `None`.
+        """
+
+        with self._session_factory() as session:
+            record = session.get(UserRecord, user_id)
+            if record is None:
+                return None
+            return self._to_user_profile(record)
+
+    def list_user_profiles(self) -> list[UserProfile]:
+        """List control-plane user profiles.
+
+        Returns:
+            User profiles ordered by creation time.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(UserRecord).order_by(UserRecord.created_at)
+            ).all()
+            return [self._to_user_profile(record) for record in records]
+
+    def save_project_record(self, project: ProjectRecord) -> None:
+        """Persist a project namespace.
+
+        Args:
+            project: Project record to persist.
+        """
+
+        with self._session_factory() as session:
+            session.merge(
+                ProjectRecordRow(
+                    project_id=str(project.project_id),
+                    name=project.name,
+                    owner_user_id=project.owner_user_id,
+                    description=project.description,
+                    created_at=project.created_at,
+                )
+            )
+            session.commit()
+
+    def get_project_record(self, project_id: UUID) -> ProjectRecord | None:
+        """Load one project namespace.
+
+        Args:
+            project_id: Project identifier.
+
+        Returns:
+            Project record or `None`.
+        """
+
+        with self._session_factory() as session:
+            record = session.get(ProjectRecordRow, str(project_id))
+            if record is None:
+                return None
+            return self._to_project_record(record)
+
+    def list_project_records(self) -> list[ProjectRecord]:
+        """List project namespaces.
+
+        Returns:
+            Project records ordered by creation time.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(ProjectRecordRow).order_by(ProjectRecordRow.created_at)
+            ).all()
+            return [self._to_project_record(record) for record in records]
+
+    def save_simulation_definition(self, definition: SimulationDefinition) -> None:
+        """Persist reusable simulation configuration metadata.
+
+        Args:
+            definition: Simulation definition to persist.
+        """
+
+        with self._session_factory() as session:
+            session.merge(
+                SimulationDefinitionRecord(
+                    simulation_id=str(definition.simulation_id),
+                    project_id=str(definition.project_id)
+                    if definition.project_id is not None
+                    else None,
+                    name=definition.name,
+                    mode=definition.mode,
+                    symbols=definition.symbols,
+                    config=definition.config,
+                    created_at=definition.created_at,
+                )
+            )
+            session.commit()
+
+    def get_simulation_definition(
+        self, simulation_id: UUID
+    ) -> SimulationDefinition | None:
+        """Load one simulation definition.
+
+        Args:
+            simulation_id: Simulation definition identifier.
+
+        Returns:
+            Simulation definition or `None`.
+        """
+
+        with self._session_factory() as session:
+            record = session.get(SimulationDefinitionRecord, str(simulation_id))
+            if record is None:
+                return None
+            return self._to_simulation_definition(record)
+
+    def list_simulation_definitions(self) -> list[SimulationDefinition]:
+        """List simulation definitions.
+
+        Returns:
+            Simulation definitions ordered by creation time.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(SimulationDefinitionRecord).order_by(
+                    SimulationDefinitionRecord.created_at
+                )
+            ).all()
+            return [self._to_simulation_definition(record) for record in records]
 
     def save_audit_log_entry(self, entry: AuditLogEntry) -> None:
         """Persist an audit log entry.
@@ -1619,6 +1780,64 @@ class SimulationRepository:
             resource_type=record.resource_type,
             resource_id=record.resource_id,
             metadata=dict(record.metadata_),
+            created_at=self._aware_datetime(record.created_at),
+        )
+
+    def _to_user_profile(self, record: UserRecord) -> UserProfile:
+        """Convert a user row to a domain model.
+
+        Args:
+            record: Persisted user row.
+
+        Returns:
+            User profile domain model.
+        """
+
+        return UserProfile(
+            user_id=record.user_id,
+            role=cast(Role, record.role),
+            display_name=record.display_name,
+            is_disabled=record.is_disabled,
+            created_at=self._aware_datetime(record.created_at),
+        )
+
+    def _to_project_record(self, record: ProjectRecordRow) -> ProjectRecord:
+        """Convert a project row to a domain model.
+
+        Args:
+            record: Persisted project row.
+
+        Returns:
+            Project record domain model.
+        """
+
+        return ProjectRecord(
+            project_id=UUID(record.project_id),
+            name=record.name,
+            owner_user_id=record.owner_user_id,
+            description=record.description,
+            created_at=self._aware_datetime(record.created_at),
+        )
+
+    def _to_simulation_definition(
+        self, record: SimulationDefinitionRecord
+    ) -> SimulationDefinition:
+        """Convert a simulation definition row to a domain model.
+
+        Args:
+            record: Persisted simulation definition row.
+
+        Returns:
+            Simulation definition domain model.
+        """
+
+        return SimulationDefinition(
+            simulation_id=UUID(record.simulation_id),
+            project_id=UUID(record.project_id) if record.project_id else None,
+            name=record.name,
+            mode=cast(SimulationDefinitionMode, record.mode),
+            symbols=list(record.symbols),
+            config=dict(record.config),
             created_at=self._aware_datetime(record.created_at),
         )
 

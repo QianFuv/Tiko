@@ -24,6 +24,7 @@ from tiko.domain.market import Asset, Candle
 from tiko.domain.memory import MemoryEntry
 from tiko.domain.model import ModelRegistryEntry
 from tiko.domain.plugin import PluginManifest, PluginPermissions, PluginRegistryEntry
+from tiko.domain.registry import ProjectRecord, SimulationDefinition, UserProfile
 from tiko.domain.reporting import Alert, ReportArtifact
 from tiko.domain.security import AuditLogEntry, Principal
 from tiko.plugins import validate_plugin_manifest
@@ -246,9 +247,12 @@ def test_metadata_creates_expected_tables(sqlite_engine: Engine) -> None:
         "plugin_registry",
         "portfolio_snapshots",
         "positions",
+        "projects",
         "risk_reviews",
         "reports",
+        "simulations",
         "simulation_runs",
+        "users",
     }
 
 
@@ -289,6 +293,48 @@ def test_audit_service_writes_through_repository(
 
     assert service.list_entries() == [entry]
     assert repository.list_audit_log_entries() == [entry]
+
+
+def test_repository_persists_control_plane_registry(
+    repository: SimulationRepository,
+) -> None:
+    """Verify user, project, and simulation definition records round-trip."""
+
+    created_at = datetime(2026, 1, 1, tzinfo=UTC)
+    user = UserProfile(
+        user_id="researcher@example.test",
+        role="researcher",
+        display_name="Researcher",
+        is_disabled=False,
+        created_at=created_at,
+    )
+    project = ProjectRecord(
+        project_id=uuid4(),
+        name="Research workspace",
+        owner_user_id=user.user_id,
+        description="Simulation research namespace.",
+        created_at=created_at,
+    )
+    definition = SimulationDefinition(
+        simulation_id=uuid4(),
+        project_id=project.project_id,
+        name="BTC synthetic replay",
+        mode="synthetic_market",
+        symbols=["BTCUSDT"],
+        config={"speed_multiplier": "1"},
+        created_at=created_at,
+    )
+
+    repository.save_user_profile(user)
+    repository.save_project_record(project)
+    repository.save_simulation_definition(definition)
+
+    assert repository.get_user_profile(user.user_id) == user
+    assert repository.list_user_profiles() == [user]
+    assert repository.get_project_record(project.project_id) == project
+    assert repository.list_project_records() == [project]
+    assert repository.get_simulation_definition(definition.simulation_id) == definition
+    assert repository.list_simulation_definitions() == [definition]
 
 
 def test_repository_persists_assets(repository: SimulationRepository) -> None:

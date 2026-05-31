@@ -74,6 +74,50 @@ class Base(DeclarativeBase):
     """Provide shared SQLAlchemy declarative metadata."""
 
 
+class UserRecord(Base):
+    """Persist a control-plane user profile."""
+
+    __tablename__ = "users"
+
+    user_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_disabled: Mapped[bool] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class ProjectRecordRow(Base):
+    """Persist a project namespace."""
+
+    __tablename__ = "projects"
+
+    project_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    owner_user_id: Mapped[str] = mapped_column(ForeignKey("users.user_id"))
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class SimulationDefinitionRecord(Base):
+    """Persist reusable simulation configuration metadata."""
+
+    __tablename__ = "simulations"
+
+    simulation_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.project_id"))
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    mode: Mapped[str] = mapped_column(String(64), nullable=False)
+    symbols: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    config: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class AuditLogRecord(Base):
     """Persist an audited control-plane action."""
 

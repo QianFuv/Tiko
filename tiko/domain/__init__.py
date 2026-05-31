@@ -45,6 +45,12 @@ from tiko.domain.plugin import (
     PluginType,
     SandboxResult,
 )
+from tiko.domain.registry import (
+    ProjectRecord,
+    SimulationDefinition,
+    SimulationDefinitionMode,
+    UserProfile,
+)
 from tiko.domain.reporting import (
     Alert,
     AlertCategory,
@@ -118,6 +124,7 @@ __all__ = [
     "PortfolioSnapshot",
     "Position",
     "Principal",
+    "ProjectRecord",
     "RiskLimits",
     "RiskReview",
     "ReportArtifact",
@@ -131,8 +138,11 @@ __all__ = [
     "SandboxResult",
     "SimAccount",
     "SimOrder",
+    "SimulationDefinition",
+    "SimulationDefinitionMode",
     "SimulationRun",
     "TradeIntent",
+    "UserProfile",
     "WatchdogCheck",
     "WatchdogReport",
     "WatchdogSeverity",
