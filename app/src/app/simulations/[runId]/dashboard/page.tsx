@@ -2,6 +2,7 @@ import type { ReactElement } from "react";
 
 import { RunNavigation } from "@/components/layout/RunNavigation";
 import { MetricCard } from "@/components/metric/MetricCard";
+import { SimulationStreamPanel } from "@/components/realtime/SimulationStreamPanel";
 import { fetchRunDashboardData } from "@/lib/api-client";
 import {
   formatCurrency,
@@ -132,21 +133,11 @@ export default async function SimulationDashboardPage({
             </dl>
           </div>
 
-          <div>
-            <h2 className="text-xl font-semibold">Stream Status</h2>
-            <div className="mt-3 rounded-lg border border-[#d8dee4] bg-white p-4 text-sm leading-6 text-[#44504b]">
-              <p>
-                WebSocket snapshot endpoint:{" "}
-                <code className="font-mono text-[#17201b]">
-                  /ws/simulations/{runId}
-                </code>
-              </p>
-              <p className="mt-2">
-                REST API base:{" "}
-                <span className="font-medium">{data.apiBaseUrl}</span>
-              </p>
-            </div>
-          </div>
+          <SimulationStreamPanel
+            key={runId}
+            runId={runId}
+            apiBaseUrl={data.apiBaseUrl}
+          />
         </aside>
       </section>
     </main>
