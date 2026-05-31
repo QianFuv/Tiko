@@ -12,7 +12,7 @@ from tiko.simulation.ledger import (
 from tiko.simulation.matching import MatchingEngine
 from tiko.simulation.metrics import ExecutionMetrics, MetricsEngine
 from tiko.simulation.replay import MarketReplay, MarketReplayExhausted
-from tiko.simulation.slippage import SlippageEngine
+from tiko.simulation.slippage import SlippageContext, SlippageEngine
 from tiko.simulation.state import SimulationState, SimulationStepResult
 from tiko.simulation.synthetic import generate_synthetic_candle
 
@@ -28,6 +28,7 @@ __all__ = [
     "SimBroker",
     "SimulationState",
     "SimulationStepResult",
+    "SlippageContext",
     "SlippageEngine",
     "advance_simulated_time",
     "apply_fill_to_account",

@@ -92,6 +92,12 @@ class SimulationService:
             fee_bps=settings.sim_broker_taker_fee_bps,
             slippage_bps=settings.sim_broker_slippage_bps,
             maker_fee_bps=settings.sim_broker_maker_fee_bps,
+            slippage_volatility_multiplier=(
+                settings.sim_broker_slippage_volatility_multiplier
+            ),
+            slippage_liquidity_multiplier=(
+                settings.sim_broker_slippage_liquidity_multiplier
+            ),
         )
         self._event_bus = EventBus()
         self._observation_builder = ObservationBuilder()

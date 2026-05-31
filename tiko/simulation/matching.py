@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 from tiko.domain.order import Fill, OrderRequest, SimOrder
 from tiko.simulation.fee import FeeEngine
-from tiko.simulation.slippage import SlippageEngine
+from tiko.simulation.slippage import SlippageContext, SlippageEngine
 
 TimeInForce = Literal["gtc", "ioc", "fok"]
 SUPPORTED_TIME_IN_FORCE: frozenset[TimeInForce] = frozenset(("gtc", "ioc", "fok"))
@@ -34,13 +34,17 @@ class MatchingEngine:
         self._maker_fee_engine = maker_fee_engine or self._taker_fee_engine
 
     def match_market_order(
-        self, order_request: OrderRequest, reference_price: Decimal
+        self,
+        order_request: OrderRequest,
+        reference_price: Decimal,
+        slippage_context: SlippageContext | None = None,
     ) -> tuple[SimOrder, Fill]:
         """Match an internal market order request immediately.
 
         Args:
             order_request: Internal order request.
             reference_price: Current market reference price.
+            slippage_context: Optional market context for effective slippage.
 
         Returns:
             Filled simulated order and fill.
@@ -51,8 +55,11 @@ class MatchingEngine:
 
         if order_request.order_type != "market":
             raise ValueError("MatchingEngine currently supports market orders only.")
-        fill_price = self._slippage_engine.apply_market_slippage(
-            reference_price, order_request.side
+        slippage_bps = self._slippage_engine.calculate_market_slippage_bps(
+            slippage_context
+        )
+        fill_price = self._slippage_engine.apply_market_slippage_bps(
+            reference_price, order_request.side, slippage_bps
         )
         fee = self._taker_fee_engine.calculate_fee(order_request.quantity, fill_price)
         order_id = uuid4()
@@ -66,7 +73,7 @@ class MatchingEngine:
             quantity=order_request.quantity,
             price=fill_price,
             fee=fee,
-            slippage_bps=self._slippage_engine.slippage_bps,
+            slippage_bps=slippage_bps,
             filled_at_sim_time=order_request.submitted_at_sim_time,
         )
         return order, fill

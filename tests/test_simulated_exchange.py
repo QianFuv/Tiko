@@ -20,7 +20,7 @@ from tiko.simulation.ledger import (
 )
 from tiko.simulation.matching import MatchingEngine
 from tiko.simulation.metrics import MetricsEngine
-from tiko.simulation.slippage import SlippageEngine
+from tiko.simulation.slippage import SlippageContext, SlippageEngine
 
 
 def create_order_request(side: Literal["buy", "sell"] = "buy") -> OrderRequest:
@@ -197,6 +197,54 @@ def test_slippage_engine_adjusts_buy_and_sell_prices() -> None:
     assert engine.apply_market_slippage(Decimal("100"), "sell") == Decimal("99.98")
 
 
+def test_slippage_engine_calculates_contextual_market_slippage() -> None:
+    """Verify contextual slippage uses volatility, spread, size, and depth."""
+
+    engine = SlippageEngine(
+        slippage_bps=Decimal("2"),
+        volatility_multiplier=Decimal("0.2"),
+        liquidity_multiplier=Decimal("1.5"),
+    )
+    context = SlippageContext(
+        volatility_bps=Decimal("10"),
+        spread_bps=Decimal("4"),
+        order_notional=Decimal("200"),
+        depth_1pct_usd=Decimal("10000"),
+    )
+
+    assert engine.calculate_market_slippage_bps(context) == Decimal("9")
+    assert engine.apply_market_slippage(Decimal("100"), "buy", context) == Decimal(
+        "100.09"
+    )
+    assert engine.apply_market_slippage(Decimal("100"), "sell", context) == Decimal(
+        "99.91"
+    )
+
+
+def test_slippage_engine_skips_liquidity_impact_without_depth() -> None:
+    """Verify missing or zero depth does not add liquidity impact."""
+
+    engine = SlippageEngine(
+        slippage_bps=Decimal("2"),
+        volatility_multiplier=Decimal("0.2"),
+        liquidity_multiplier=Decimal("1.5"),
+    )
+    context_without_depth = SlippageContext(
+        volatility_bps=Decimal("10"),
+        spread_bps=Decimal("4"),
+        order_notional=Decimal("200"),
+    )
+    context_with_zero_depth = SlippageContext(
+        volatility_bps=Decimal("10"),
+        spread_bps=Decimal("4"),
+        order_notional=Decimal("200"),
+        depth_1pct_usd=Decimal("0"),
+    )
+
+    assert engine.calculate_market_slippage_bps(context_without_depth) == Decimal("6")
+    assert engine.calculate_market_slippage_bps(context_with_zero_depth) == Decimal("6")
+
+
 def test_matching_engine_creates_filled_order_and_fill() -> None:
     """Verify market matching creates linked order and fill records."""
 
@@ -210,6 +258,34 @@ def test_matching_engine_creates_filled_order_and_fill() -> None:
     assert fill.price == Decimal("100.02")
     assert fill.fee == Decimal("0.10002")
     assert fill.slippage_bps == Decimal("2")
+
+
+def test_matching_engine_records_contextual_slippage_bps() -> None:
+    """Verify market fills record the effective contextual slippage."""
+
+    context = SlippageContext(
+        volatility_bps=Decimal("10"),
+        spread_bps=Decimal("4"),
+        order_notional=Decimal("200"),
+        depth_1pct_usd=Decimal("10000"),
+    )
+
+    order, fill = MatchingEngine(
+        slippage_engine=SlippageEngine(
+            slippage_bps=Decimal("2"),
+            volatility_multiplier=Decimal("0.2"),
+            liquidity_multiplier=Decimal("1.5"),
+        )
+    ).match_market_order(
+        create_order_request("buy"),
+        reference_price=Decimal("100"),
+        slippage_context=context,
+    )
+
+    assert order.status == "filled"
+    assert fill.price == Decimal("100.09")
+    assert fill.fee == Decimal("0.10009")
+    assert fill.slippage_bps == Decimal("9")
 
 
 def test_matching_engine_fills_crossed_limit_order_with_maker_fee() -> None:
@@ -382,6 +458,31 @@ def test_sim_broker_preserves_immediate_fill_defaults() -> None:
     assert fill.price == Decimal("99.98")
     assert fill.fee == Decimal("0.09998")
     assert fill.order_id == order.order_id
+
+
+def test_sim_broker_passes_slippage_context_to_market_matching() -> None:
+    """Verify broker market submissions pass slippage context to matching."""
+
+    context = SlippageContext(
+        volatility_bps=Decimal("2"),
+        spread_bps=Decimal("4"),
+        order_notional=Decimal("100"),
+        depth_1pct_usd=Decimal("10000"),
+    )
+
+    order, fill = SimBroker(
+        slippage_bps=Decimal("1"),
+        slippage_volatility_multiplier=Decimal("1"),
+        slippage_liquidity_multiplier=Decimal("1"),
+    ).submit_market_order(
+        create_order_request("buy"),
+        reference_price=Decimal("100"),
+        slippage_context=context,
+    )
+
+    assert order.status == "filled"
+    assert fill.price == Decimal("100.06")
+    assert fill.slippage_bps == Decimal("6")
 
 
 def test_sim_broker_uses_maker_fee_for_limit_orders() -> None:
