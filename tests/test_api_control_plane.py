@@ -1243,7 +1243,12 @@ def test_plugin_registry_routes_validate_sandbox_policy() -> None:
     )
     unsupported_response = client.post(
         "/api/plugins",
-        json=safe_manifest | {"tests": ["test_unknown_policy"]},
+        json=safe_manifest | {"tests": ["test_schema_valid", "test_unknown_policy"]},
+        headers=RESEARCHER_HEADERS,
+    )
+    unsupported_schema_response = client.post(
+        "/api/plugins",
+        json=safe_manifest | {"output_schema": "UnstructuredText"},
         headers=RESEARCHER_HEADERS,
     )
 
@@ -1251,6 +1256,8 @@ def test_plugin_registry_routes_validate_sandbox_policy() -> None:
     assert "write_orders" in unsafe_response.json()["detail"]
     assert unsupported_response.status_code == 422
     assert "Unsupported sandbox test" in unsupported_response.json()["detail"]
+    assert unsupported_schema_response.status_code == 422
+    assert "output_schema" in unsupported_schema_response.json()["detail"]
 
 
 def test_simulation_websocket_replays_default_subscription() -> None:

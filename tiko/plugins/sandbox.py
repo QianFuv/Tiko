@@ -17,6 +17,18 @@ SUPPORTED_SANDBOX_TESTS = {
     "test_approved_directories",
     "test_resource_limits",
 }
+SUPPORTED_OUTPUT_SCHEMAS = {
+    "AnalysisReport",
+    "Candle",
+    "Candle[]",
+    "ExperimentResult",
+    "FeatureSnapshot",
+    "FeatureSnapshot[]",
+    "MarketEvent",
+    "OrderBookSnapshot",
+    "OrderBookSnapshot[]",
+    "ReportArtifact",
+}
 TIME_BOUND_INPUTS = {"as_of", "current_sim_time", "simulated_time"}
 DETERMINISTIC_SEED_INPUTS = {"deterministic_seed", "random_seed", "seed"}
 STOCHASTIC_PLUGIN_TYPES = {"event_generation", "experiment", "synthetic_market"}
@@ -70,6 +82,8 @@ def validate_plugin_manifest(manifest: PluginManifest) -> SandboxResult:
         warnings.append("Market data connectors should not write features directly.")
     if len(manifest.tests) == 0:
         violations.append("Plugin manifests must declare sandbox tests.")
+    elif "test_schema_valid" not in manifest.tests:
+        violations.append("Plugin manifests must declare test_schema_valid.")
     return SandboxResult(
         passed=len(violations) == 0,
         violations=violations,
@@ -111,10 +125,15 @@ def _run_sandbox_test(
     """
 
     if test_name == "test_schema_valid":
+        passed = _schema_policy_passes(manifest)
         return SandboxTestResult(
             name=test_name,
-            passed=True,
-            message="Manifest schema is valid.",
+            passed=passed,
+            message=(
+                "Manifest output schema is supported."
+                if passed
+                else "Manifest output_schema is not supported by the sandbox."
+            ),
         )
     if test_name == "test_no_write_orders":
         passed = not manifest.permissions.write_orders
@@ -190,6 +209,19 @@ def _run_sandbox_test(
             f"{', '.join(sorted(SUPPORTED_SANDBOX_TESTS))}."
         ),
     )
+
+
+def _schema_policy_passes(manifest: PluginManifest) -> bool:
+    """Return whether the manifest output schema is supported.
+
+    Args:
+        manifest: Plugin manifest under validation.
+
+    Returns:
+        Whether the output schema is part of the platform schema allowlist.
+    """
+
+    return manifest.output_schema in SUPPORTED_OUTPUT_SCHEMAS
 
 
 def _future_event_policy_passes(manifest: PluginManifest) -> bool:

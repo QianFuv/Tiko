@@ -210,11 +210,11 @@ def test_sandbox_requires_time_bound_event_tests() -> None:
     missing_time_manifest = create_safe_manifest().model_copy(
         update={
             "inputs": ["run_id", "symbols", "seed"],
-            "tests": ["test_no_future_events"],
+            "tests": ["test_schema_valid", "test_no_future_events"],
         }
     )
     bounded_manifest = create_safe_manifest().model_copy(
-        update={"tests": ["test_no_future_events"]}
+        update={"tests": ["test_schema_valid", "test_no_future_events"]}
     )
     non_event_manifest = create_safe_manifest().model_copy(
         update={
@@ -222,7 +222,7 @@ def test_sandbox_requires_time_bound_event_tests() -> None:
             "permissions": create_safe_permissions(write_market_events=False),
             "inputs": ["run_id"],
             "output_schema": "AnalysisReport",
-            "tests": ["test_no_future_events"],
+            "tests": ["test_schema_valid", "test_no_future_events"],
         }
     )
 
@@ -231,7 +231,7 @@ def test_sandbox_requires_time_bound_event_tests() -> None:
     non_event_report = run_plugin_sandbox_tests(non_event_manifest)
 
     assert missing_time_report.passed is False
-    assert "simulated-time" in missing_time_report.results[0].message
+    assert "simulated-time" in missing_time_report.results[1].message
     assert bounded_report.passed is True
     assert non_event_report.passed is True
 
@@ -242,11 +242,11 @@ def test_sandbox_requires_deterministic_seed_for_stochastic_plugins() -> None:
     missing_seed_manifest = create_safe_manifest().model_copy(
         update={
             "inputs": ["run_id", "symbols", "current_sim_time"],
-            "tests": ["test_deterministic_seed"],
+            "tests": ["test_schema_valid", "test_deterministic_seed"],
         }
     )
     seeded_manifest = create_safe_manifest().model_copy(
-        update={"tests": ["test_deterministic_seed"]}
+        update={"tests": ["test_schema_valid", "test_deterministic_seed"]}
     )
     analysis_manifest = create_safe_manifest().model_copy(
         update={
@@ -254,7 +254,7 @@ def test_sandbox_requires_deterministic_seed_for_stochastic_plugins() -> None:
             "permissions": create_safe_permissions(write_market_events=False),
             "inputs": ["run_id"],
             "output_schema": "AnalysisReport",
-            "tests": ["test_deterministic_seed"],
+            "tests": ["test_schema_valid", "test_deterministic_seed"],
         }
     )
 
@@ -263,7 +263,7 @@ def test_sandbox_requires_deterministic_seed_for_stochastic_plugins() -> None:
     analysis_report = run_plugin_sandbox_tests(analysis_manifest)
 
     assert missing_seed_report.passed is False
-    assert "deterministic seed" in missing_seed_report.results[0].message
+    assert "deterministic seed" in missing_seed_report.results[1].message
     assert seeded_report.passed is True
     assert analysis_report.passed is True
 
@@ -277,6 +277,35 @@ def test_sandbox_requires_manifest_tests() -> None:
 
     assert result.passed is False
     assert "tests" in result.violations[0]
+
+
+def test_sandbox_requires_schema_validation_test() -> None:
+    """Verify plugin manifests must declare schema validation."""
+
+    manifest = create_safe_manifest().model_copy(
+        update={"tests": ["test_no_write_orders"]}
+    )
+
+    result = validate_plugin_manifest(manifest)
+
+    assert result.passed is False
+    assert any("test_schema_valid" in violation for violation in result.violations)
+
+
+def test_sandbox_schema_test_rejects_unknown_output_schema() -> None:
+    """Verify schema validation rejects unsupported output schema names."""
+
+    manifest = create_safe_manifest().model_copy(
+        update={"output_schema": "UnstructuredText", "tests": ["test_schema_valid"]}
+    )
+
+    report = run_plugin_sandbox_tests(manifest)
+
+    assert report.validation.passed is True
+    assert report.passed is False
+    assert report.results[0].name == "test_schema_valid"
+    assert report.results[0].passed is False
+    assert "output_schema" in report.results[0].message
 
 
 def test_sandbox_executes_supported_manifest_tests() -> None:
@@ -334,13 +363,13 @@ def test_sandbox_test_report_fails_unsupported_tests() -> None:
     """Verify unsupported declared sandbox tests fail explicitly."""
 
     manifest = create_safe_manifest().model_copy(
-        update={"tests": ["test_unknown_policy"]}
+        update={"tests": ["test_schema_valid", "test_unknown_policy"]}
     )
 
     report = run_plugin_sandbox_tests(manifest)
 
     assert report.passed is False
     assert report.validation.passed is True
-    assert report.results[0].name == "test_unknown_policy"
-    assert report.results[0].passed is False
-    assert "Unsupported sandbox test" in report.results[0].message
+    assert report.results[1].name == "test_unknown_policy"
+    assert report.results[1].passed is False
+    assert "Unsupported sandbox test" in report.results[1].message
