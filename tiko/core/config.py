@@ -33,7 +33,7 @@ class Settings(BaseSettings):
         ),
     )
     openrouter_model: str = Field(
-        default="openrouter/free",
+        default="liquid/lfm-2.5-1.2b-instruct:free",
         min_length=1,
         validation_alias=AliasChoices("TIKO_OPENROUTER_MODEL", "OPENROUTER_MODEL"),
     )

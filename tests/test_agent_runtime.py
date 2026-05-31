@@ -218,8 +218,35 @@ def test_openrouter_agent_builds_scoped_trade_intent() -> None:
 
     request_payload = captured_payload["payload"]
     assert isinstance(request_payload, dict)
-    assert request_payload["model"] == "openrouter/free"
+    assert request_payload["model"] == "liquid/lfm-2.5-1.2b-instruct:free"
     assert "response_format" in request_payload
+    messages = request_payload["messages"]
+    assert isinstance(messages, list)
+    system_message = messages[0]
+    assert isinstance(system_message, dict)
+    assert "plain base-10" in str(system_message["content"])
+    assert "Always include every required field" in str(system_message["content"])
+    user_message = messages[1]
+    assert isinstance(user_message, dict)
+    observation_payload = json.loads(str(user_message["content"]))
+    assert observation_payload["output_contract"]["safe_default"] == {
+        "action": "hold",
+        "target_weight": "0",
+        "target_notional": None,
+        "max_leverage": "1",
+        "confidence": 0.5,
+        "expected_holding_period": "1h",
+        "thesis": "No clear edge.",
+        "evidence": [],
+        "invalidation_conditions": [],
+        "data_quality_score": 1.0,
+    }
+    assert "confidence" in observation_payload["output_contract"]["required_fields"]
+    assert observation_payload["output_contract"]["number_fields"] == [
+        "confidence",
+        "data_quality_score",
+    ]
+    assert "hold" in observation_payload["output_contract"]["allowed_actions"]
     assert intent.run_id == observation.run_id
     assert intent.symbol == observation.symbol
     assert intent.action == "open_long"

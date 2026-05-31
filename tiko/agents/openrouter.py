@@ -13,7 +13,7 @@ from tiko.domain.decision import TradeIntent
 from tiko.domain.observation import Observation
 
 OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_DEFAULT_MODEL = "openrouter/free"
+OPENROUTER_DEFAULT_MODEL = "liquid/lfm-2.5-1.2b-instruct:free"
 
 TradeIntentAction = Literal[
     "open_long",
@@ -26,6 +26,28 @@ TradeIntentAction = Literal[
     "hold",
     "rebalance",
 ]
+TRADE_INTENT_ACTIONS: tuple[TradeIntentAction, ...] = (
+    "open_long",
+    "open_short",
+    "increase_long",
+    "increase_short",
+    "reduce_long",
+    "reduce_short",
+    "close_position",
+    "hold",
+    "rebalance",
+)
+REQUIRED_TRADE_INTENT_PROPOSAL_FIELDS = (
+    "action",
+    "target_weight",
+    "max_leverage",
+    "confidence",
+    "expected_holding_period",
+    "thesis",
+    "evidence",
+    "invalidation_conditions",
+    "data_quality_score",
+)
 OpenRouterTransport = Callable[
     [str, dict[str, str], dict[str, object], int], dict[str, object]
 ]
@@ -33,31 +55,11 @@ OpenRouterTransport = Callable[
 TRADE_INTENT_PROPOSAL_SCHEMA: dict[str, object] = {
     "type": "object",
     "additionalProperties": False,
-    "required": [
-        "action",
-        "target_weight",
-        "max_leverage",
-        "confidence",
-        "expected_holding_period",
-        "thesis",
-        "evidence",
-        "invalidation_conditions",
-        "data_quality_score",
-    ],
+    "required": list(REQUIRED_TRADE_INTENT_PROPOSAL_FIELDS),
     "properties": {
         "action": {
             "type": "string",
-            "enum": [
-                "open_long",
-                "open_short",
-                "increase_long",
-                "increase_short",
-                "reduce_long",
-                "reduce_short",
-                "close_position",
-                "hold",
-                "rebalance",
-            ],
+            "enum": list(TRADE_INTENT_ACTIONS),
         },
         "target_weight": {"type": "string"},
         "target_notional": {"type": ["string", "null"]},
@@ -367,8 +369,20 @@ class OpenRouterTraderAgent:
                 "content": (
                     "You are a simulation-only crypto research agent. "
                     "You never place orders, request private account data, "
-                    "or bypass risk review. Return only JSON that matches "
-                    "the requested schema. Keep text fields concise."
+                    "or bypass risk review. Return only one JSON object that "
+                    "matches the requested schema, without markdown. Allowed "
+                    "actions are open_long, open_short, increase_long, "
+                    "increase_short, reduce_long, reduce_short, close_position, "
+                    "hold, and rebalance. Decimal fields must be plain base-10 "
+                    'JSON strings such as "0", "0.10", "-0.05", or "1". '
+                    "Do not use words, percentages, x suffixes, or units for "
+                    "decimal fields. Always include every required field. "
+                    "Confidence and data_quality_score must be JSON numbers "
+                    "from 0 to 1, not strings or words. Evidence must be an "
+                    "array of objects. Invalidation conditions must be an "
+                    "array of strings. If there is no clear edge, return action "
+                    'hold with target_weight "0" and max_leverage "1". '
+                    "Keep text fields concise."
                 ),
             },
             {
@@ -408,6 +422,34 @@ class OpenRouterTraderAgent:
             "events": [
                 event.model_dump(mode="json") for event in observation.events[-20:]
             ],
+            "output_contract": {
+                "required_fields": list(REQUIRED_TRADE_INTENT_PROPOSAL_FIELDS),
+                "allowed_actions": list(TRADE_INTENT_ACTIONS),
+                "decimal_string_fields": [
+                    "target_weight",
+                    "target_notional",
+                    "max_leverage",
+                ],
+                "number_fields": ["confidence", "data_quality_score"],
+                "decimal_string_rules": [
+                    "Use plain base-10 numeric strings.",
+                    'Use "0" for neutral target_weight.',
+                    'Use "1" for no leverage.',
+                    "Do not use words, percentages, x suffixes, or units.",
+                ],
+                "safe_default": {
+                    "action": "hold",
+                    "target_weight": "0",
+                    "target_notional": None,
+                    "max_leverage": "1",
+                    "confidence": 0.5,
+                    "expected_holding_period": "1h",
+                    "thesis": "No clear edge.",
+                    "evidence": [],
+                    "invalidation_conditions": [],
+                    "data_quality_score": 1.0,
+                },
+            },
         }
 
     def _build_intent(
