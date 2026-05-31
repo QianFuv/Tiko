@@ -67,7 +67,7 @@ def build_default_job_handlers() -> dict[JobType, JobHandler]:
         "backtest": build_placeholder_job_result,
         "experiment_run": build_placeholder_job_result,
         "report_generation": build_placeholder_job_result,
-        "rl_training": build_placeholder_job_result,
+        "rl_training": rl_worker.handle_training_job,
     }
 
 
