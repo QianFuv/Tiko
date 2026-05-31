@@ -934,12 +934,29 @@ def test_simulation_websocket_filters_subscription_topics() -> None:
         first_event = websocket.receive_json()
         second_event = websocket.receive_json()
         completion = websocket.receive_json()
+    first_event_ids = {
+        first_event["topic"]: first_event["event_id"],
+        second_event["topic"]: second_event["event_id"],
+    }
+    with client.websocket_connect(f"/ws/simulations/{run_id}") as websocket:
+        websocket.send_json(
+            {"type": "subscribe", "topics": ["decision.created", "fill.created"]}
+        )
+        websocket.receive_json()
+        reconnected_first_event = websocket.receive_json()
+        reconnected_second_event = websocket.receive_json()
+        websocket.receive_json()
+    reconnected_event_ids = {
+        reconnected_first_event["topic"]: reconnected_first_event["event_id"],
+        reconnected_second_event["topic"]: reconnected_second_event["event_id"],
+    }
 
     assert snapshot["topics"] == ["decision.created", "fill.created"]
     assert {first_event["topic"], second_event["topic"]} == {
         "decision.created",
         "fill.created",
     }
+    assert first_event_ids == reconnected_event_ids
     assert completion["type"] == "replay_complete"
 
 

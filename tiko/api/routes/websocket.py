@@ -3,7 +3,7 @@
 import asyncio
 from datetime import UTC, datetime
 from typing import Literal
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import APIRouter, WebSocket
 from fastapi.encoders import jsonable_encoder
@@ -36,6 +36,17 @@ SUPPORTED_TOPICS: tuple[SimulationStreamTopic, ...] = (
     "alert.created",
     "simulation.status",
     "simulation.heartbeat",
+)
+STREAM_PAYLOAD_ID_KEYS = (
+    "event_id",
+    "agent_run_id",
+    "decision_id",
+    "review_id",
+    "order_id",
+    "fill_id",
+    "snapshot_id",
+    "alert_id",
+    "run_id",
 )
 
 
@@ -274,9 +285,34 @@ def _build_stream_event(
     """
 
     return {
-        "event_id": str(uuid4()),
+        "event_id": str(
+            uuid5(
+                NAMESPACE_URL,
+                (
+                    f"stream-event:{run_id}:{topic}:"
+                    f"{simulated_time.isoformat()}:{_payload_identity(payload)}"
+                ),
+            )
+        ),
         "topic": topic,
         "run_id": str(run_id),
         "simulated_time": simulated_time.isoformat(),
         "payload": payload,
     }
+
+
+def _payload_identity(payload: dict[str, object]) -> str:
+    """Extract stable source identity from a realtime payload.
+
+    Args:
+        payload: Realtime event payload.
+
+    Returns:
+        Stable identity string for replay event ID generation.
+    """
+
+    for key in STREAM_PAYLOAD_ID_KEYS:
+        value = payload.get(key)
+        if value is not None:
+            return f"{key}:{value}"
+    return "payload:none"
