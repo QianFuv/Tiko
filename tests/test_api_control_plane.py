@@ -684,8 +684,8 @@ def test_plugin_registry_routes_validate_sandbox_policy() -> None:
     assert "write_orders" in unsafe_response.json()["detail"]
 
 
-def test_simulation_websocket_returns_event_snapshot() -> None:
-    """Verify WebSocket route returns current simulation events."""
+def test_simulation_websocket_replays_default_subscription() -> None:
+    """Verify WebSocket route returns snapshot, replay events, and completion."""
 
     client = create_test_client()
     run_id = client.post(
@@ -700,11 +700,82 @@ def test_simulation_websocket_returns_event_snapshot() -> None:
     )
 
     with client.websocket_connect(f"/ws/simulations/{run_id}") as websocket:
-        payload = websocket.receive_json()
+        snapshot = websocket.receive_json()
+        messages = [websocket.receive_json() for _index in range(9)]
 
-    assert payload["type"] == "snapshot"
-    assert payload["run_id"] == run_id
-    assert len(payload["events"]) == 1
+    assert snapshot["type"] == "snapshot"
+    assert snapshot["run_id"] == run_id
+    assert len(snapshot["events"]) == 1
+    event_topics = {
+        message["topic"] for message in messages if message["type"] == "event"
+    }
+    assert event_topics == {
+        "agent.run",
+        "decision.created",
+        "fill.created",
+        "market.candle",
+        "order.updated",
+        "portfolio.updated",
+        "risk.reviewed",
+        "simulation.status",
+    }
+    assert messages[-1]["type"] == "replay_complete"
+
+
+def test_simulation_websocket_filters_subscription_topics() -> None:
+    """Verify WebSocket route filters replay envelopes by subscribed topics."""
+
+    client = create_test_client()
+    run_id = client.post(
+        "/api/simulations",
+        json={"name": "ws-filter-demo", "symbols": ["BTCUSDT"]},
+        headers=OPERATOR_HEADERS,
+    ).json()["run_id"]
+    client.post(
+        f"/api/simulations/{run_id}/step",
+        json={"confidence": 0.7},
+        headers=OPERATOR_HEADERS,
+    )
+
+    with client.websocket_connect(f"/ws/simulations/{run_id}") as websocket:
+        websocket.send_json(
+            {"type": "subscribe", "topics": ["decision.created", "fill.created"]}
+        )
+        snapshot = websocket.receive_json()
+        first_event = websocket.receive_json()
+        second_event = websocket.receive_json()
+        completion = websocket.receive_json()
+
+    assert snapshot["topics"] == ["decision.created", "fill.created"]
+    assert {first_event["topic"], second_event["topic"]} == {
+        "decision.created",
+        "fill.created",
+    }
+    assert completion["type"] == "replay_complete"
+
+
+def test_simulation_websocket_accepts_empty_subscription() -> None:
+    """Verify empty topic subscriptions only return snapshot and completion."""
+
+    client = create_test_client()
+    run_id = client.post(
+        "/api/simulations",
+        json={"name": "ws-empty-demo", "symbols": ["BTCUSDT"]},
+        headers=OPERATOR_HEADERS,
+    ).json()["run_id"]
+    client.post(
+        f"/api/simulations/{run_id}/step",
+        json={"confidence": 0.7},
+        headers=OPERATOR_HEADERS,
+    )
+
+    with client.websocket_connect(f"/ws/simulations/{run_id}") as websocket:
+        websocket.send_json({"type": "subscribe", "topics": []})
+        snapshot = websocket.receive_json()
+        completion = websocket.receive_json()
+
+    assert snapshot["topics"] == []
+    assert completion["type"] == "replay_complete"
 
 
 def test_configured_database_persists_api_state_after_cache_reset(
