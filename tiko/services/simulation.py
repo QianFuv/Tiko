@@ -1256,6 +1256,7 @@ class SimulationService:
                 avg_entry_price=accounted_position.avg_entry_price,
                 mark_price=mark_price,
             )
+            leverage = Decimal("1")
             positions.append(
                 Position(
                     position_id=uuid5(
@@ -1269,10 +1270,14 @@ class SimulationService:
                     avg_entry_price=accounted_position.avg_entry_price,
                     mark_price=mark_price,
                     notional=accounted_position.quantity * mark_price,
-                    leverage=Decimal("1"),
+                    leverage=leverage,
                     unrealized_pnl=unrealized_pnl,
                     realized_pnl=accounted_position.realized_pnl,
-                    liquidation_price=None,
+                    liquidation_price=self._calculate_liquidation_price(
+                        accounted_position.side,
+                        accounted_position.avg_entry_price,
+                        leverage,
+                    ),
                     updated_at_sim_time=as_of or accounted_position.latest_time,
                 )
             )
@@ -1301,6 +1306,33 @@ class SimulationService:
             return (mark_price - avg_entry_price) * quantity
         return (avg_entry_price - mark_price) * quantity
 
+    def _calculate_liquidation_price(
+        self,
+        side: Literal["long", "short"],
+        avg_entry_price: Decimal,
+        leverage: Decimal,
+    ) -> Decimal | None:
+        """Calculate a deterministic approximate liquidation price.
+
+        Args:
+            side: Position side.
+            avg_entry_price: Average entry price.
+            leverage: Simulated position leverage.
+
+        Returns:
+            Approximate liquidation price or `None` when leverage is invalid.
+        """
+
+        if leverage <= Decimal("0"):
+            return None
+        leverage_buffer = Decimal("1") / leverage
+        if side == "long":
+            return max(
+                Decimal("0"),
+                avg_entry_price * (Decimal("1") - leverage_buffer),
+            )
+        return avg_entry_price * (Decimal("1") + leverage_buffer)
+
     def _mark_account_to_market(
         self,
         account: SimAccount,
@@ -1326,7 +1358,11 @@ class SimulationService:
         unrealized_pnl = sum(
             (position.unrealized_pnl for position in positions), Decimal("0")
         )
-        total_equity = max(Decimal("0"), account.cash_balance + signed_position_value)
+        raw_total_equity = account.cash_balance + signed_position_value
+        total_equity = max(Decimal("0"), raw_total_equity)
+        account_status = (
+            "liquidated" if raw_total_equity <= Decimal("0") else account.status
+        )
         drawdown = (
             (total_equity - account.initial_equity) / account.initial_equity
             if total_equity < account.initial_equity
@@ -1337,6 +1373,7 @@ class SimulationService:
                 "total_equity": total_equity,
                 "unrealized_pnl": unrealized_pnl,
                 "max_drawdown": min(account.max_drawdown, drawdown),
+                "status": account_status,
             }
         )
 

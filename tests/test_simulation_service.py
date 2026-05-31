@@ -525,6 +525,84 @@ def test_service_derives_reduced_position_from_fill_accounting() -> None:
     assert position.updated_at_sim_time == as_of
 
 
+def test_service_derives_liquidation_prices_for_positions() -> None:
+    """Verify derived positions expose deterministic liquidation prices."""
+
+    service = SimulationService(Settings())
+    run = service.create_run(
+        name="liquidation-prices",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    state = service._get_state(run.run_id)
+    state.fills = [
+        create_service_fill(
+            run.run_id,
+            "BTCUSDT",
+            "buy",
+            Decimal("1"),
+            Decimal("100"),
+            1,
+        )
+    ]
+    long_position = service._derive_positions(state)[0]
+    state.fills = [
+        create_service_fill(
+            run.run_id,
+            "BTCUSDT",
+            "sell",
+            Decimal("1"),
+            Decimal("100"),
+            2,
+        )
+    ]
+    short_position = service._derive_positions(state)[0]
+
+    assert long_position.side == "long"
+    assert long_position.liquidation_price == Decimal("0")
+    assert short_position.side == "short"
+    assert short_position.liquidation_price == Decimal("200")
+
+
+def test_mark_account_to_market_sets_liquidated_status() -> None:
+    """Verify exhausted raw marked equity liquidates the simulated account."""
+
+    service = SimulationService(Settings())
+    run = service.create_run(
+        name="liquidation-status",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    state = service._get_state(run.run_id)
+    state.fills = [
+        create_service_fill(
+            run.run_id,
+            "BTCUSDT",
+            "sell",
+            Decimal("1"),
+            Decimal("100"),
+            1,
+        )
+    ]
+    positions = service._derive_positions(
+        state,
+        mark_prices={"BTCUSDT": Decimal("250")},
+    )
+    small_account = run.account.model_copy(
+        update={
+            "initial_equity": Decimal("100"),
+            "cash_balance": Decimal("100"),
+            "total_equity": Decimal("100"),
+        }
+    )
+
+    marked_account = service._mark_account_to_market(small_account, positions)
+
+    assert marked_account.status == "liquidated"
+    assert marked_account.total_equity == Decimal("0")
+    assert marked_account.max_drawdown == Decimal("-1")
+
+
 def test_step_applies_configured_funding_to_open_positions() -> None:
     """Verify configured funding creates separate ledger and account deltas."""
 
