@@ -18,6 +18,8 @@ class SimBroker:
         maker_fee_bps: Decimal | None = None,
         slippage_volatility_multiplier: Decimal = Decimal("0.2"),
         slippage_liquidity_multiplier: Decimal = Decimal("1.5"),
+        max_market_spread_bps: Decimal = Decimal("100"),
+        min_market_depth_1pct_usd: Decimal = Decimal("0"),
         matching_engine: MatchingEngine | None = None,
     ) -> None:
         """Initialize broker fee and slippage parameters.
@@ -28,6 +30,8 @@ class SimBroker:
             maker_fee_bps: Optional simulated maker fee in basis points.
             slippage_volatility_multiplier: Weight applied to volatility slippage.
             slippage_liquidity_multiplier: Weight applied to liquidity slippage.
+            max_market_spread_bps: Maximum acceptable market spread.
+            min_market_depth_1pct_usd: Minimum acceptable 1% depth in USD.
             matching_engine: Optional matching engine override.
         """
 
@@ -36,6 +40,8 @@ class SimBroker:
         self.slippage_bps = slippage_bps
         self.slippage_volatility_multiplier = slippage_volatility_multiplier
         self.slippage_liquidity_multiplier = slippage_liquidity_multiplier
+        self.max_market_spread_bps = max_market_spread_bps
+        self.min_market_depth_1pct_usd = min_market_depth_1pct_usd
         self._matching_engine = matching_engine or MatchingEngine(
             fee_engine=FeeEngine(fee_bps),
             maker_fee_engine=FeeEngine(self.maker_fee_bps),
@@ -44,6 +50,8 @@ class SimBroker:
                 volatility_multiplier=slippage_volatility_multiplier,
                 liquidity_multiplier=slippage_liquidity_multiplier,
             ),
+            max_market_spread_bps=max_market_spread_bps,
+            min_market_depth_1pct_usd=min_market_depth_1pct_usd,
         )
 
     def submit_market_order(
@@ -51,7 +59,7 @@ class SimBroker:
         order_request: OrderRequest,
         reference_price: Decimal,
         slippage_context: SlippageContext | None = None,
-    ) -> tuple[SimOrder, Fill]:
+    ) -> tuple[SimOrder, Fill | None]:
         """Fill an internal market order request at a simulated price.
 
         Args:
@@ -60,7 +68,7 @@ class SimBroker:
             slippage_context: Optional market context for effective slippage.
 
         Returns:
-            Simulated order and fill records.
+            Simulated order and optional fill records.
         """
 
         return self._matching_engine.match_market_order(

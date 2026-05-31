@@ -101,6 +101,12 @@ class Settings(BaseSettings):
     sim_broker_slippage_liquidity_multiplier: Decimal = Field(
         default=Decimal("1.5"), ge=Decimal("0")
     )
+    sim_broker_max_market_spread_bps: Decimal = Field(
+        default=Decimal("100"), ge=Decimal("0")
+    )
+    sim_broker_min_market_depth_1pct_usd: Decimal = Field(
+        default=Decimal("0"), ge=Decimal("0")
+    )
     synthetic_funding_rate: Decimal = Decimal("0")
     synthetic_funding_interval_steps: int = Field(default=1, ge=1)
     synthetic_seed: int = 42

@@ -254,6 +254,7 @@ def test_matching_engine_creates_filled_order_and_fill() -> None:
     )
 
     assert order.status == "filled"
+    assert fill is not None
     assert order.order_id == fill.order_id
     assert fill.price == Decimal("100.02")
     assert fill.fee == Decimal("0.10002")
@@ -283,9 +284,46 @@ def test_matching_engine_records_contextual_slippage_bps() -> None:
     )
 
     assert order.status == "filled"
+    assert fill is not None
     assert fill.price == Decimal("100.09")
     assert fill.fee == Decimal("0.10009")
     assert fill.slippage_bps == Decimal("9")
+
+
+def test_matching_engine_rejects_market_order_when_spread_exceeds_limit() -> None:
+    """Verify market orders reject when spread violates exchange guards."""
+
+    order, fill = MatchingEngine(
+        max_market_spread_bps=Decimal("10")
+    ).match_market_order(
+        create_order_request("buy"),
+        reference_price=Decimal("100"),
+        slippage_context=SlippageContext(
+            spread_bps=Decimal("11"),
+            depth_1pct_usd=Decimal("1000"),
+        ),
+    )
+
+    assert order.status == "rejected"
+    assert fill is None
+
+
+def test_matching_engine_rejects_market_order_when_depth_is_insufficient() -> None:
+    """Verify market orders reject when available depth is too low."""
+
+    order, fill = MatchingEngine(
+        min_market_depth_1pct_usd=Decimal("1000")
+    ).match_market_order(
+        create_order_request("buy"),
+        reference_price=Decimal("100"),
+        slippage_context=SlippageContext(
+            spread_bps=Decimal("2"),
+            depth_1pct_usd=Decimal("999"),
+        ),
+    )
+
+    assert order.status == "rejected"
+    assert fill is None
 
 
 def test_matching_engine_fills_crossed_limit_order_with_maker_fee() -> None:
@@ -455,6 +493,7 @@ def test_sim_broker_preserves_immediate_fill_defaults() -> None:
     )
 
     assert order.status == "filled"
+    assert fill is not None
     assert fill.price == Decimal("99.98")
     assert fill.fee == Decimal("0.09998")
     assert fill.order_id == order.order_id
@@ -481,8 +520,24 @@ def test_sim_broker_passes_slippage_context_to_market_matching() -> None:
     )
 
     assert order.status == "filled"
+    assert fill is not None
     assert fill.price == Decimal("100.06")
     assert fill.slippage_bps == Decimal("6")
+
+
+def test_sim_broker_passes_market_depth_guard_to_matching() -> None:
+    """Verify broker market submissions can reject on missing depth."""
+
+    order, fill = SimBroker(
+        min_market_depth_1pct_usd=Decimal("1000"),
+    ).submit_market_order(
+        create_order_request("buy"),
+        reference_price=Decimal("100"),
+        slippage_context=SlippageContext(spread_bps=Decimal("2")),
+    )
+
+    assert order.status == "rejected"
+    assert fill is None
 
 
 def test_sim_broker_uses_maker_fee_for_limit_orders() -> None:
@@ -544,6 +599,7 @@ def test_ledger_update_preserves_account_output_and_exposes_metadata() -> None:
         reference_price=Decimal("100"),
     )
 
+    assert fill is not None
     ledger_update = apply_fill_to_ledger(account, fill)
 
     assert apply_fill_to_account(account, fill) == ledger_update.account
@@ -659,6 +715,7 @@ def test_metrics_engine_summarizes_simulated_execution() -> None:
         create_order_request("buy"),
         reference_price=Decimal("100"),
     )
+    assert fill is not None
     updated_account = apply_fill_to_account(account, fill)
     run = create_run(updated_account)
 

@@ -99,6 +99,8 @@ class SimulationService:
             slippage_liquidity_multiplier=(
                 settings.sim_broker_slippage_liquidity_multiplier
             ),
+            max_market_spread_bps=settings.sim_broker_max_market_spread_bps,
+            min_market_depth_1pct_usd=settings.sim_broker_min_market_depth_1pct_usd,
         )
         self._event_bus = EventBus()
         self._observation_builder = ObservationBuilder()
@@ -634,14 +636,15 @@ class SimulationService:
                 candle.close,
                 slippage_context=slippage_context,
             )
-            ledger_update = apply_fill_to_ledger(
-                account,
-                fill,
-                prior_fills=state.fills,
-            )
-            account = ledger_update.account
             state.orders.append(order)
-            state.fills.append(fill)
+            if fill is not None:
+                ledger_update = apply_fill_to_ledger(
+                    account,
+                    fill,
+                    prior_fills=state.fills,
+                )
+                account = ledger_update.account
+                state.fills.append(fill)
         ledger_run = decision_run.model_copy(update={"account": account})
         state.run = ledger_run
         agent_run = self._build_agent_run(intent)

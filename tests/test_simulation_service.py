@@ -322,6 +322,30 @@ def test_service_uses_feature_return_in_slippage_context() -> None:
     assert second_result.fill.slippage_bps == expected_slippage_bps
 
 
+def test_service_records_exchange_rejected_market_order_without_fill() -> None:
+    """Verify exchange-rejected market orders do not create fills or ledger entries."""
+
+    service = SimulationService(Settings(sim_broker_max_market_spread_bps=Decimal("1")))
+    run = service.create_run(
+        name="exchange-rejected",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    result = service.step_run(run.run_id, confidence=0.7)
+
+    assert result.risk_review.status == "approved"
+    assert result.order is not None
+    assert result.order.status == "rejected"
+    assert result.fill is None
+    assert result.ledger_entry is None
+    assert service.list_orders() == [result.order]
+    assert service.list_fills() == []
+    assert service.list_ledger_entries(run.run_id) == []
+    assert result.metric_snapshot.metrics["order_count"] == 1
+    assert result.metric_snapshot.metrics["fill_count"] == 0
+
+
 def test_service_create_run_accepts_configured_simulation_fields() -> None:
     """Verify run creation stores configured simulation settings."""
 

@@ -20,6 +20,8 @@ class MatchingEngine:
         fee_engine: FeeEngine | None = None,
         slippage_engine: SlippageEngine | None = None,
         maker_fee_engine: FeeEngine | None = None,
+        max_market_spread_bps: Decimal = Decimal("100"),
+        min_market_depth_1pct_usd: Decimal = Decimal("0"),
     ) -> None:
         """Initialize matching dependencies.
 
@@ -27,18 +29,22 @@ class MatchingEngine:
             fee_engine: Optional taker fee engine.
             slippage_engine: Optional slippage engine.
             maker_fee_engine: Optional maker fee engine for limit fills.
+            max_market_spread_bps: Maximum acceptable market spread.
+            min_market_depth_1pct_usd: Minimum acceptable 1% depth in USD.
         """
 
         self._taker_fee_engine = fee_engine or FeeEngine()
         self._slippage_engine = slippage_engine or SlippageEngine()
         self._maker_fee_engine = maker_fee_engine or self._taker_fee_engine
+        self._max_market_spread_bps = max_market_spread_bps
+        self._min_market_depth_1pct_usd = min_market_depth_1pct_usd
 
     def match_market_order(
         self,
         order_request: OrderRequest,
         reference_price: Decimal,
         slippage_context: SlippageContext | None = None,
-    ) -> tuple[SimOrder, Fill]:
+    ) -> tuple[SimOrder, Fill | None]:
         """Match an internal market order request immediately.
 
         Args:
@@ -47,7 +53,7 @@ class MatchingEngine:
             slippage_context: Optional market context for effective slippage.
 
         Returns:
-            Filled simulated order and fill.
+            Simulated order and optional fill.
 
         Raises:
             ValueError: If the request is not a market order.
@@ -55,6 +61,9 @@ class MatchingEngine:
 
         if order_request.order_type != "market":
             raise ValueError("MatchingEngine currently supports market orders only.")
+        order_id = uuid4()
+        if self._should_reject_market_order(slippage_context):
+            return self._build_order(order_request, order_id, "rejected"), None
         slippage_bps = self._slippage_engine.calculate_market_slippage_bps(
             slippage_context
         )
@@ -62,7 +71,6 @@ class MatchingEngine:
             reference_price, order_request.side, slippage_bps
         )
         fee = self._taker_fee_engine.calculate_fee(order_request.quantity, fill_price)
-        order_id = uuid4()
         order = self._build_order(order_request, order_id, "filled")
         fill = Fill(
             fill_id=uuid4(),
@@ -142,7 +150,7 @@ class MatchingEngine:
         self,
         order_request: OrderRequest,
         order_id: UUID,
-        status: Literal["open", "partially_filled", "filled", "expired"],
+        status: Literal["open", "partially_filled", "filled", "expired", "rejected"],
     ) -> SimOrder:
         """Build a simulated order from one request.
 
@@ -188,6 +196,29 @@ class MatchingEngine:
         if available_quantity is None:
             return order_request.quantity
         return min(order_request.quantity, available_quantity)
+
+    def _should_reject_market_order(
+        self,
+        slippage_context: SlippageContext | None,
+    ) -> bool:
+        """Return whether market context violates exchange guard thresholds.
+
+        Args:
+            slippage_context: Optional market context for the order.
+
+        Returns:
+            `True` when the market order should be rejected.
+        """
+
+        if slippage_context is None:
+            return False
+        if slippage_context.spread_bps > self._max_market_spread_bps:
+            return True
+        if self._min_market_depth_1pct_usd <= Decimal("0"):
+            return False
+        if slippage_context.depth_1pct_usd is None:
+            return True
+        return slippage_context.depth_1pct_usd < self._min_market_depth_1pct_usd
 
     def _unfilled_limit_status(
         self,
