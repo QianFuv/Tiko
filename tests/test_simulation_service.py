@@ -18,8 +18,10 @@ from tiko.db import (
 from tiko.domain.market import Candle
 from tiko.domain.order import Fill
 from tiko.domain.reporting import ReportArtifact
+from tiko.domain.runtime import BackgroundJob
 from tiko.services import ReportArtifactStore, ReportRenderService, SimulationService
 from tiko.simulation.replay import MarketReplayExhausted
+from tiko.workers.agent_worker import handle_agent_inference_job
 
 
 def create_test_repository() -> SimulationRepository:
@@ -91,6 +93,45 @@ def create_service_fill(
         fee=Decimal("0"),
         slippage_bps=Decimal("0"),
         filled_at_sim_time=datetime(2026, 1, 1, hour, tzinfo=UTC),
+    )
+
+
+def create_completed_agent_inference_job(
+    service: SimulationService, run_id: UUID
+) -> BackgroundJob:
+    """Create a completed agent inference worker job for service tests.
+
+    Args:
+        service: Simulation service containing the run.
+        run_id: Simulation run identifier.
+
+    Returns:
+        Completed background job with worker trace artifacts.
+    """
+
+    observation = service.build_observation(run_id, "BTCUSDT")
+    now = datetime(2026, 1, 1, 2, tzinfo=UTC)
+    running_job = BackgroundJob(
+        job_id=uuid4(),
+        job_type="agent_inference",
+        resource_type="agent_run",
+        resource_id="agent-worker-trace",
+        status="running",
+        payload={
+            "agent_type": "rule_based",
+            "observation": observation.model_dump(mode="json"),
+        },
+        created_at=now,
+        updated_at=now,
+        started_at=now,
+    )
+    result = handle_agent_inference_job(running_job)
+    return running_job.model_copy(
+        update={
+            "status": "completed",
+            "result": result,
+            "completed_at": now,
+        }
     )
 
 
@@ -312,6 +353,84 @@ def test_repository_backed_service_persists_created_run_and_step() -> None:
         result.portfolio_snapshot
     ]
     assert repository.list_metric_snapshots(run.run_id) == [result.metric_snapshot]
+
+
+def test_service_applies_agent_inference_job_trace_state() -> None:
+    """Verify completed agent inference jobs update service trace state."""
+
+    service = SimulationService(Settings())
+    run = service.create_run(
+        name="agent-worker-trace",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    job = create_completed_agent_inference_job(service, run.run_id)
+
+    trace = service.apply_agent_inference_job(job)
+    second_trace = service.apply_agent_inference_job(job)
+
+    assert trace == second_trace
+    assert (
+        str(service.list_observation_snapshots(run.run_id)[0].observation_id)
+        == (trace.messages[1].content["observation_id"])
+    )
+    assert service.list_decisions() == [trace.decision]
+    assert service.list_agent_runs() == [trace.agent_run]
+    assert service.list_agent_messages(trace.agent_run.agent_run_id) == trace.messages
+    assert trace.risk_review is None
+    assert trace.order is None
+    assert trace.fill is None
+
+
+def test_service_rejects_invalid_agent_inference_jobs() -> None:
+    """Verify agent inference reconciliation rejects invalid job payloads."""
+
+    service = SimulationService(Settings())
+    run = service.create_run(
+        name="invalid-agent-worker-trace",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    job = create_completed_agent_inference_job(service, run.run_id)
+    wrong_type_job = job.model_copy(update={"job_type": "report_generation"})
+    failed_job = job.model_copy(update={"status": "failed"})
+    result = dict(job.result)
+    agent_run_value = result["agent_run"]
+    assert isinstance(agent_run_value, dict)
+    agent_run = dict(agent_run_value)
+    agent_run["decision_id"] = str(uuid4())
+    result["agent_run"] = agent_run
+    mismatch_job = job.model_copy(update={"result": result})
+
+    with pytest.raises(ValueError, match="Only agent_inference"):
+        service.apply_agent_inference_job(wrong_type_job)
+    with pytest.raises(ValueError, match="Only completed"):
+        service.apply_agent_inference_job(failed_job)
+    with pytest.raises(ValueError, match="decision_id"):
+        service.apply_agent_inference_job(mismatch_job)
+    assert service.list_decisions() == []
+
+
+def test_repository_backed_service_persists_agent_inference_job_trace() -> None:
+    """Verify agent inference job traces persist through the repository."""
+
+    repository = create_test_repository()
+    service = SimulationService(Settings(), repository=repository)
+    run = service.create_run(
+        name="persisted-agent-worker-trace",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    job = create_completed_agent_inference_job(service, run.run_id)
+
+    trace = service.apply_agent_inference_job(job)
+
+    assert repository.list_observation_snapshots(run.run_id)[0].run_id == run.run_id
+    assert repository.list_decisions(run.run_id) == [trace.decision]
+    assert repository.list_agent_runs(run.run_id) == [trace.agent_run]
+    assert (
+        repository.list_agent_messages(trace.agent_run.agent_run_id) == trace.messages
+    )
 
 
 def test_service_creates_decision_reviews_and_memory_entries() -> None:

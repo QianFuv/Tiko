@@ -34,6 +34,7 @@ from tiko.domain.reporting import (
     ReportArtifact,
 )
 from tiko.domain.risk import RiskLimits, RiskReview
+from tiko.domain.runtime import BackgroundJob
 from tiko.domain.simulation import SimulationRun
 from tiko.observation import ObservationBuilder
 from tiko.services.portfolio import PortfolioService
@@ -836,6 +837,75 @@ class SimulationService:
         observation = self.build_observation(decision.run_id, decision.symbol)
         return AgentRuntime(RuleBasedTraderAgent(agent_id=agent_run.agent_id)).evaluate(
             observation
+        )
+
+    def apply_agent_inference_job(self, job: BackgroundJob) -> DecisionTrace:
+        """Apply a completed agent inference job to simulation trace state.
+
+        Args:
+            job: Completed agent inference runtime job.
+
+        Returns:
+            Reconciled decision trace.
+
+        Raises:
+            ValueError: If the job or trace payload is invalid.
+            KeyError: If the simulation run does not exist.
+        """
+
+        if job.job_type != "agent_inference":
+            raise ValueError("Only agent_inference jobs can update agent traces.")
+        if job.status != "completed":
+            raise ValueError("Only completed agent_inference jobs can be applied.")
+        observation = Observation.model_validate(
+            self._require_mapping(job.payload, "observation")
+        )
+        decision = TradeIntent.model_validate(
+            self._require_mapping(job.result, "intent")
+        )
+        agent_run = AgentRun.model_validate(
+            self._require_mapping(job.result, "agent_run")
+        )
+        messages = tuple(
+            AgentMessage.model_validate(item)
+            for item in self._require_mapping_sequence(job.result, "agent_messages")
+        )
+        self._validate_agent_trace_payload(observation, decision, agent_run, messages)
+        state = self._get_state(decision.run_id)
+        if not any(
+            candidate.observation_id == observation.observation_id
+            for candidate in state.observations
+        ):
+            state.observations.append(observation)
+        if not any(
+            candidate.decision_id == decision.decision_id
+            for candidate in state.decisions
+        ):
+            state.decisions.append(decision)
+        if not any(
+            candidate.agent_run_id == agent_run.agent_run_id
+            for candidate in state.agent_runs
+        ):
+            state.agent_runs.append(agent_run)
+        existing_message_ids = {
+            candidate.message_id for candidate in state.agent_messages
+        }
+        state.agent_messages.extend(
+            message
+            for message in messages
+            if message.message_id not in existing_message_ids
+        )
+        if self._repository is not None:
+            self._repository.save_agent_trace(
+                observation=observation,
+                decision=decision,
+                agent_run=agent_run,
+                agent_messages=messages,
+            )
+        return DecisionTrace(
+            decision=decision,
+            agent_run=agent_run,
+            messages=list(messages),
         )
 
     def build_decision_trace(self, decision_id: UUID) -> DecisionTrace:
@@ -2133,6 +2203,86 @@ class SimulationService:
                 if decision.decision_id == decision_id:
                     return state, decision
         raise KeyError(decision_id)
+
+    def _require_mapping(
+        self, payload: dict[str, object], key: str
+    ) -> dict[str, object]:
+        """Read a required mapping value from a runtime payload.
+
+        Args:
+            payload: Runtime payload.
+            key: Required payload key.
+
+        Returns:
+            Mapping value.
+
+        Raises:
+            ValueError: If the value is missing or not a mapping.
+        """
+
+        value = payload.get(key)
+        if not isinstance(value, dict):
+            raise ValueError(f"Agent inference payload field {key} must be an object.")
+        return value
+
+    def _require_mapping_sequence(
+        self, payload: dict[str, object], key: str
+    ) -> tuple[dict[str, object], ...]:
+        """Read a required sequence of mappings from a runtime payload.
+
+        Args:
+            payload: Runtime payload.
+            key: Required payload key.
+
+        Returns:
+            Mapping values.
+
+        Raises:
+            ValueError: If the value is missing or not a list of mappings.
+        """
+
+        value = payload.get(key)
+        if not isinstance(value, list) or not all(
+            isinstance(item, dict) for item in value
+        ):
+            raise ValueError(
+                f"Agent inference payload field {key} must be a list of objects."
+            )
+        return tuple(value)
+
+    def _validate_agent_trace_payload(
+        self,
+        observation: Observation,
+        decision: TradeIntent,
+        agent_run: AgentRun,
+        messages: Sequence[AgentMessage],
+    ) -> None:
+        """Validate worker trace artifact linkage.
+
+        Args:
+            observation: Source observation snapshot.
+            decision: Validated trade intent.
+            agent_run: Agent run trace artifact.
+            messages: Agent messages for the trace.
+
+        Raises:
+            ValueError: If any artifact does not reference the same trace scope.
+        """
+
+        if decision.run_id != observation.run_id:
+            raise ValueError(
+                "Agent inference decision run_id does not match observation."
+            )
+        if decision.symbol != observation.symbol:
+            raise ValueError(
+                "Agent inference decision symbol does not match observation."
+            )
+        if agent_run.run_id != decision.run_id:
+            raise ValueError("Agent run run_id does not match decision.")
+        if agent_run.decision_id != decision.decision_id:
+            raise ValueError("Agent run decision_id does not match decision.")
+        if any(message.agent_run_id != agent_run.agent_run_id for message in messages):
+            raise ValueError("Agent message agent_run_id does not match agent run.")
 
     def _create_trade_intent(
         self,

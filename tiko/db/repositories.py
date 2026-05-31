@@ -1,5 +1,6 @@
 """Repository mappings between ORM rows and simulation domain models."""
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal, cast
@@ -201,6 +202,30 @@ class SimulationRepository:
                 self._merge_ledger_entry(session, result.funding_ledger_entry)
             self._merge_portfolio_snapshot(session, result.portfolio_snapshot)
             self._merge_metric_snapshot(session, result.metric_snapshot)
+            session.commit()
+
+    def save_agent_trace(
+        self,
+        observation: Observation,
+        decision: TradeIntent,
+        agent_run: AgentRun,
+        agent_messages: Sequence[AgentMessage],
+    ) -> None:
+        """Persist a worker-generated agent trace.
+
+        Args:
+            observation: Source observation snapshot.
+            decision: Validated trade intent.
+            agent_run: Agent run trace artifact.
+            agent_messages: Agent messages for the trace.
+        """
+
+        with self._session_factory() as session:
+            self._merge_observation_snapshot(session, observation)
+            self._merge_decision(session, decision)
+            self._merge_agent_run(session, agent_run)
+            for message in agent_messages:
+                self._merge_agent_message(session, message)
             session.commit()
 
     def get_run(self, run_id: UUID) -> SimulationRun | None:
