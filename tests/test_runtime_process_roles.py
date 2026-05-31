@@ -520,7 +520,11 @@ def test_agent_worker_runs_rule_based_inference_jobs() -> None:
     result = process_worker_jobs(service, definition, max_jobs=1)
     completed_job = service.get_job(job.job_id)
     intent = completed_job.result["intent"]
+    agent_run = completed_job.result["agent_run"]
+    agent_messages = completed_job.result["agent_messages"]
     assert isinstance(intent, dict)
+    assert isinstance(agent_run, dict)
+    assert isinstance(agent_messages, list)
 
     assert result.claimed_job_ids == (job.job_id,)
     assert result.completed_job_ids == (job.job_id,)
@@ -537,6 +541,26 @@ def test_agent_worker_runs_rule_based_inference_jobs() -> None:
     assert intent["action"] == "open_long"
     assert intent["target_weight"] == "0.10"
     assert intent["run_id"] == str(observation.run_id)
+    assert agent_run["decision_id"] == intent["decision_id"]
+    assert agent_run["run_id"] == str(observation.run_id)
+    assert agent_run["status"] == "completed"
+    assert [message["role"] for message in agent_messages] == [
+        "system",
+        "observation",
+        "assistant",
+    ]
+    assert all(
+        message["agent_run_id"] == agent_run["agent_run_id"]
+        for message in agent_messages
+    )
+    observation_message = agent_messages[1]
+    assert isinstance(observation_message, dict)
+    assert observation_message["content"]["observation_id"] == str(
+        observation.observation_id
+    )
+    assistant_message = agent_messages[2]
+    assert isinstance(assistant_message, dict)
+    assert assistant_message["content"]["decision_id"] == intent["decision_id"]
 
 
 def test_agent_worker_fails_unsupported_agent_types() -> None:
