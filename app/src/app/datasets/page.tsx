@@ -59,12 +59,20 @@ export default async function DatasetsPage(): Promise<ReactElement> {
     <main className="min-h-screen bg-[#f4f6f8] text-[#17201b]">
       <section className="border-b border-[#d8dee4] bg-white">
         <div className="mx-auto max-w-7xl px-5 py-6 lg:px-8">
-          <Link
-            href="/"
-            className="text-sm font-medium text-[#1f6f8b] hover:text-[#174f63]"
-          >
-            Dashboard
-          </Link>
+          <div className="flex items-center justify-between gap-3">
+            <Link
+              href="/"
+              className="text-sm font-medium text-[#1f6f8b] hover:text-[#174f63]"
+            >
+              Dashboard
+            </Link>
+            <Link
+              href="/datasets/upload"
+              className="rounded-md border border-[#1f6f8b] px-3 py-2 text-sm font-semibold text-[#1f6f8b] hover:bg-[#eef7fa]"
+            >
+              Upload
+            </Link>
+          </div>
           <h1 className="mt-2 text-3xl font-semibold">Datasets</h1>
           <div className="mt-5 grid gap-3 md:grid-cols-3">
             {metrics.map((metric) => (
