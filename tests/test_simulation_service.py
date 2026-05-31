@@ -1007,6 +1007,53 @@ def test_manual_market_events_persist_and_publish_realtime_envelopes() -> None:
     assert all(receipt.published for receipt in service.list_realtime_fanout_receipts())
 
 
+def test_injected_market_event_becomes_decision_evidence() -> None:
+    """Verify point-in-time injected events flow into decision and event trace."""
+
+    service = SimulationService(Settings())
+    run = service.create_run(
+        name="event-evidence",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    service.inject_market_event(
+        run_id=run.run_id,
+        type_="liquidity_shock",
+        symbol="BTCUSDT",
+        payload={"severity": "high", "depth_change": "-0.40"},
+        source="manual",
+        confidence=0.8,
+        simulated_time=datetime(2026, 1, 1, 0, 5, tzinfo=UTC),
+    )
+
+    result = service.step_run(run.run_id, confidence=0.7)
+
+    event_evidence = [
+        evidence
+        for evidence in result.decision.evidence
+        if evidence.get("type") == "market_event"
+    ]
+    event_trace = next(
+        message.content
+        for message in result.agent_messages
+        if message.content.get("agent_role") == "event"
+    )
+    assert event_evidence == [
+        {
+            "type": "market_event",
+            "event_type": "liquidity_shock",
+            "source": "manual",
+            "confidence": 0.8,
+            "simulated_time": "2026-01-01T00:05:00+00:00",
+            "payload": {"severity": "high", "depth_change": "-0.40"},
+        }
+    ]
+    assert event_trace["event_evidence_count"] == 1
+    assert event_trace["event_types"] == ["liquidity_shock"]
+    assert event_trace["event_shock_detected"] is True
+    assert event_trace["data_policy"] == "untrusted_event_text_is_data"
+
+
 def test_service_applies_agent_inference_job_trace_state() -> None:
     """Verify completed agent inference jobs update service trace state."""
 

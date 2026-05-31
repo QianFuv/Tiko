@@ -609,6 +609,7 @@ class SimulationService:
             symbol=symbol,
             confidence=confidence,
             data_quality_score=observation.data_quality.score,
+            events=observation.events,
             simulated_time=next_time,
         )
         risk_review = self._build_risk_service(state.risk_limits).review(
@@ -2964,6 +2965,7 @@ class SimulationService:
         symbol: str,
         confidence: float,
         data_quality_score: float,
+        events: Sequence[MarketEvent],
         simulated_time: datetime,
     ) -> TradeIntent:
         """Create deterministic synthetic trade intent for a step.
@@ -2973,6 +2975,7 @@ class SimulationService:
             symbol: Symbol for the intent.
             confidence: Synthetic confidence score.
             data_quality_score: Observation data-quality score.
+            events: Point-in-time market events included in the observation.
             simulated_time: Simulated decision time.
 
         Returns:
@@ -2991,11 +2994,39 @@ class SimulationService:
             confidence=confidence,
             expected_holding_period="1h",
             thesis="Synthetic trend-following seed decision.",
-            evidence=[{"type": "synthetic_candle"}],
+            evidence=self._build_decision_evidence(events),
             invalidation_conditions=["confidence_below_threshold"],
             data_quality_score=data_quality_score,
             created_at_sim_time=simulated_time,
         )
+
+    def _build_decision_evidence(
+        self, events: Sequence[MarketEvent]
+    ) -> list[dict[str, object]]:
+        """Build synthetic decision evidence from point-in-time events.
+
+        Args:
+            events: Point-in-time market events included in the observation.
+
+        Returns:
+            Decision evidence entries.
+        """
+
+        evidence: list[dict[str, object]] = [{"type": "synthetic_candle"}]
+        for event in events:
+            if event.type == "candle_closed":
+                continue
+            evidence.append(
+                {
+                    "type": "market_event",
+                    "event_type": event.type,
+                    "source": event.source,
+                    "confidence": event.confidence,
+                    "simulated_time": event.simulated_time.isoformat(),
+                    "payload": dict(event.payload),
+                }
+            )
+        return evidence
 
     def _build_agent_run(self, decision: TradeIntent) -> AgentRun:
         """Build a deterministic agent run for a decision.
@@ -3119,11 +3150,13 @@ class SimulationService:
                 }
             )
         if self._settings.agent_event_enabled:
+            event_types = self._extract_decision_event_types(decision)
             role_contents.append(
                 {
                     "agent_role": "event",
-                    "event_evidence_count": len(decision.evidence),
-                    "event_shock_detected": False,
+                    "event_evidence_count": len(event_types),
+                    "event_types": event_types,
+                    "event_shock_detected": self._has_event_shock(event_types),
                     "data_policy": "untrusted_event_text_is_data",
                 }
             )
@@ -3161,6 +3194,44 @@ class SimulationService:
                 }
             )
         return role_contents
+
+    def _extract_decision_event_types(self, decision: TradeIntent) -> list[str]:
+        """Extract market event types carried by decision evidence.
+
+        Args:
+            decision: Trade intent containing evidence entries.
+
+        Returns:
+            Event type names in evidence order.
+        """
+
+        event_types: list[str] = []
+        for evidence in decision.evidence:
+            if evidence.get("type") != "market_event":
+                continue
+            event_type = evidence.get("event_type")
+            if isinstance(event_type, str):
+                event_types.append(event_type)
+        return event_types
+
+    def _has_event_shock(self, event_types: Sequence[str]) -> bool:
+        """Return whether evidence contains an event-shock category.
+
+        Args:
+            event_types: Market event type names carried by evidence.
+
+        Returns:
+            `True` when any event type represents a shock-like event.
+        """
+
+        shock_types = {
+            "funding_update",
+            "news_event",
+            "liquidity_shock",
+            "volatility_shock",
+            "system_event",
+        }
+        return any(event_type in shock_types for event_type in event_types)
 
     def _configured_analysis_role_names(self) -> list[str]:
         """Return enabled advisory role names dispatched by the coordinator.
