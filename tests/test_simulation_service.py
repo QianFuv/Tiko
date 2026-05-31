@@ -385,6 +385,38 @@ def test_step_observation_uses_prior_positions_and_available_memory() -> None:
     assert second_result.observation.features == second_result.feature_snapshot.features
 
 
+def test_step_marks_positions_and_account_to_market() -> None:
+    """Verify simulation steps mark positions and account equity to market."""
+
+    service = SimulationService(Settings())
+    run = service.create_run(
+        name="mark-accounting",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    result = service.step_run(run.run_id, confidence=0.7)
+
+    position = result.positions[0]
+    expected_unrealized_pnl = (
+        position.mark_price - position.avg_entry_price
+    ) * position.quantity
+    expected_total_equity = result.run.account.cash_balance + position.notional
+    expected_drawdown = (
+        expected_total_equity - result.run.account.initial_equity
+    ) / result.run.account.initial_equity
+
+    assert position.mark_price == result.candle.close
+    assert position.notional == position.quantity * result.candle.close
+    assert position.unrealized_pnl == expected_unrealized_pnl
+    assert result.run.account.unrealized_pnl == expected_unrealized_pnl
+    assert result.run.account.total_equity == expected_total_equity
+    assert result.run.account.max_drawdown == expected_drawdown
+    assert result.portfolio_snapshot.total_equity == expected_total_equity
+    assert result.portfolio_snapshot.unrealized_pnl == expected_unrealized_pnl
+    assert result.portfolio_snapshot.max_drawdown == expected_drawdown
+
+
 def test_service_creates_reports_and_updates_alerts() -> None:
     """Verify service creates reports and alert workflow artifacts."""
 

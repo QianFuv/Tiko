@@ -493,9 +493,8 @@ class SimulationService:
             account = ledger_update.account
             state.orders.append(order)
             state.fills.append(fill)
-        updated_run = decision_run.model_copy(update={"account": account})
-        state.run = updated_run
-        state.step_index += 1
+        ledger_run = decision_run.model_copy(update={"account": account})
+        state.run = ledger_run
         agent_run = self._build_agent_run(intent)
         agent_messages = tuple(self._build_agent_messages(agent_run, intent))
         state.observations.append(observation)
@@ -503,8 +502,18 @@ class SimulationService:
         state.agent_messages.extend(agent_messages)
         state.decisions.append(intent)
         state.risk_reviews.append(risk_review)
-        positions = tuple(self._derive_positions(state))
+        positions = tuple(
+            self._derive_positions(
+                state,
+                mark_prices={symbol: candle.close},
+                as_of=next_time,
+            )
+        )
         state.positions = list(positions)
+        marked_account = self._mark_account_to_market(ledger_run.account, positions)
+        updated_run = ledger_run.model_copy(update={"account": marked_account})
+        state.run = updated_run
+        state.step_index += 1
         ledger_entry = (
             self._build_ledger_entry(updated_run, fill, ledger_update)
             if fill is not None and ledger_update is not None
@@ -1181,11 +1190,18 @@ class SimulationService:
 
         return list(self._get_state(run_id).metric_snapshots)
 
-    def _derive_positions(self, state: SimulationState) -> list[Position]:
+    def _derive_positions(
+        self,
+        state: SimulationState,
+        mark_prices: dict[str, Decimal] | None = None,
+        as_of: datetime | None = None,
+    ) -> list[Position]:
         """Derive net simulated positions from state fills.
 
         Args:
             state: Simulation state containing fills and account state.
+            mark_prices: Optional current mark prices by symbol.
+            as_of: Optional simulated time for marked positions.
 
         Returns:
             Net simulated positions.
@@ -1212,25 +1228,101 @@ class SimulationService:
                 continue
             notional = notionals_by_symbol[symbol]
             absolute_quantity = abs(quantity)
-            mark_price = abs(notional) / absolute_quantity
+            avg_entry_price = abs(notional) / absolute_quantity
+            mark_price = (
+                mark_prices.get(symbol, avg_entry_price)
+                if mark_prices is not None
+                else avg_entry_price
+            )
+            side: Literal["long", "short"] = (
+                "long" if quantity > Decimal("0") else "short"
+            )
+            unrealized_pnl = self._calculate_unrealized_pnl(
+                side=side,
+                quantity=absolute_quantity,
+                avg_entry_price=avg_entry_price,
+                mark_price=mark_price,
+            )
             positions.append(
                 Position(
                     position_id=uuid5(NAMESPACE_URL, f"{state.run.run_id}:{symbol}"),
                     account_id=state.run.account.account_id,
                     symbol=symbol,
-                    side="long" if quantity > Decimal("0") else "short",
+                    side=side,
                     quantity=absolute_quantity,
-                    avg_entry_price=mark_price,
+                    avg_entry_price=avg_entry_price,
                     mark_price=mark_price,
-                    notional=abs(notional),
+                    notional=absolute_quantity * mark_price,
                     leverage=Decimal("1"),
-                    unrealized_pnl=Decimal("0"),
+                    unrealized_pnl=unrealized_pnl,
                     realized_pnl=state.run.account.realized_pnl,
                     liquidation_price=None,
-                    updated_at_sim_time=latest_time_by_symbol[symbol],
+                    updated_at_sim_time=as_of or latest_time_by_symbol[symbol],
                 )
             )
         return positions
+
+    def _calculate_unrealized_pnl(
+        self,
+        side: Literal["long", "short"],
+        quantity: Decimal,
+        avg_entry_price: Decimal,
+        mark_price: Decimal,
+    ) -> Decimal:
+        """Calculate unrealized PnL for one marked position.
+
+        Args:
+            side: Position side.
+            quantity: Absolute position quantity.
+            avg_entry_price: Average entry price.
+            mark_price: Current mark price.
+
+        Returns:
+            Unrealized PnL.
+        """
+
+        if side == "long":
+            return (mark_price - avg_entry_price) * quantity
+        return (avg_entry_price - mark_price) * quantity
+
+    def _mark_account_to_market(
+        self,
+        account: SimAccount,
+        positions: Sequence[Position],
+    ) -> SimAccount:
+        """Mark account equity and drawdown from current positions.
+
+        Args:
+            account: Account after cash and fee updates.
+            positions: Current marked positions.
+
+        Returns:
+            Account with updated equity, unrealized PnL, and drawdown.
+        """
+
+        signed_position_value = sum(
+            (
+                position.notional if position.side == "long" else -position.notional
+                for position in positions
+            ),
+            Decimal("0"),
+        )
+        unrealized_pnl = sum(
+            (position.unrealized_pnl for position in positions), Decimal("0")
+        )
+        total_equity = max(Decimal("0"), account.cash_balance + signed_position_value)
+        drawdown = (
+            (total_equity - account.initial_equity) / account.initial_equity
+            if total_equity < account.initial_equity
+            else Decimal("0")
+        )
+        return account.model_copy(
+            update={
+                "total_equity": total_equity,
+                "unrealized_pnl": unrealized_pnl,
+                "max_drawdown": min(account.max_drawdown, drawdown),
+            }
+        )
 
     def _build_ledger_entry(
         self,
