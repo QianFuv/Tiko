@@ -232,6 +232,36 @@ def test_simulation_step_creates_internal_order_and_fill() -> None:
     assert service.list_metric_snapshots(run.run_id) == [result.metric_snapshot]
 
 
+def test_service_uses_configured_broker_fee_and_slippage() -> None:
+    """Verify simulation fills use configured broker fee and slippage settings."""
+
+    service = SimulationService(
+        Settings(
+            sim_broker_taker_fee_bps=Decimal("10"),
+            sim_broker_slippage_bps=Decimal("5"),
+        )
+    )
+    run = service.create_run(
+        name="broker-config",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    result = service.step_run(run.run_id, confidence=0.7)
+
+    assert result.fill is not None
+    expected_price = (
+        result.candle.close * Decimal("1.0005")
+        if result.fill.side == "buy"
+        else result.candle.close * Decimal("0.9995")
+    )
+    expected_fee = result.fill.quantity * result.fill.price * Decimal("10")
+    expected_fee /= Decimal("10000")
+    assert result.fill.slippage_bps == Decimal("5")
+    assert result.fill.price == expected_price
+    assert result.fill.fee == expected_fee
+
+
 def test_simulation_steps_size_orders_against_existing_target() -> None:
     """Verify repeated target steps do not duplicate full target orders."""
 

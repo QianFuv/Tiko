@@ -88,7 +88,10 @@ class SimulationService:
         self._realtime_fanout_receipts: list[RealtimeFanoutReceipt] = []
         self._states: dict[UUID, SimulationState] = {}
         self._portfolio_service = PortfolioService()
-        self._broker = SimBroker()
+        self._broker = SimBroker(
+            fee_bps=settings.sim_broker_taker_fee_bps,
+            slippage_bps=settings.sim_broker_slippage_bps,
+        )
         self._event_bus = EventBus()
         self._observation_builder = ObservationBuilder()
         self._metrics_engine = MetricsEngine()
