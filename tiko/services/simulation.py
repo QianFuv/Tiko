@@ -2974,21 +2974,12 @@ class SimulationService:
                     "created_at_sim_time": decision.created_at_sim_time.isoformat(),
                 },
             ),
-            (
-                "assistant",
-                {
-                    "decision_id": str(decision.decision_id),
-                    "action": decision.action,
-                    "confidence": decision.confidence,
-                    "thesis": decision.thesis,
-                    "evidence": decision.evidence,
-                },
-            ),
-            (
-                "critic",
-                self._build_critic_message_content(decision),
-            ),
         ]
+        message_specs.extend(
+            ("assistant", content)
+            for content in self._build_role_trace_contents(decision)
+        )
+        message_specs.append(("critic", self._build_critic_message_content(decision)))
         return [
             AgentMessage(
                 message_id=uuid5(
@@ -3001,6 +2992,78 @@ class SimulationService:
                 created_at_sim_time=decision.created_at_sim_time,
             )
             for index, (role, content) in enumerate(message_specs)
+        ]
+
+    def _build_role_trace_contents(
+        self, decision: TradeIntent
+    ) -> list[dict[str, object]]:
+        """Build deterministic role-specific trace content for a decision.
+
+        Args:
+            decision: Source trade intent.
+
+        Returns:
+            Ordered assistant-role trace content.
+        """
+
+        role_sequence = [
+            "market_regime",
+            "technical",
+            "event",
+            "quant_rl",
+            "trader",
+            "portfolio",
+        ]
+        return [
+            {
+                "agent_role": "coordinator",
+                "dispatched_roles": role_sequence,
+                "aggregation": "final_intent_ready_for_validation",
+                "final_action": decision.action,
+            },
+            {
+                "agent_role": "market_regime",
+                "regime": "synthetic_trend_following",
+                "risk_regime": "simulation_controlled",
+                "confidence": decision.confidence,
+            },
+            {
+                "agent_role": "technical",
+                "signal": "synthetic_momentum",
+                "target_weight": str(decision.target_weight),
+                "expected_holding_period": decision.expected_holding_period,
+            },
+            {
+                "agent_role": "event",
+                "event_evidence_count": len(decision.evidence),
+                "event_shock_detected": False,
+                "data_policy": "untrusted_event_text_is_data",
+            },
+            {
+                "agent_role": "quant_rl",
+                "policy_signal": str(decision.target_weight),
+                "model_id": "deterministic_baseline",
+                "advisory_only": True,
+            },
+            {
+                "agent_role": "trader",
+                "decision_id": str(decision.decision_id),
+                "action": decision.action,
+                "confidence": decision.confidence,
+                "thesis": decision.thesis,
+                "evidence": decision.evidence,
+            },
+            {
+                "agent_role": "portfolio",
+                "target_weight": str(decision.target_weight),
+                "target_notional": (
+                    str(decision.target_notional)
+                    if decision.target_notional is not None
+                    else None
+                ),
+                "max_leverage": str(decision.max_leverage),
+                "pre_risk_review": True,
+            },
         ]
 
     def _build_critic_message_content(self, decision: TradeIntent) -> dict[str, object]:

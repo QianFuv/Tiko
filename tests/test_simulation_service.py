@@ -198,16 +198,24 @@ def test_simulation_step_creates_internal_order_and_fill() -> None:
     assert result.observation.positions == []
     assert result.observation.risk_limits == service.get_risk_limits(run.run_id)
     assert result.agent_run.decision_id == result.decision.decision_id
-    assert [message.role for message in result.agent_messages] == [
-        "system",
-        "observation",
-        "assistant",
-        "critic",
+    assert result.agent_messages[0].role == "system"
+    assert result.agent_messages[1].role == "observation"
+    assert [
+        message.content["agent_role"] for message in result.agent_messages[2:-1]
+    ] == [
+        "coordinator",
+        "market_regime",
+        "technical",
+        "event",
+        "quant_rl",
+        "trader",
+        "portfolio",
     ]
-    assert result.agent_messages[3].content["decision_id"] == str(
+    assert result.agent_messages[-1].role == "critic"
+    assert result.agent_messages[-1].content["decision_id"] == str(
         result.decision.decision_id
     )
-    assert result.agent_messages[3].content["invalidation_conditions"] == [
+    assert result.agent_messages[-1].content["invalidation_conditions"] == [
         "confidence_below_threshold"
     ]
     assert result.order is not None
@@ -482,7 +490,20 @@ def test_low_confidence_intent_is_rejected_without_order() -> None:
     assert result.risk_review.status == "rejected"
     assert result.observation.symbol == "BTCUSDT"
     assert result.agent_run.decision_id == result.decision.decision_id
-    assert len(result.agent_messages) == 4
+    assert result.agent_messages[0].role == "system"
+    assert result.agent_messages[1].role == "observation"
+    assert [
+        message.content["agent_role"] for message in result.agent_messages[2:-1]
+    ] == [
+        "coordinator",
+        "market_regime",
+        "technical",
+        "event",
+        "quant_rl",
+        "trader",
+        "portfolio",
+    ]
+    assert result.agent_messages[-1].role == "critic"
     assert result.order is None
     assert result.fill is None
     assert result.ledger_entry is None
@@ -912,12 +933,17 @@ def test_decision_report_includes_trace_and_posterior_sections() -> None:
     assert isinstance(posterior_performance, dict)
     assert observation["observation_id"] == str(result.observation.observation_id)
     assert final_trade_intent["decision_id"] == str(result.decision.decision_id)
-    assert [subreport["role"] for subreport in agent_subreports] == [
-        "system",
-        "observation",
-        "assistant",
-        "critic",
+    subreport_contents = [subreport["content"] for subreport in agent_subreports]
+    assert [content.get("agent_role") for content in subreport_contents[2:-1]] == [
+        "coordinator",
+        "market_regime",
+        "technical",
+        "event",
+        "quant_rl",
+        "trader",
+        "portfolio",
     ]
+    assert agent_subreports[-1]["role"] == "critic"
     assert len(critic_objections) == 1
     critic_objection = critic_objections[0]
     assert isinstance(critic_objection, dict)

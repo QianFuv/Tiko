@@ -866,12 +866,19 @@ def test_agent_routes_evaluate_rule_based_agent() -> None:
     assert client.get(f"/api/agents/runs/{agent_run_id}").status_code == 200
     messages_response = client.get(f"/api/agents/runs/{agent_run_id}/messages")
     assert messages_response.status_code == 200
-    assert [message["role"] for message in messages_response.json()] == [
-        "system",
-        "observation",
-        "assistant",
-        "critic",
+    messages = messages_response.json()
+    assert messages[0]["role"] == "system"
+    assert messages[1]["role"] == "observation"
+    assert [message["content"].get("agent_role") for message in messages[2:-1]] == [
+        "coordinator",
+        "market_regime",
+        "technical",
+        "event",
+        "quant_rl",
+        "trader",
+        "portfolio",
     ]
+    assert messages[-1]["role"] == "critic"
     assert (
         client.post(
             f"/api/agents/runs/{agent_run_id}/replay",
