@@ -56,36 +56,18 @@ def record_worker_heartbeats(
 
 
 def build_default_job_handlers() -> dict[JobType, JobHandler]:
-    """Build deterministic placeholder handlers for supported job types.
+    """Build default handlers for supported job types.
 
     Returns:
         Default runtime job handlers keyed by job type.
     """
 
     return {
-        "agent_inference": build_placeholder_job_result,
+        "agent_inference": agent_worker.handle_agent_inference_job,
         "backtest": backtest_worker.handle_backtest_job,
         "experiment_run": backtest_worker.handle_backtest_job,
         "report_generation": report_worker.handle_report_generation_job,
         "rl_training": rl_worker.handle_training_job,
-    }
-
-
-def build_placeholder_job_result(job: BackgroundJob) -> dict[str, object]:
-    """Build a deterministic placeholder result for a runtime job.
-
-    Args:
-        job: Claimed runtime job.
-
-    Returns:
-        Structured placeholder result metadata.
-    """
-
-    return {
-        "message": "Worker completed deterministic placeholder job.",
-        "job_type": job.job_type,
-        "resource_type": job.resource_type,
-        "resource_id": job.resource_id,
     }
 
 

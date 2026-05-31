@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from tiko.domain.account import SimAccount
 from tiko.domain.market import Candle
+from tiko.domain.observation import Observation
 from tiko.domain.reporting import ReportArtifact
 from tiko.domain.runtime import BackgroundJob
 from tiko.domain.simulation import SimulationRun
@@ -110,6 +111,26 @@ def create_worker_report() -> ReportArtifact:
         sections={"activity": {"orders": 1, "fills": 1}},
         created_at_sim_time=created_at,
         created_at=created_at,
+    )
+
+
+def create_agent_observation() -> Observation:
+    """Create an observation payload for agent worker tests.
+
+    Returns:
+        Observation domain model.
+    """
+
+    run = create_rl_run()
+    candles = create_rl_candles()
+    return Observation(
+        observation_id=uuid4(),
+        run_id=run.run_id,
+        symbol="BTCUSDT",
+        as_of=candles[-1].as_of,
+        account=run.account,
+        candles=candles,
+        events=[],
     )
 
 
@@ -313,6 +334,77 @@ def test_backtest_worker_fails_empty_candle_payloads() -> None:
     assert result.failed_job_ids == (job.job_id,)
     assert failed_job.status == "failed"
     assert failed_job.error_message == "Backtest payload requires at least one candle."
+
+
+def test_agent_worker_runs_rule_based_inference_jobs() -> None:
+    """Verify agent worker jobs produce structured trade intents."""
+
+    service = RuntimeService()
+    observation = create_agent_observation()
+    job = service.create_job(
+        job_type="agent_inference",
+        resource_type="agent_run",
+        resource_id="agent-run-1",
+        payload={
+            "agent_type": "rule_based",
+            "observation": observation.model_dump(mode="json"),
+        },
+    )
+    definition = next(
+        definition
+        for definition in build_worker_definitions()
+        if definition.worker_name == "agent-worker"
+    )
+
+    result = process_worker_jobs(service, definition, max_jobs=1)
+    completed_job = service.get_job(job.job_id)
+    intent = completed_job.result["intent"]
+    assert isinstance(intent, dict)
+
+    assert result.claimed_job_ids == (job.job_id,)
+    assert result.completed_job_ids == (job.job_id,)
+    assert result.failed_job_ids == ()
+    assert completed_job.status == "completed"
+    assert completed_job.result["message"] == (
+        "Agent worker completed structured inference."
+    )
+    assert completed_job.result["agent_type"] == "rule_based"
+    assert completed_job.result["agent_id"] == "rule_based_trader"
+    assert completed_job.result["observation_id"] == str(observation.observation_id)
+    assert completed_job.result["run_id"] == str(observation.run_id)
+    assert completed_job.result["symbol"] == "BTCUSDT"
+    assert intent["action"] == "open_long"
+    assert intent["target_weight"] == "0.10"
+    assert intent["run_id"] == str(observation.run_id)
+
+
+def test_agent_worker_fails_unsupported_agent_types() -> None:
+    """Verify unsupported agent types fail through worker handling."""
+
+    service = RuntimeService()
+    job = service.create_job(
+        job_type="agent_inference",
+        resource_type="agent_run",
+        resource_id="agent-run-1",
+        payload={
+            "agent_type": "unsupported",
+            "observation": create_agent_observation().model_dump(mode="json"),
+        },
+    )
+    definition = next(
+        definition
+        for definition in build_worker_definitions()
+        if definition.worker_name == "agent-worker"
+    )
+
+    result = process_worker_jobs(service, definition, max_jobs=1)
+    failed_job = service.get_job(job.job_id)
+
+    assert result.claimed_job_ids == (job.job_id,)
+    assert result.completed_job_ids == ()
+    assert result.failed_job_ids == (job.job_id,)
+    assert failed_job.status == "failed"
+    assert failed_job.error_message == "Unsupported agent_type unsupported."
 
 
 def test_rl_worker_processes_static_training_jobs(tmp_path: Path) -> None:
