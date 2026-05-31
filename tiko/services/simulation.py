@@ -376,6 +376,19 @@ class SimulationService:
         state.step_index += 1
         state.candles.append(candle)
         state.events.append(event)
+        observation = self._observation_builder.build(
+            run=updated_run,
+            symbol=symbol,
+            as_of=next_time,
+            candles=state.candles,
+            events=state.events,
+            observation_id=uuid5(NAMESPACE_URL, f"observation:{intent.decision_id}"),
+        )
+        agent_run = self._build_agent_run(intent)
+        agent_messages = tuple(self._build_agent_messages(agent_run, intent))
+        state.observations.append(observation)
+        state.agent_runs.append(agent_run)
+        state.agent_messages.extend(agent_messages)
         state.decisions.append(intent)
         state.risk_reviews.append(risk_review)
         positions = tuple(self._derive_positions(state))
@@ -399,6 +412,9 @@ class SimulationService:
             run=updated_run,
             candle=candle,
             event=event,
+            observation=observation,
+            agent_run=agent_run,
+            agent_messages=agent_messages,
             decision=intent,
             risk_review=risk_review,
             order=order,
@@ -514,12 +530,19 @@ class SimulationService:
         return decision
 
     def list_agent_runs(self) -> list[AgentRun]:
-        """List derived agent runs for generated decisions.
+        """List agent runs for generated decisions.
 
         Returns:
-            Agent runs derived from decisions.
+            Agent runs generated for decisions.
         """
 
+        stored_runs = [
+            agent_run
+            for state in self._states.values()
+            for agent_run in state.agent_runs
+        ]
+        if stored_runs:
+            return stored_runs
         return [
             self._build_agent_run(decision)
             for state in self._states.values()
@@ -545,7 +568,7 @@ class SimulationService:
         raise KeyError(agent_run_id)
 
     def list_agent_messages(self, agent_run_id: UUID) -> list[AgentMessage]:
-        """List derived trace messages for one agent run.
+        """List trace messages for one agent run.
 
         Args:
             agent_run_id: Agent run identifier.
@@ -557,6 +580,14 @@ class SimulationService:
             KeyError: If no agent run exists for the ID.
         """
 
+        for state in self._states.values():
+            messages = [
+                message
+                for message in state.agent_messages
+                if message.agent_run_id == agent_run_id
+            ]
+            if messages:
+                return messages
         agent_run = self.get_agent_run(agent_run_id)
         decision = self.get_decision(agent_run.decision_id)
         return self._build_agent_messages(agent_run, decision)
@@ -595,7 +626,19 @@ class SimulationService:
         """
 
         state, decision = self._find_decision_state(decision_id)
-        agent_run = self._build_agent_run(decision)
+        agent_run = next(
+            (
+                candidate
+                for candidate in state.agent_runs
+                if candidate.decision_id == decision_id
+            ),
+            self._build_agent_run(decision),
+        )
+        messages = [
+            message
+            for message in state.agent_messages
+            if message.agent_run_id == agent_run.agent_run_id
+        ] or self._build_agent_messages(agent_run, decision)
         order = next(
             (
                 candidate
@@ -627,7 +670,7 @@ class SimulationService:
         return DecisionTrace(
             decision=decision,
             agent_run=agent_run,
-            messages=self._build_agent_messages(agent_run, decision),
+            messages=messages,
             risk_review=risk_review,
             order=order,
             fill=fill,
@@ -778,6 +821,21 @@ class SimulationService:
             candles=state.candles,
             events=state.events,
         )
+
+    def list_observation_snapshots(self, run_id: UUID) -> list[Observation]:
+        """List generated observation snapshots for a run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Observation snapshots for the run.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        return list(self._states[run_id].observations)
 
     def get_latest_risk_review(self, run_id: UUID) -> RiskReview | None:
         """Return the latest risk review for a run.

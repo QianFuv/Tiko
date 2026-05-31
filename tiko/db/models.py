@@ -264,6 +264,53 @@ class MarketEventRecord(Base):
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
 
 
+class ObservationSnapshotRecord(Base):
+    """Persist a point-in-time observation snapshot."""
+
+    __tablename__ = "observation_snapshots"
+
+    observation_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("simulation_runs.run_id"))
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class AgentRunRecord(Base):
+    """Persist an agent evaluation associated with a decision."""
+
+    __tablename__ = "agent_runs"
+
+    agent_run_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("simulation_runs.run_id"))
+    decision_id: Mapped[str] = mapped_column(ForeignKey("decisions.decision_id"))
+    agent_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    started_at_sim_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    completed_at_sim_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class AgentMessageRecord(Base):
+    """Persist a structured message in an agent trace."""
+
+    __tablename__ = "agent_messages"
+
+    message_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    agent_run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.agent_run_id"))
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    content: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_at_sim_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class DecisionRecord(Base):
     """Persist a structured trade intent emitted by an agent."""
 

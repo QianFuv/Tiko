@@ -201,6 +201,8 @@ def test_metadata_creates_expected_tables(sqlite_engine: Engine) -> None:
 
     assert table_names == {
         "accounts",
+        "agent_messages",
+        "agent_runs",
         "alerts",
         "audit_logs",
         "candles",
@@ -217,6 +219,7 @@ def test_metadata_creates_expected_tables(sqlite_engine: Engine) -> None:
         "metric_snapshots",
         "model_registry",
         "orders",
+        "observation_snapshots",
         "plugin_registry",
         "portfolio_snapshots",
         "positions",
@@ -403,6 +406,11 @@ def test_repository_persists_successful_step_artifacts(
     assert repository.get_run(run.run_id) == result.run
     assert repository.list_candles(run.run_id) == [result.candle]
     assert repository.list_market_events(run.run_id) == [result.event]
+    assert repository.list_observation_snapshots(run.run_id) == [result.observation]
+    assert repository.list_agent_runs(run.run_id) == [result.agent_run]
+    assert repository.list_agent_messages(result.agent_run.agent_run_id) == list(
+        result.agent_messages
+    )
     assert repository.list_decisions(run.run_id) == [result.decision]
     assert repository.get_latest_risk_review(run.run_id) == result.risk_review
     assert repository.list_orders(run.run_id) == [result.order]
@@ -570,6 +578,11 @@ def test_repository_persists_rejected_step_without_order_or_fill(
     repository.save_step_result(result)
 
     assert repository.list_decisions(run.run_id) == [result.decision]
+    assert repository.list_observation_snapshots(run.run_id) == [result.observation]
+    assert repository.list_agent_runs(run.run_id) == [result.agent_run]
+    assert repository.list_agent_messages(result.agent_run.agent_run_id) == list(
+        result.agent_messages
+    )
     assert repository.get_latest_risk_review(run.run_id) == result.risk_review
     assert repository.list_orders(run.run_id) == []
     assert repository.list_fills(run.run_id) == []

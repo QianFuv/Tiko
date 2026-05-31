@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from tiko.db.models import (
     AccountRecord,
+    AgentMessageRecord,
+    AgentRunRecord,
     AlertRecord,
     AuditLogRecord,
     CandleRecord,
@@ -24,6 +26,7 @@ from tiko.db.models import (
     MemoryEntryRecord,
     MetricSnapshotRecord,
     ModelRegistryRecord,
+    ObservationSnapshotRecord,
     OrderRecord,
     PluginRegistryRecord,
     PortfolioSnapshotRecord,
@@ -40,6 +43,12 @@ from tiko.domain.account import (
     Position,
     SimAccount,
 )
+from tiko.domain.agent import (
+    AgentMessage,
+    AgentMessageRole,
+    AgentRun,
+    AgentRunStatus,
+)
 from tiko.domain.dataset import (
     DatasetQualityIssue,
     DatasetQualityReport,
@@ -52,6 +61,7 @@ from tiko.domain.experiment import ExperimentKind, ExperimentRecord, ExperimentS
 from tiko.domain.market import Candle, MarketEvent
 from tiko.domain.memory import MemoryEntry
 from tiko.domain.model import ModelRegistryEntry, ModelStatus, ModelType
+from tiko.domain.observation import Observation
 from tiko.domain.order import Fill, SimOrder
 from tiko.domain.plugin import (
     PluginManifest,
@@ -151,7 +161,11 @@ class SimulationRepository:
             self._merge_run(session, result.run)
             self._add_candle(session, result.run.run_id, result.candle)
             self._merge_market_event(session, result.run.run_id, result.event)
+            self._merge_observation_snapshot(session, result.observation)
             self._merge_decision(session, result.decision)
+            self._merge_agent_run(session, result.agent_run)
+            for message in result.agent_messages:
+                self._merge_agent_message(session, message)
             self._merge_risk_review(session, result.run.run_id, result.risk_review)
             if result.order is not None:
                 self._merge_order(session, result.order)
@@ -400,6 +414,61 @@ class SimulationRepository:
                 .order_by(MarketEventRecord.simulated_time)
             ).all()
             return [self._to_market_event(record) for record in records]
+
+    def list_observation_snapshots(self, run_id: UUID) -> list[Observation]:
+        """List observation snapshots persisted for a simulation run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Observation snapshots ordered by `as_of`.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(ObservationSnapshotRecord)
+                .where(ObservationSnapshotRecord.run_id == str(run_id))
+                .order_by(ObservationSnapshotRecord.as_of)
+            ).all()
+            return [self._to_observation_snapshot(record) for record in records]
+
+    def list_agent_runs(self, run_id: UUID | None = None) -> list[AgentRun]:
+        """List persisted agent runs.
+
+        Args:
+            run_id: Optional simulation run filter.
+
+        Returns:
+            Agent runs ordered by simulated start time.
+        """
+
+        with self._session_factory() as session:
+            statement = select(AgentRunRecord).order_by(
+                AgentRunRecord.started_at_sim_time
+            )
+            if run_id is not None:
+                statement = statement.where(AgentRunRecord.run_id == str(run_id))
+            records = session.scalars(statement).all()
+            return [self._to_agent_run(record) for record in records]
+
+    def list_agent_messages(self, agent_run_id: UUID) -> list[AgentMessage]:
+        """List persisted agent messages for one agent run.
+
+        Args:
+            agent_run_id: Agent run identifier.
+
+        Returns:
+            Agent messages ordered by simulated time.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(AgentMessageRecord)
+                .where(AgentMessageRecord.agent_run_id == str(agent_run_id))
+                .order_by(AgentMessageRecord.created_at_sim_time)
+            ).all()
+            return [self._to_agent_message(record) for record in records]
 
     def list_decisions(self, run_id: UUID | None = None) -> list[TradeIntent]:
         """List persisted trade intents.
@@ -1001,6 +1070,65 @@ class SimulationRepository:
             )
         )
 
+    def _merge_observation_snapshot(
+        self, session: Session, observation: Observation
+    ) -> None:
+        """Merge an observation snapshot into the active session.
+
+        Args:
+            session: Active SQLAlchemy session.
+            observation: Observation snapshot to merge.
+        """
+
+        session.merge(
+            ObservationSnapshotRecord(
+                observation_id=str(observation.observation_id),
+                run_id=str(observation.run_id),
+                symbol=observation.symbol,
+                as_of=observation.as_of,
+                payload=observation.model_dump(mode="json"),
+                created_at=observation.as_of,
+            )
+        )
+
+    def _merge_agent_run(self, session: Session, agent_run: AgentRun) -> None:
+        """Merge an agent run into the active session.
+
+        Args:
+            session: Active SQLAlchemy session.
+            agent_run: Agent run to merge.
+        """
+
+        session.merge(
+            AgentRunRecord(
+                agent_run_id=str(agent_run.agent_run_id),
+                run_id=str(agent_run.run_id),
+                decision_id=str(agent_run.decision_id),
+                agent_id=agent_run.agent_id,
+                status=agent_run.status,
+                started_at_sim_time=agent_run.started_at_sim_time,
+                completed_at_sim_time=agent_run.completed_at_sim_time,
+            )
+        )
+
+    def _merge_agent_message(self, session: Session, message: AgentMessage) -> None:
+        """Merge an agent message into the active session.
+
+        Args:
+            session: Active SQLAlchemy session.
+            message: Agent message to merge.
+        """
+
+        session.merge(
+            AgentMessageRecord(
+                message_id=str(message.message_id),
+                agent_run_id=str(message.agent_run_id),
+                role=message.role,
+                content=message.content,
+                created_at_sim_time=message.created_at_sim_time,
+            )
+        )
+
     def _merge_decision(self, session: Session, decision: TradeIntent) -> None:
         """Merge a trade intent into the active session.
 
@@ -1571,6 +1699,58 @@ class SimulationRepository:
             payload=dict(record.payload),
             source=record.source,
             confidence=record.confidence,
+        )
+
+    def _to_observation_snapshot(
+        self, record: ObservationSnapshotRecord
+    ) -> Observation:
+        """Convert an observation snapshot row to a domain model.
+
+        Args:
+            record: Persisted observation snapshot row.
+
+        Returns:
+            Observation domain model.
+        """
+
+        return Observation.model_validate(record.payload)
+
+    def _to_agent_run(self, record: AgentRunRecord) -> AgentRun:
+        """Convert an agent run row to a domain model.
+
+        Args:
+            record: Persisted agent run row.
+
+        Returns:
+            Agent run domain model.
+        """
+
+        return AgentRun(
+            agent_run_id=UUID(record.agent_run_id),
+            run_id=UUID(record.run_id),
+            decision_id=UUID(record.decision_id),
+            agent_id=record.agent_id,
+            status=cast(AgentRunStatus, record.status),
+            started_at_sim_time=self._aware_datetime(record.started_at_sim_time),
+            completed_at_sim_time=self._aware_datetime(record.completed_at_sim_time),
+        )
+
+    def _to_agent_message(self, record: AgentMessageRecord) -> AgentMessage:
+        """Convert an agent message row to a domain model.
+
+        Args:
+            record: Persisted agent message row.
+
+        Returns:
+            Agent message domain model.
+        """
+
+        return AgentMessage(
+            message_id=UUID(record.message_id),
+            agent_run_id=UUID(record.agent_run_id),
+            role=cast(AgentMessageRole, record.role),
+            content=dict(record.content),
+            created_at_sim_time=self._aware_datetime(record.created_at_sim_time),
         )
 
     def _to_decision(self, record: DecisionRecord) -> TradeIntent:

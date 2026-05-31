@@ -3,9 +3,11 @@
 from dataclasses import dataclass, field
 
 from tiko.domain.account import LedgerEntry, MetricSnapshot, PortfolioSnapshot, Position
+from tiko.domain.agent import AgentMessage, AgentRun
 from tiko.domain.decision import DecisionReview, TradeIntent
 from tiko.domain.market import Candle, MarketEvent
 from tiko.domain.memory import MemoryEntry
+from tiko.domain.observation import Observation
 from tiko.domain.order import Fill, SimOrder
 from tiko.domain.reporting import Alert, ReportArtifact
 from tiko.domain.risk import RiskLimits, RiskReview
@@ -23,6 +25,9 @@ class SimulationState:
     market_replay: MarketReplay | None = None
     candles: list[Candle] = field(default_factory=list)
     events: list[MarketEvent] = field(default_factory=list)
+    observations: list[Observation] = field(default_factory=list)
+    agent_runs: list[AgentRun] = field(default_factory=list)
+    agent_messages: list[AgentMessage] = field(default_factory=list)
     decisions: list[TradeIntent] = field(default_factory=list)
     decision_reviews: list[DecisionReview] = field(default_factory=list)
     memory_entries: list[MemoryEntry] = field(default_factory=list)
@@ -44,6 +49,9 @@ class SimulationStepResult:
     run: SimulationRun
     candle: Candle
     event: MarketEvent
+    observation: Observation
+    agent_run: AgentRun
+    agent_messages: tuple[AgentMessage, ...]
     decision: TradeIntent
     risk_review: RiskReview
     order: SimOrder | None

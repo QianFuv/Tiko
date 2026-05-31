@@ -69,6 +69,13 @@ def test_simulation_step_creates_internal_order_and_fill() -> None:
     assert result.run.current_sim_time == start_time + timedelta(hours=1)
     assert result.candle.close == Decimal("50035")
     assert result.risk_review.status == "approved"
+    assert result.observation.symbol == "BTCUSDT"
+    assert result.agent_run.decision_id == result.decision.decision_id
+    assert [message.role for message in result.agent_messages] == [
+        "system",
+        "observation",
+        "assistant",
+    ]
     assert result.order is not None
     assert result.fill is not None
     assert result.ledger_entry is not None
@@ -78,6 +85,11 @@ def test_simulation_step_creates_internal_order_and_fill() -> None:
     assert result.run.account.realized_pnl < Decimal("0")
     assert len(service.list_orders()) == 1
     assert len(service.list_fills()) == 1
+    assert service.list_observation_snapshots(run.run_id) == [result.observation]
+    assert service.list_agent_runs() == [result.agent_run]
+    assert service.list_agent_messages(result.agent_run.agent_run_id) == list(
+        result.agent_messages
+    )
     assert service.list_positions(run.run_id) == list(result.positions)
     assert service.list_ledger_entries(run.run_id) == [result.ledger_entry]
     assert service.list_portfolio_snapshots(run.run_id) == [result.portfolio_snapshot]
@@ -118,6 +130,9 @@ def test_low_confidence_intent_is_rejected_without_order() -> None:
     result = service.step_run(run.run_id, confidence=0.2)
 
     assert result.risk_review.status == "rejected"
+    assert result.observation.symbol == "BTCUSDT"
+    assert result.agent_run.decision_id == result.decision.decision_id
+    assert len(result.agent_messages) == 3
     assert result.order is None
     assert result.fill is None
     assert result.ledger_entry is None
@@ -148,6 +163,11 @@ def test_repository_backed_service_persists_created_run_and_step() -> None:
     assert result.fill is not None
     assert result.ledger_entry is not None
     assert repository.get_run(run.run_id) == result.run
+    assert repository.list_observation_snapshots(run.run_id) == [result.observation]
+    assert repository.list_agent_runs(run.run_id) == [result.agent_run]
+    assert repository.list_agent_messages(result.agent_run.agent_run_id) == list(
+        result.agent_messages
+    )
     assert repository.list_decisions(run.run_id) == [result.decision]
     assert repository.get_latest_risk_review(run.run_id) == result.risk_review
     assert repository.list_orders(run.run_id) == [result.order]
