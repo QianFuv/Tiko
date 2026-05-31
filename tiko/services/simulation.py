@@ -1,5 +1,7 @@
 """In-memory simulation orchestration service."""
 
+import json
+import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -21,7 +23,7 @@ from tiko.domain.agent import AgentMessage, AgentMessageRole, AgentRun, Decision
 from tiko.domain.comparison import RunBenchmark, RunComparison
 from tiko.domain.decision import DecisionReview, TradeIntent
 from tiko.domain.market import Candle, FeatureSnapshot, MarketEvent, OrderBookSnapshot
-from tiko.domain.memory import MemoryEntry, MemoryType
+from tiko.domain.memory import MemoryEntry, MemorySearchResult, MemoryType
 from tiko.domain.observation import Observation
 from tiko.domain.order import Fill, SimOrder
 from tiko.domain.reporting import (
@@ -44,6 +46,8 @@ from tiko.simulation.metrics import MetricsEngine
 from tiko.simulation.replay import MarketReplay, MarketReplayExhausted
 from tiko.simulation.state import SimulationState, SimulationStepResult
 from tiko.simulation.synthetic import generate_synthetic_candle
+
+MEMORY_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 
 
 class SimulationService:
@@ -1472,6 +1476,133 @@ class SimulationService:
         """
 
         return list(self._get_state(run_id).memory_entries)
+
+    def search_memory_entries(
+        self,
+        run_id: UUID,
+        query: str,
+        as_of: datetime | None = None,
+        limit: int = 5,
+    ) -> list[MemorySearchResult]:
+        """Search available memory entries for one run.
+
+        Args:
+            run_id: Simulation run identifier.
+            query: Retrieval query text.
+            as_of: Optional simulated-time cutoff. The run time is used when omitted.
+            limit: Maximum number of results.
+
+        Returns:
+            Ranked memory search results.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+            ValueError: If the query or limit is invalid.
+        """
+
+        if limit <= 0:
+            raise ValueError("Memory search limit must be positive.")
+        query_terms = self._tokenize_memory_text(query)
+        if not query_terms:
+            raise ValueError("Memory search query must include at least one token.")
+        state = self._get_state(run_id)
+        cutoff = as_of if as_of is not None else state.run.current_sim_time
+        results: list[MemorySearchResult] = []
+        for entry in state.memory_entries:
+            if entry.available_at_sim_time > cutoff:
+                continue
+            result = self._score_memory_entry(entry, query_terms)
+            if result is not None:
+                results.append(result)
+        results.sort(
+            key=lambda result: (
+                -result.score,
+                -result.entry.available_at_sim_time.timestamp(),
+                -result.entry.created_at.timestamp(),
+                str(result.entry.memory_id),
+            )
+        )
+        return results[:limit]
+
+    def _score_memory_entry(
+        self,
+        entry: MemoryEntry,
+        query_terms: Sequence[str],
+    ) -> MemorySearchResult | None:
+        """Score one memory entry against query terms.
+
+        Args:
+            entry: Candidate memory entry.
+            query_terms: Unique normalized query terms.
+
+        Returns:
+            Search result when any term matches, otherwise `None`.
+        """
+
+        document = self._build_memory_search_document(entry)
+        document_tokens = set(self._tokenize_memory_text(document))
+        normalized_document = document.lower()
+        matched_terms = [
+            term
+            for term in query_terms
+            if term in document_tokens or term in normalized_document
+        ]
+        if not matched_terms:
+            return None
+        return MemorySearchResult(
+            entry=entry,
+            score=len(matched_terms) / len(query_terms),
+            matched_terms=matched_terms,
+        )
+
+    def _build_memory_search_document(self, entry: MemoryEntry) -> str:
+        """Build normalized searchable text for one memory entry.
+
+        Args:
+            entry: Memory entry.
+
+        Returns:
+            Searchable text document.
+        """
+
+        content_text = json.dumps(
+            entry.content,
+            default=str,
+            sort_keys=True,
+        )
+        return " ".join(
+            [
+                entry.memory_type,
+                entry.summary,
+                " ".join(entry.tags),
+                content_text,
+            ]
+        )
+
+    def _tokenize_memory_text(self, value: str) -> list[str]:
+        """Tokenize memory retrieval text.
+
+        Args:
+            value: Raw text.
+
+        Returns:
+            Unique normalized tokens preserving first-seen order.
+        """
+
+        normalized_value = value.strip().lower()
+        if not normalized_value:
+            return []
+        tokens = MEMORY_TOKEN_PATTERN.findall(normalized_value)
+        if not tokens:
+            tokens = [normalized_value]
+        unique_tokens: list[str] = []
+        seen_tokens: set[str] = set()
+        for token in tokens:
+            if token in seen_tokens:
+                continue
+            unique_tokens.append(token)
+            seen_tokens.add(token)
+        return unique_tokens
 
     def create_simulation_report(self, run_id: UUID) -> ReportArtifact:
         """Create a structured simulation report from current run state.

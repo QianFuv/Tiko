@@ -289,6 +289,72 @@ def test_service_creates_decision_reviews_and_memory_entries() -> None:
     assert repository.list_memory_entries(run.run_id) == [memory]
 
 
+def test_service_searches_memory_entries_by_query_and_time() -> None:
+    """Verify memory retrieval ranks matches and respects availability time."""
+
+    service = SimulationService(Settings())
+    run = service.create_run(
+        name="memory-search",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    full_match = service.create_memory_entry(
+        run_id=run.run_id,
+        memory_type="decision",
+        summary="Risk drawdown review recommended patience.",
+        content={"symbol": "BTCUSDT", "outcome": "adverse excursion"},
+        tags=["risk", "drawdown"],
+    )
+    partial_match = service.create_memory_entry(
+        run_id=run.run_id,
+        memory_type="regime",
+        summary="Risk budget tightened during quiet liquidity.",
+        content={"symbol": "BTCUSDT"},
+        tags=["risk"],
+    )
+    future_match = service.create_memory_entry(
+        run_id=run.run_id,
+        memory_type="failure",
+        summary="Risk drawdown future event.",
+        content={"symbol": "BTCUSDT"},
+        tags=["risk", "drawdown"],
+        available_at_sim_time=run.current_sim_time + timedelta(hours=1),
+    )
+
+    results = service.search_memory_entries(
+        run_id=run.run_id,
+        query="risk drawdown",
+        as_of=run.current_sim_time,
+        limit=5,
+    )
+    limited_results = service.search_memory_entries(
+        run_id=run.run_id,
+        query="risk drawdown",
+        as_of=run.current_sim_time,
+        limit=1,
+    )
+    no_match_results = service.search_memory_entries(
+        run_id=run.run_id,
+        query="unmatched",
+        as_of=run.current_sim_time,
+    )
+
+    assert [result.entry.memory_id for result in results] == [
+        full_match.memory_id,
+        partial_match.memory_id,
+    ]
+    assert results[0].score == 1.0
+    assert results[0].matched_terms == ["risk", "drawdown"]
+    assert results[1].score == 0.5
+    assert limited_results[0].entry.memory_id == full_match.memory_id
+    assert no_match_results == []
+    assert future_match.memory_id not in {result.entry.memory_id for result in results}
+    with pytest.raises(ValueError, match="query"):
+        service.search_memory_entries(run.run_id, " ")
+    with pytest.raises(ValueError, match="limit"):
+        service.search_memory_entries(run.run_id, "risk", limit=0)
+
+
 def test_step_observation_uses_prior_positions_and_available_memory() -> None:
     """Verify step observations contain prior portfolio and available memory."""
 

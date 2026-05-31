@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from tiko.api.dependencies import (
@@ -14,7 +14,7 @@ from tiko.api.dependencies import (
     require_permission,
 )
 from tiko.domain.market import MarketEvent
-from tiko.domain.memory import MemoryEntry, MemoryType
+from tiko.domain.memory import MemoryEntry, MemorySearchResult, MemoryType
 from tiko.domain.observation import Observation
 from tiko.domain.security import Principal
 from tiko.domain.simulation import SimulationRun
@@ -438,6 +438,45 @@ def list_simulation_memory(
         raise HTTPException(
             status_code=404, detail="Simulation run not found."
         ) from error
+
+
+@router.get("/{run_id}/memory/search", response_model=list[MemorySearchResult])
+def search_simulation_memory(
+    run_id: UUID,
+    service: SimulationServiceDep,
+    query: Annotated[str, Query(min_length=1)],
+    limit: Annotated[int, Query(ge=1, le=50)] = 5,
+    as_of: datetime | None = None,
+) -> list[MemorySearchResult]:
+    """Search auxiliary memory entries for a run.
+
+    Args:
+        run_id: Simulation run identifier.
+        service: Simulation service dependency.
+        query: Memory retrieval query.
+        limit: Maximum result count.
+        as_of: Optional simulated-time cutoff.
+
+    Returns:
+        Ranked memory search results.
+
+    Raises:
+        HTTPException: If the run does not exist or query parameters are invalid.
+    """
+
+    try:
+        return service.search_memory_entries(
+            run_id=run_id,
+            query=query,
+            as_of=as_of,
+            limit=limit,
+        )
+    except KeyError as error:
+        raise HTTPException(
+            status_code=404, detail="Simulation run not found."
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.post("/{run_id}/memory", response_model=MemoryEntry)

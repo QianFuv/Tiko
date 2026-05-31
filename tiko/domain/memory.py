@@ -23,3 +23,11 @@ class MemoryEntry(DomainModel):
     tags: list[str]
     available_at_sim_time: datetime
     created_at: datetime
+
+
+class MemorySearchResult(DomainModel):
+    """Represent one scored memory retrieval result."""
+
+    entry: MemoryEntry
+    score: float = Field(ge=0.0, le=1.0)
+    matched_terms: list[str] = Field(default_factory=list)

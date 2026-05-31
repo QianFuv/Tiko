@@ -32,7 +32,7 @@ from tiko.domain.market import (
     MarketEvent,
     OrderBookSnapshot,
 )
-from tiko.domain.memory import MemoryEntry, MemoryType
+from tiko.domain.memory import MemoryEntry, MemorySearchResult, MemoryType
 from tiko.domain.model import ModelRegistryEntry, ModelStatus, ModelType
 from tiko.domain.observation import Observation
 from tiko.domain.order import Fill, OrderRequest, SimOrder
@@ -109,6 +109,7 @@ __all__ = [
     "LedgerEntryType",
     "MarketEvent",
     "MemoryEntry",
+    "MemorySearchResult",
     "MemoryType",
     "MetricSnapshot",
     "ModelRegistryEntry",

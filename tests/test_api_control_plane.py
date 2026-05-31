@@ -486,6 +486,37 @@ def test_query_routes_expose_simulated_state() -> None:
         client.get(f"/api/decisions/{decision_id}/review").json()[0]["horizon"] == "1h"
     )
     assert memory_response.status_code == 200
+    memory_id = memory_response.json()["memory_id"]
+    memory_search_response = client.get(
+        f"/api/simulations/{run_id}/memory/search?query=decision%20review&limit=2"
+    )
+    memory_as_of_response = client.get(
+        f"/api/simulations/{run_id}/memory/search"
+        "?query=decision&as_of=2000-01-01T00:00:00Z"
+    )
+    memory_no_match_response = client.get(
+        f"/api/simulations/{run_id}/memory/search?query=unmatched"
+    )
+    memory_blank_query_response = client.get(
+        f"/api/simulations/{run_id}/memory/search?query="
+    )
+    memory_bad_limit_response = client.get(
+        f"/api/simulations/{run_id}/memory/search?query=decision&limit=0"
+    )
+    memory_unknown_response = client.get(
+        "/api/simulations/00000000-0000-0000-0000-000000000000/"
+        "memory/search?query=decision"
+    )
+    assert memory_search_response.status_code == 200
+    memory_search = memory_search_response.json()
+    assert memory_search[0]["entry"]["memory_id"] == memory_id
+    assert memory_search[0]["score"] == 1.0
+    assert memory_search[0]["matched_terms"] == ["decision", "review"]
+    assert memory_as_of_response.json() == []
+    assert memory_no_match_response.json() == []
+    assert memory_blank_query_response.status_code == 422
+    assert memory_bad_limit_response.status_code == 422
+    assert memory_unknown_response.status_code == 404
     assert (
         client.get(f"/api/simulations/{run_id}/memory").json()[0]["memory_type"]
         == "decision"
