@@ -8,6 +8,9 @@ from tiko.domain.order import Fill, OrderRequest, SimOrder
 from tiko.simulation.fee import FeeEngine
 from tiko.simulation.slippage import SlippageEngine
 
+TimeInForce = Literal["gtc", "ioc", "fok"]
+SUPPORTED_TIME_IN_FORCE: frozenset[TimeInForce] = frozenset(("gtc", "ioc", "fok"))
+
 
 class MatchingEngine:
     """Create simulated immediate fills for internal market orders."""
@@ -73,6 +76,7 @@ class MatchingEngine:
         order_request: OrderRequest,
         reference_price: Decimal,
         available_quantity: Decimal | None = None,
+        time_in_force: TimeInForce = "gtc",
     ) -> tuple[SimOrder, Fill | None]:
         """Match an internal limit order request against a reference price.
 
@@ -80,6 +84,7 @@ class MatchingEngine:
             order_request: Internal limit order request.
             reference_price: Current market reference price.
             available_quantity: Optional simulated depth available to fill.
+            time_in_force: Limit order expiry behavior.
 
         Returns:
             Simulated order and optional fill.
@@ -90,6 +95,8 @@ class MatchingEngine:
 
         if order_request.order_type != "limit":
             raise ValueError("Limit matching requires a limit order request.")
+        if time_in_force not in SUPPORTED_TIME_IN_FORCE:
+            raise ValueError("Unsupported time_in_force.")
         if order_request.limit_price is None:
             raise ValueError("Limit order requests require limit_price.")
         if available_quantity is not None and available_quantity < Decimal("0"):
@@ -98,10 +105,14 @@ class MatchingEngine:
         if not self._limit_crosses(
             order_request.side, order_request.limit_price, reference_price
         ):
-            return self._build_order(order_request, order_id, "open"), None
+            unfilled_status = self._unfilled_limit_status(time_in_force)
+            return self._build_order(order_request, order_id, unfilled_status), None
         fill_quantity = self._limit_fill_quantity(order_request, available_quantity)
         if fill_quantity <= Decimal("0"):
-            return self._build_order(order_request, order_id, "open"), None
+            unfilled_status = self._unfilled_limit_status(time_in_force)
+            return self._build_order(order_request, order_id, unfilled_status), None
+        if time_in_force == "fok" and fill_quantity < order_request.quantity:
+            return self._build_order(order_request, order_id, "expired"), None
         status: Literal["partially_filled", "filled"] = (
             "filled" if fill_quantity == order_request.quantity else "partially_filled"
         )
@@ -124,7 +135,7 @@ class MatchingEngine:
         self,
         order_request: OrderRequest,
         order_id: UUID,
-        status: Literal["open", "partially_filled", "filled"],
+        status: Literal["open", "partially_filled", "filled", "expired"],
     ) -> SimOrder:
         """Build a simulated order from one request.
 
@@ -170,6 +181,23 @@ class MatchingEngine:
         if available_quantity is None:
             return order_request.quantity
         return min(order_request.quantity, available_quantity)
+
+    def _unfilled_limit_status(
+        self,
+        time_in_force: TimeInForce,
+    ) -> Literal["open", "expired"]:
+        """Return the order status for an unfilled limit order.
+
+        Args:
+            time_in_force: Limit order expiry behavior.
+
+        Returns:
+            Open for GTC orders and expired for immediate expiry policies.
+        """
+
+        if time_in_force == "gtc":
+            return "open"
+        return "expired"
 
     def _limit_crosses(
         self,

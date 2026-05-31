@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from tiko.domain.order import Fill, OrderRequest, SimOrder
 from tiko.simulation.fee import FeeEngine
-from tiko.simulation.matching import MatchingEngine
+from tiko.simulation.matching import MatchingEngine, TimeInForce
 from tiko.simulation.slippage import SlippageEngine
 
 
@@ -56,6 +56,7 @@ class SimBroker:
         order_request: OrderRequest,
         reference_price: Decimal,
         available_quantity: Decimal | None = None,
+        time_in_force: TimeInForce = "gtc",
     ) -> tuple[SimOrder, Fill | None]:
         """Submit an internal limit order request to simulated matching.
 
@@ -64,11 +65,12 @@ class SimBroker:
                 portfolio layer.
             reference_price: Current market reference price.
             available_quantity: Optional simulated depth available to fill.
+            time_in_force: Limit order expiry behavior.
 
         Returns:
             Simulated order and optional fill.
         """
 
         return self._matching_engine.match_limit_order(
-            order_request, reference_price, available_quantity
+            order_request, reference_price, available_quantity, time_in_force
         )

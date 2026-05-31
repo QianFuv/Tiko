@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 import pytest
@@ -243,6 +243,20 @@ def test_matching_engine_leaves_uncrossed_limit_order_open() -> None:
     assert fill is None
 
 
+def test_matching_engine_expires_uncrossed_ioc_limit_order() -> None:
+    """Verify uncrossed IOC limit orders expire without fills."""
+
+    order, fill = MatchingEngine().match_limit_order(
+        create_limit_order_request("buy", Decimal("99")),
+        reference_price=Decimal("100"),
+        time_in_force="ioc",
+    )
+
+    assert order.status == "expired"
+    assert order.limit_price == Decimal("99")
+    assert fill is None
+
+
 def test_matching_engine_partially_fills_limit_order_by_available_depth() -> None:
     """Verify crossed limit orders cap fill quantity by simulated depth."""
 
@@ -262,6 +276,25 @@ def test_matching_engine_partially_fills_limit_order_by_available_depth() -> Non
     assert fill.fee == Decimal("0.01")
 
 
+def test_matching_engine_partially_fills_ioc_limit_order_by_available_depth() -> None:
+    """Verify IOC limit orders can partially fill from available depth."""
+
+    order, fill = MatchingEngine(
+        maker_fee_engine=FeeEngine(fee_bps=Decimal("2")),
+    ).match_limit_order(
+        create_limit_order_request("buy", Decimal("101")),
+        reference_price=Decimal("100"),
+        available_quantity=Decimal("0.5"),
+        time_in_force="ioc",
+    )
+
+    assert fill is not None
+    assert order.status == "partially_filled"
+    assert fill.quantity == Decimal("0.5")
+    assert fill.price == Decimal("100")
+    assert fill.fee == Decimal("0.01")
+
+
 def test_matching_engine_keeps_crossed_limit_open_without_available_depth() -> None:
     """Verify crossed limit orders do not fill when simulated depth is zero."""
 
@@ -275,6 +308,34 @@ def test_matching_engine_keeps_crossed_limit_open_without_available_depth() -> N
     assert fill is None
 
 
+def test_matching_engine_expires_unfilled_ioc_limit_order_without_depth() -> None:
+    """Verify crossed IOC limit orders expire when no depth is available."""
+
+    order, fill = MatchingEngine().match_limit_order(
+        create_limit_order_request("buy", Decimal("101")),
+        reference_price=Decimal("100"),
+        available_quantity=Decimal("0"),
+        time_in_force="ioc",
+    )
+
+    assert order.status == "expired"
+    assert fill is None
+
+
+def test_matching_engine_expires_fok_limit_order_when_depth_is_insufficient() -> None:
+    """Verify FOK limit orders expire when full quantity is unavailable."""
+
+    order, fill = MatchingEngine().match_limit_order(
+        create_limit_order_request("buy", Decimal("101")),
+        reference_price=Decimal("100"),
+        available_quantity=Decimal("0.5"),
+        time_in_force="fok",
+    )
+
+    assert order.status == "expired"
+    assert fill is None
+
+
 def test_matching_engine_rejects_negative_available_depth() -> None:
     """Verify limit matching rejects impossible negative simulated depth."""
 
@@ -283,6 +344,19 @@ def test_matching_engine_rejects_negative_available_depth() -> None:
             create_limit_order_request("buy", Decimal("101")),
             reference_price=Decimal("100"),
             available_quantity=Decimal("-1"),
+        )
+
+
+def test_matching_engine_rejects_unsupported_time_in_force() -> None:
+    """Verify limit matching rejects unsupported expiry policies."""
+
+    unsupported_time_in_force: Any = "day"
+
+    with pytest.raises(ValueError, match="time_in_force"):
+        MatchingEngine().match_limit_order(
+            create_limit_order_request("buy", Decimal("101")),
+            reference_price=Decimal("100"),
+            time_in_force=unsupported_time_in_force,
         )
 
 
@@ -344,6 +418,20 @@ def test_sim_broker_passes_available_depth_to_limit_matching() -> None:
     assert order.status == "partially_filled"
     assert fill.quantity == Decimal("0.25")
     assert fill.fee == Decimal("0.005")
+
+
+def test_sim_broker_passes_time_in_force_to_limit_matching() -> None:
+    """Verify broker limit submissions pass time-in-force to matching."""
+
+    order, fill = SimBroker().submit_limit_order(
+        create_limit_order_request("sell", Decimal("99")),
+        reference_price=Decimal("100"),
+        available_quantity=Decimal("0.25"),
+        time_in_force="fok",
+    )
+
+    assert order.status == "expired"
+    assert fill is None
 
 
 def test_ledger_update_preserves_account_output_and_exposes_metadata() -> None:
