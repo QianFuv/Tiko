@@ -776,6 +776,72 @@ def test_service_creates_decision_reviews_and_memory_entries() -> None:
     assert repository.list_memory_entries(run.run_id) == [memory]
 
 
+def test_decision_report_includes_trace_and_posterior_sections() -> None:
+    """Verify decision reports include trace and posterior review sections."""
+
+    repository = create_test_repository()
+    service = SimulationService(Settings(), repository=repository)
+    run = service.create_run(
+        name="decision-report",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    result = service.step_run(run.run_id, confidence=0.7)
+    review = service.create_decision_review(
+        decision_id=result.decision.decision_id,
+        horizon="1h",
+        realized_return=Decimal("0.01"),
+        max_adverse_excursion=Decimal("-0.002"),
+        max_favorable_excursion=Decimal("0.014"),
+        was_correct_directionally=True,
+        error_tags=["late_entry"],
+        reviewer_summary="Decision remained directionally correct.",
+    )
+
+    report = service.create_decision_report(result.decision.decision_id)
+
+    observation = report.sections["observation"]
+    final_trade_intent = report.sections["final_trade_intent"]
+    agent_subreports = report.sections["agent_subreports"]
+    critic_objections = report.sections["critic_objections"]
+    posterior_reviews = report.sections["posterior_reviews"]
+    posterior_performance = report.sections["posterior_performance"]
+    assert isinstance(observation, dict)
+    assert isinstance(final_trade_intent, dict)
+    assert isinstance(agent_subreports, list)
+    assert isinstance(critic_objections, list)
+    assert isinstance(posterior_reviews, list)
+    assert isinstance(posterior_performance, dict)
+    assert observation["observation_id"] == str(result.observation.observation_id)
+    assert final_trade_intent["decision_id"] == str(result.decision.decision_id)
+    assert [subreport["role"] for subreport in agent_subreports] == [
+        "system",
+        "observation",
+        "assistant",
+        "critic",
+    ]
+    assert len(critic_objections) == 1
+    critic_objection = critic_objections[0]
+    assert isinstance(critic_objection, dict)
+    critic_content = critic_objection["content"]
+    assert isinstance(critic_content, dict)
+    assert critic_content["decision_id"] == str(result.decision.decision_id)
+    assert len(posterior_reviews) == 1
+    posterior_review = posterior_reviews[0]
+    assert isinstance(posterior_review, dict)
+    assert posterior_review["review_id"] == str(review.review_id)
+    latest_posterior = posterior_performance["latest"]
+    assert isinstance(latest_posterior, dict)
+    assert posterior_performance["review_count"] == 1
+    assert posterior_performance["correct_direction_count"] == 1
+    assert posterior_performance["error_tags"] == ["late_entry"]
+    assert latest_posterior["review_id"] == str(review.review_id)
+    assert latest_posterior["realized_return"] == "0.01"
+    assert report.sections["review_conclusion"] == review.reviewer_summary
+    assert report.sections["decision"] == result.decision.model_dump(mode="json")
+    assert repository.list_reports(run.run_id) == [report]
+
+
 def test_service_searches_memory_entries_by_query_and_time() -> None:
     """Verify memory retrieval ranks matches and respects availability time."""
 

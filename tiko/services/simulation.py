@@ -2321,6 +2321,128 @@ class SimulationService:
             "failed_agent_runs": failed_agent_runs,
         }
 
+    def _find_decision_observation(
+        self, state: SimulationState, decision: TradeIntent
+    ) -> Observation | None:
+        """Find the observation snapshot that produced a decision.
+
+        Args:
+            state: Simulation state used for report generation.
+            decision: Trade intent being reported.
+
+        Returns:
+            Matching observation snapshot when one can be inferred.
+        """
+
+        return next(
+            (
+                observation
+                for observation in state.observations
+                if observation.run_id == decision.run_id
+                and observation.symbol == decision.symbol
+                and observation.as_of == decision.created_at_sim_time
+            ),
+            None,
+        )
+
+    def _build_decision_report_agent_subreports(
+        self, trace: DecisionTrace
+    ) -> list[dict[str, object]]:
+        """Build per-message agent subreports for a decision report.
+
+        Args:
+            trace: Joined decision trace artifacts.
+
+        Returns:
+            Agent subreport rows.
+        """
+
+        return [
+            {
+                "message_id": str(message.message_id),
+                "role": message.role,
+                "content": message.content,
+                "created_at_sim_time": message.created_at_sim_time.isoformat(),
+            }
+            for message in trace.messages
+        ]
+
+    def _build_decision_report_critic_objections(
+        self, trace: DecisionTrace
+    ) -> list[dict[str, object]]:
+        """Build critic objection rows for a decision report.
+
+        Args:
+            trace: Joined decision trace artifacts.
+
+        Returns:
+            Critic objection rows.
+        """
+
+        return [
+            {
+                "message_id": str(message.message_id),
+                "content": message.content,
+                "created_at_sim_time": message.created_at_sim_time.isoformat(),
+            }
+            for message in trace.messages
+            if message.role == "critic"
+        ]
+
+    def _build_decision_report_posterior_performance(
+        self, reviews: list[DecisionReview]
+    ) -> dict[str, object]:
+        """Build posterior performance summary for a decision report.
+
+        Args:
+            reviews: Posterior decision reviews.
+
+        Returns:
+            Posterior performance summary.
+        """
+
+        latest_review = reviews[-1] if reviews else None
+        return {
+            "review_count": len(reviews),
+            "correct_direction_count": sum(
+                1 for review in reviews if review.was_correct_directionally
+            ),
+            "error_tags": sorted(
+                {tag for review in reviews for tag in review.error_tags}
+            ),
+            "latest": (
+                {
+                    "review_id": str(latest_review.review_id),
+                    "horizon": latest_review.horizon,
+                    "realized_return": str(latest_review.realized_return),
+                    "max_adverse_excursion": str(latest_review.max_adverse_excursion),
+                    "max_favorable_excursion": str(
+                        latest_review.max_favorable_excursion
+                    ),
+                    "was_correct_directionally": (
+                        latest_review.was_correct_directionally
+                    ),
+                }
+                if latest_review is not None
+                else None
+            ),
+        }
+
+    def _build_decision_report_review_conclusion(
+        self, reviews: list[DecisionReview]
+    ) -> str | None:
+        """Build the latest posterior review conclusion for a decision report.
+
+        Args:
+            reviews: Posterior decision reviews.
+
+        Returns:
+            Latest reviewer summary when present.
+        """
+
+        latest_review = reviews[-1] if reviews else None
+        return latest_review.reviewer_summary if latest_review is not None else None
+
     def create_decision_report(self, decision_id: UUID) -> ReportArtifact:
         """Create a structured decision trace report.
 
@@ -2336,6 +2458,8 @@ class SimulationService:
 
         trace = self.build_decision_trace(decision_id)
         state, decision = self._find_decision_state(decision_id)
+        observation = self._find_decision_observation(state, decision)
+        reviews = self.list_decision_reviews(decision_id)
         report = ReportArtifact(
             report_id=uuid4(),
             run_id=decision.run_id,
@@ -2351,6 +2475,18 @@ class SimulationService:
                 "agent_messages": [
                     message.model_dump(mode="json") for message in trace.messages
                 ],
+                "agent_subreports": (
+                    self._build_decision_report_agent_subreports(trace)
+                ),
+                "observation": (
+                    observation.model_dump(mode="json")
+                    if observation is not None
+                    else None
+                ),
+                "final_trade_intent": decision.model_dump(mode="json"),
+                "critic_objections": (
+                    self._build_decision_report_critic_objections(trace)
+                ),
                 "risk_review": (
                     trace.risk_review.model_dump(mode="json")
                     if trace.risk_review is not None
@@ -2365,6 +2501,15 @@ class SimulationService:
                     trace.fill.model_dump(mode="json")
                     if trace.fill is not None
                     else None
+                ),
+                "posterior_reviews": [
+                    review.model_dump(mode="json") for review in reviews
+                ],
+                "posterior_performance": (
+                    self._build_decision_report_posterior_performance(reviews)
+                ),
+                "review_conclusion": (
+                    self._build_decision_report_review_conclusion(reviews)
                 ),
             },
             created_at_sim_time=state.run.current_sim_time,
