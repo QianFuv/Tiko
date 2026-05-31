@@ -450,6 +450,43 @@ def test_service_records_exchange_rejected_market_order_without_fill() -> None:
     assert result.metric_snapshot.metrics["fill_count"] == 0
 
 
+def test_service_routes_limit_order_when_market_orders_are_disabled() -> None:
+    """Verify limit-only broker settings route through simulated limit matching."""
+
+    settings = Settings(
+        sim_broker_allow_market=False,
+        sim_broker_allow_limit=True,
+        sim_broker_maker_fee_bps=Decimal("1"),
+    )
+    service = SimulationService(settings)
+    run = service.create_run(
+        name="limit-only",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    result = service.step_run(run.run_id, confidence=0.7)
+
+    assert result.order is not None
+    assert result.fill is not None
+    assert result.ledger_entry is not None
+    assert result.order.order_type == "limit"
+    assert result.order.status == "filled"
+    assert result.order.limit_price == result.candle.close
+    assert result.portfolio_order_plan.order_request is not None
+    assert result.portfolio_order_plan.order_request.order_type == "limit"
+    assert result.fill.price == result.candle.close
+    assert result.fill.slippage_bps == Decimal("0")
+    assert result.fill.fee == (
+        result.fill.quantity
+        * result.fill.price
+        * settings.sim_broker_maker_fee_bps
+        / Decimal("10000")
+    )
+    assert service.list_orders() == [result.order]
+    assert service.list_fills() == [result.fill]
+
+
 def test_service_create_run_accepts_configured_simulation_fields() -> None:
     """Verify run creation stores configured simulation settings."""
 

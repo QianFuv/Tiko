@@ -2,8 +2,10 @@
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
+
+import pytest
 
 from tiko.domain.account import Position, SimAccount
 from tiko.domain.decision import TradeIntent
@@ -215,8 +217,45 @@ def test_portfolio_executes_resized_review_with_notional_cap() -> None:
     assert plan.estimated_slippage_bps == Decimal("2")
     assert "approved delta 1000" in plan.sizing_explanation
     assert order_request is not None
+    assert order_request.order_type == "market"
+    assert order_request.limit_price is None
     assert order_request.side == "buy"
     assert order_request.quantity == Decimal("10.000000")
+
+
+def test_portfolio_creates_limit_order_with_maker_fee_estimate() -> None:
+    """Verify configured limit plans carry a limit price and maker fee estimate."""
+
+    intent = create_intent(target_weight=Decimal("0.10"))
+    review = RiskService(minimum_confidence=0.5).review(intent)
+
+    plan = PortfolioService(
+        taker_fee_bps=Decimal("5"),
+        maker_fee_bps=Decimal("2"),
+        order_type="limit",
+    ).create_order_plan(
+        account=create_account(),
+        intent=intent,
+        risk_review=review,
+        reference_price=Decimal("100"),
+    )
+    order_request = plan.order_request
+
+    assert plan.status == "order_created"
+    assert plan.expected_notional == Decimal("10000.000000")
+    assert plan.estimated_fee == Decimal("2.000000")
+    assert order_request is not None
+    assert order_request.order_type == "limit"
+    assert order_request.limit_price == Decimal("100")
+
+
+def test_portfolio_rejects_invalid_order_type_configuration() -> None:
+    """Verify unsupported order type configuration fails before planning."""
+
+    invalid_order_type: Any = "stop"
+
+    with pytest.raises(ValueError, match="order_type"):
+        PortfolioService(order_type=invalid_order_type)
 
 
 def test_portfolio_skips_order_when_current_exposure_matches_target() -> None:

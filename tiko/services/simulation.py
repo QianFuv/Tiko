@@ -38,7 +38,7 @@ from tiko.domain.risk import RiskLimits, RiskReview
 from tiko.domain.runtime import BackgroundJob
 from tiko.domain.simulation import SimulationRun
 from tiko.observation import ObservationBuilder
-from tiko.services.portfolio import PortfolioService
+from tiko.services.portfolio import PortfolioOrderType, PortfolioService
 from tiko.services.realtime import (
     RealtimeFanoutReceipt,
     RealtimeFanoutService,
@@ -89,9 +89,14 @@ class SimulationService:
         self._realtime_fanout = realtime_fanout
         self._realtime_fanout_receipts: list[RealtimeFanoutReceipt] = []
         self._states: dict[UUID, SimulationState] = {}
+        portfolio_order_type: PortfolioOrderType = "market"
+        if not settings.sim_broker_allow_market and settings.sim_broker_allow_limit:
+            portfolio_order_type = "limit"
         self._portfolio_service = PortfolioService(
             taker_fee_bps=settings.sim_broker_taker_fee_bps,
+            maker_fee_bps=settings.sim_broker_maker_fee_bps,
             estimated_slippage_bps=settings.sim_broker_slippage_bps,
+            order_type=portfolio_order_type,
         )
         self._broker = SimBroker(
             fee_bps=settings.sim_broker_taker_fee_bps,
@@ -703,17 +708,28 @@ class SimulationService:
         account = decision_run.account
         ledger_update: LedgerUpdate | None = None
         if order_request is not None:
-            slippage_context = self._build_slippage_context(
-                order_request,
-                candle.close,
-                orderbook_snapshot,
-                feature_snapshot,
-            )
-            order, fill = self._broker.submit_market_order(
-                order_request,
-                candle.close,
-                slippage_context=slippage_context,
-            )
+            if order_request.order_type == "market":
+                slippage_context = self._build_slippage_context(
+                    order_request,
+                    candle.close,
+                    orderbook_snapshot,
+                    feature_snapshot,
+                )
+                order, fill = self._broker.submit_market_order(
+                    order_request,
+                    candle.close,
+                    slippage_context=slippage_context,
+                )
+            else:
+                available_quantity = self._limit_available_quantity(
+                    order_request,
+                    orderbook_snapshot,
+                )
+                order, fill = self._broker.submit_limit_order(
+                    order_request,
+                    candle.close,
+                    available_quantity=available_quantity,
+                )
             state.orders.append(order)
             if fill is not None:
                 ledger_update = apply_fill_to_ledger(
@@ -933,6 +949,30 @@ class SimulationService:
             order_notional=order_request.quantity * reference_price,
             depth_1pct_usd=orderbook_snapshot.depth_1pct_usd,
         )
+
+    def _limit_available_quantity(
+        self,
+        order_request: OrderRequest,
+        orderbook_snapshot: OrderBookSnapshot,
+    ) -> Decimal:
+        """Return best-side point-in-time depth for a limit order.
+
+        Args:
+            order_request: Limit order request being submitted.
+            orderbook_snapshot: Current point-in-time order book snapshot.
+
+        Returns:
+            Available quantity at the best opposite-side level.
+        """
+
+        levels = (
+            orderbook_snapshot.asks
+            if order_request.side == "buy"
+            else orderbook_snapshot.bids
+        )
+        if not levels:
+            return Decimal("0")
+        return levels[0][1]
 
     def _extract_feature_volatility_bps(
         self, feature_snapshot: FeatureSnapshot
