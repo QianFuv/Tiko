@@ -296,6 +296,40 @@ def test_validator_reports_timeframe_duration_issues() -> None:
     }
 
 
+def test_validator_reports_contextual_point_in_time_issues() -> None:
+    """Verify validation reports run window and availability issues."""
+
+    run_window_report = MarketDataValidator().validate_candles(
+        [
+            validation_candle(
+                "BTCUSDT",
+                "2h",
+                timedelta(hours=0),
+                timedelta(hours=2),
+            )
+        ],
+        run_end=datetime(2026, 1, 1, 1, 30, tzinfo=UTC),
+    )
+    availability_report = MarketDataValidator().validate_candles(
+        [
+            validation_candle(
+                "ETHUSDT",
+                "1h",
+                timedelta(hours=0),
+                timedelta(hours=1),
+            )
+        ],
+        availability_cutoff=datetime(2026, 1, 1, 0, 30, tzinfo=UTC),
+    )
+
+    assert run_window_report.error_count() == 1
+    assert {issue.code for issue in run_window_report.issues} == {"future_candle"}
+    assert availability_report.error_count() == 1
+    assert {issue.code for issue in availability_report.issues} == {
+        "future_availability"
+    }
+
+
 def test_validator_reports_orderbook_sequence_and_checksum_issues() -> None:
     """Verify order book validator reports feed sequence and checksum issues."""
 

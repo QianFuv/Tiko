@@ -120,18 +120,29 @@ def create_test_repository() -> SimulationRepository:
     return SimulationRepository(create_session_factory(engine))
 
 
-def create_replay_candle() -> Candle:
+def create_replay_candle(
+    symbol: str = "BTCUSDT",
+    close_hour: int = 1,
+    as_of_hour: int = 2,
+) -> Candle:
     """Create a replay candle with delayed point-in-time availability.
+
+    Args:
+        symbol: Candle symbol.
+        close_hour: Candle close hour on 2026-01-01 UTC.
+        as_of_hour: Candle availability hour on 2026-01-01 UTC.
 
     Returns:
         Candle for replay-backed service tests.
     """
 
+    close_time = datetime(2026, 1, 1, close_hour, tzinfo=UTC)
+    as_of = datetime(2026, 1, 1, as_of_hour, tzinfo=UTC)
     return Candle(
-        symbol="BTCUSDT",
+        symbol=symbol,
         timeframe="1h",
-        open_time=datetime(2026, 1, 1, tzinfo=UTC),
-        close_time=datetime(2026, 1, 1, 1, tzinfo=UTC),
+        open_time=datetime(2026, 1, 1, close_hour - 1, tzinfo=UTC),
+        close_time=close_time,
         open=Decimal("100"),
         high=Decimal("110"),
         low=Decimal("90"),
@@ -139,8 +150,8 @@ def create_replay_candle() -> Candle:
         volume=Decimal("2"),
         quote_volume=None,
         source="replay-test",
-        as_of=datetime(2026, 1, 1, 2, tzinfo=UTC),
-        created_at=datetime(2026, 1, 1, 2, tzinfo=UTC),
+        as_of=as_of,
+        created_at=as_of,
     )
 
 
@@ -1783,6 +1794,42 @@ def test_replay_backed_service_uses_replay_candle_as_simulated_time() -> None:
     assert result.event.simulated_time == candle.as_of
     assert result.run.current_sim_time == candle.as_of
     assert repository.list_candles(run.run_id) == [candle]
+
+
+def test_replay_backed_service_rejects_future_candles_after_run_end() -> None:
+    """Verify replay run creation rejects data outside the run window."""
+
+    service = SimulationService(Settings())
+
+    with pytest.raises(ValueError, match="future_candle"):
+        service.create_run(
+            name="future-replay",
+            symbols=["BTCUSDT"],
+            replay_candles=[create_replay_candle()],
+            end_sim_time=datetime(2026, 1, 1, 1, 30, tzinfo=UTC),
+        )
+
+    assert service.list_runs() == []
+
+
+def test_replay_backed_service_ignores_unselected_future_candles() -> None:
+    """Verify non-run symbols do not block replay run creation."""
+
+    service = SimulationService(Settings())
+    selected_candle = create_replay_candle(symbol="ETHUSDT", close_hour=1, as_of_hour=1)
+    unselected_future_candle = create_replay_candle(
+        symbol="BTCUSDT", close_hour=2, as_of_hour=4
+    )
+
+    run = service.create_run(
+        name="filtered-replay",
+        symbols=["ETHUSDT"],
+        replay_candles=[unselected_future_candle, selected_candle],
+        end_sim_time=datetime(2026, 1, 1, 1, 30, tzinfo=UTC),
+    )
+    result = service.step_run(run.run_id)
+
+    assert result.candle == selected_candle
 
 
 def test_replay_backed_service_marks_run_completed_when_exhausted() -> None:

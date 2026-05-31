@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Literal
 
@@ -96,11 +96,19 @@ class OrderBookValidationReport:
 class MarketDataValidator:
     """Validate normalized market data records for point-in-time safety."""
 
-    def validate_candles(self, candles: Sequence[Candle]) -> MarketDataValidationReport:
+    def validate_candles(
+        self,
+        candles: Sequence[Candle],
+        *,
+        run_end: datetime | None = None,
+        availability_cutoff: datetime | None = None,
+    ) -> MarketDataValidationReport:
         """Validate a candle sequence.
 
         Args:
             candles: Normalized candles.
+            run_end: Optional run end time used to reject future replay data.
+            availability_cutoff: Optional point-in-time availability cutoff.
 
         Returns:
             Validation report with errors and warnings.
@@ -111,6 +119,14 @@ class MarketDataValidator:
         previous_by_stream: dict[tuple[str, str], Candle] = {}
         for index, candle in enumerate(candles):
             issues.extend(self._validate_candle(index, candle))
+            issues.extend(
+                self._validate_candle_context(
+                    index=index,
+                    candle=candle,
+                    run_end=run_end,
+                    availability_cutoff=availability_cutoff,
+                )
+            )
             issues.extend(self._validate_timeframe_duration(index, candle))
             key = (candle.symbol, candle.timeframe, candle.open_time.isoformat())
             if key in seen_keys:
@@ -234,6 +250,53 @@ class MarketDataValidator:
                     severity="error",
                     code="as_of_before_close",
                     message="Candle as_of must not be before close_time.",
+                )
+            )
+        return issues
+
+    def _validate_candle_context(
+        self,
+        index: int,
+        candle: Candle,
+        run_end: datetime | None,
+        availability_cutoff: datetime | None,
+    ) -> list[MarketDataValidationIssue]:
+        """Validate one candle against optional point-in-time context.
+
+        Args:
+            index: Candle index in the input sequence.
+            candle: Candle to validate.
+            run_end: Optional run end time.
+            availability_cutoff: Optional point-in-time availability cutoff.
+
+        Returns:
+            Validation issues for contextual time-bound checks.
+        """
+
+        issues: list[MarketDataValidationIssue] = []
+        if run_end is not None and (
+            candle.close_time > run_end or candle.as_of > run_end
+        ):
+            issues.append(
+                self._create_issue(
+                    index=index,
+                    candle=candle,
+                    severity="error",
+                    code="future_candle",
+                    message=(
+                        "Candle close_time and as_of must not extend beyond "
+                        "the configured run end time."
+                    ),
+                )
+            )
+        if availability_cutoff is not None and candle.as_of > availability_cutoff:
+            issues.append(
+                self._create_issue(
+                    index=index,
+                    candle=candle,
+                    severity="error",
+                    code="future_availability",
+                    message="Candle as_of must not exceed the availability cutoff.",
                 )
             )
         return issues

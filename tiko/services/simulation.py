@@ -11,6 +11,7 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from tiko.agents import AgentRuntime, RuleBasedTraderAgent
 from tiko.analysis import build_run_benchmark, compare_run_benchmarks
 from tiko.core.config import Settings
+from tiko.data import MarketDataValidator
 from tiko.db.repositories import SimulationRepository
 from tiko.domain.account import (
     LedgerEntry,
@@ -184,6 +185,8 @@ class SimulationService:
             start_time = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
         if end_sim_time is not None and end_sim_time <= start_time:
             raise ValueError("end_sim_time must be after start_sim_time.")
+        if replay_candles is not None and end_sim_time is not None:
+            self._validate_replay_candles_for_run(replay_candles, symbols, end_sim_time)
         resolved_mode: Literal[
             "historical_replay", "live_simulated_clock", "synthetic_market"
         ] = "historical_replay" if market_replay is not None else mode
@@ -214,6 +217,42 @@ class SimulationService:
         if self._repository is not None:
             self._repository.save_run(run)
         return run
+
+    def _validate_replay_candles_for_run(
+        self,
+        replay_candles: Sequence[Candle],
+        symbols: Sequence[str],
+        run_end: datetime,
+    ) -> None:
+        """Validate selected replay candles against the run time boundary.
+
+        Args:
+            replay_candles: Candidate replay candles.
+            symbols: Symbols included in the simulation run.
+            run_end: Configured run end time.
+
+        Raises:
+            ValueError: If selected replay candles fail data validation.
+        """
+
+        symbol_set = set(symbols)
+        selected_candles = tuple(
+            candle
+            for candle in replay_candles
+            if not symbol_set or candle.symbol in symbol_set
+        )
+        report = MarketDataValidator().validate_candles(
+            selected_candles, run_end=run_end
+        )
+        if not report.has_errors():
+            return
+        first_error = next(
+            issue for issue in report.issues if issue.severity == "error"
+        )
+        raise ValueError(
+            "Replay candles fail data quality validation: "
+            f"{first_error.code} at {first_error.open_time}."
+        )
 
     def list_runs(self) -> list[SimulationRun]:
         """List all process-local simulation runs.
