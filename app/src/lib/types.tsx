@@ -426,6 +426,27 @@ export type SettingsPageData = {
   riskLimits: RiskLimits;
 };
 
+export type DatasetDetailData = {
+  source: DataSource;
+  dataset: DatasetRecord;
+  quality: DatasetQualityReport;
+  candles: Candle[];
+};
+
+export type ExperimentDetailData = {
+  source: DataSource;
+  experiment: ExperimentRecord;
+  dataset: DatasetRecord | null;
+  reports: ReportArtifact[];
+};
+
+export type ModelDetailData = {
+  source: DataSource;
+  model: ModelRegistryEntry;
+  trainingDataset: DatasetRecord | null;
+  validationDataset: DatasetRecord | null;
+};
+
 export type Metric = {
   label: string;
   value: string;

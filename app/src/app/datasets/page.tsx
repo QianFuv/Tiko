@@ -9,11 +9,7 @@ import {
   formatNumber,
   shortId,
 } from "@/lib/format";
-import type {
-  DataSource,
-  DatasetQualityReport,
-  Metric,
-} from "@/lib/types";
+import type { DataSource, DatasetQualityReport, Metric } from "@/lib/types";
 
 /**
  * Render the dataset quality overview.
@@ -100,9 +96,12 @@ export default async function DatasetsPage(): Promise<ReactElement> {
                     className="border-t border-[#edf0f2]"
                   >
                     <td className="px-4 py-3">
-                      <p className="font-medium text-[#17201b]">
+                      <Link
+                        href={`/datasets/${dataset.dataset_id}`}
+                        className="font-medium text-[#1f6f8b] hover:text-[#174f63]"
+                      >
                         {dataset.name}
-                      </p>
+                      </Link>
                       <p className="mt-1 text-xs text-[#6c7671]">
                         {shortId(dataset.dataset_id)}
                       </p>

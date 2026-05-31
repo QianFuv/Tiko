@@ -21,7 +21,10 @@ export default async function ExperimentsPage(): Promise<ReactElement> {
     fetchExperiments(),
     fetchDatasets(),
   ]);
-  const source = combinePageSource(experimentsResult.source, datasetsResult.source);
+  const source = combinePageSource(
+    experimentsResult.source,
+    datasetsResult.source,
+  );
   const datasetNameById = new Map(
     datasetsResult.data.map((dataset) => [dataset.dataset_id, dataset.name]),
   );
@@ -91,9 +94,12 @@ export default async function ExperimentsPage(): Promise<ReactElement> {
                   className="border-t border-[#edf0f2]"
                 >
                   <td className="px-4 py-3">
-                    <p className="font-medium text-[#17201b]">
+                    <Link
+                      href={`/experiments/${experiment.experiment_id}`}
+                      className="font-medium text-[#1f6f8b] hover:text-[#174f63]"
+                    >
                       {experiment.name}
-                    </p>
+                    </Link>
                     <p className="mt-1 max-w-[20rem] text-xs text-[#6c7671]">
                       {experiment.hypothesis}
                     </p>
@@ -147,7 +153,9 @@ function ExperimentStatusBadge({
         ? "border-[#df8b8b] bg-[#fff5f5] text-[#5d1616]"
         : "border-[#e4b06b] bg-[#fff9ed] text-[#5a390b]";
   return (
-    <span className={`rounded-md border px-2 py-1 text-xs font-medium ${classes}`}>
+    <span
+      className={`rounded-md border px-2 py-1 text-xs font-medium ${classes}`}
+    >
       {experiment.status}
     </span>
   );

@@ -9,16 +9,19 @@ import type {
   BackendHealthState,
   Candle,
   DataSource,
+  DatasetDetailData,
   DatasetQualityReport,
   DatasetRecord,
   DecisionReview,
   DecisionTrace,
+  ExperimentDetailData,
   ExperimentRecord,
   Fill,
   MarketEvent,
   MarketOrderBook,
   MarketSymbolsResponse,
   MemoryEntry,
+  ModelDetailData,
   ModelRegistryEntry,
   PortfolioSummary,
   PositionView,
@@ -134,6 +137,20 @@ export async function fetchDatasets(): Promise<ApiData<DatasetRecord[]>> {
 }
 
 /**
+ * Fetch one imported research dataset.
+ *
+ * @param datasetId - Dataset identifier.
+ * @returns Dataset record from the backend or demo fallback data.
+ */
+export async function fetchDataset(
+  datasetId: string,
+): Promise<ApiData<DatasetRecord>> {
+  return fetchApiData(`/api/datasets/${datasetId}`, () =>
+    buildDemoDataset(datasetId),
+  );
+}
+
+/**
  * Fetch quality reports for imported datasets.
  *
  * @param datasets - Datasets to resolve quality reports for.
@@ -160,6 +177,60 @@ export async function fetchDatasetQualityReports(
 }
 
 /**
+ * Fetch a quality report for one dataset.
+ *
+ * @param dataset - Dataset associated with the report.
+ * @returns Dataset quality report from the backend or demo fallback data.
+ */
+export async function fetchDatasetQualityReport(
+  dataset: DatasetRecord,
+): Promise<ApiData<DatasetQualityReport>> {
+  return fetchApiData(`/api/datasets/${dataset.dataset_id}/quality`, () =>
+    buildDemoDatasetQualityReport(dataset),
+  );
+}
+
+/**
+ * Fetch a bounded candle sample for one dataset.
+ *
+ * @param dataset - Dataset associated with the candle sample.
+ * @returns Dataset candles from the backend or demo fallback data.
+ */
+export async function fetchDatasetCandles(
+  dataset: DatasetRecord,
+): Promise<ApiData<Candle[]>> {
+  return fetchApiData(`/api/datasets/${dataset.dataset_id}/candles`, () =>
+    buildDemoCandles(),
+  );
+}
+
+/**
+ * Fetch all detail page data for one dataset.
+ *
+ * @param datasetId - Dataset identifier.
+ * @returns Dataset detail data.
+ */
+export async function fetchDatasetDetailData(
+  datasetId: string,
+): Promise<DatasetDetailData> {
+  const datasetResult = await fetchDataset(datasetId);
+  const [qualityResult, candlesResult] = await Promise.all([
+    fetchDatasetQualityReport(datasetResult.data),
+    fetchDatasetCandles(datasetResult.data),
+  ]);
+  return {
+    source: combineDataSources([
+      datasetResult.source,
+      qualityResult.source,
+      candlesResult.source,
+    ]),
+    dataset: datasetResult.data,
+    quality: qualityResult.data,
+    candles: candlesResult.data,
+  };
+}
+
+/**
  * Fetch research experiments.
  *
  * @returns Experiment records from the backend or demo fallback data.
@@ -169,12 +240,104 @@ export async function fetchExperiments(): Promise<ApiData<ExperimentRecord[]>> {
 }
 
 /**
+ * Fetch one research experiment.
+ *
+ * @param experimentId - Experiment identifier.
+ * @returns Experiment record from the backend or demo fallback data.
+ */
+export async function fetchExperiment(
+  experimentId: string,
+): Promise<ApiData<ExperimentRecord>> {
+  return fetchApiData(`/api/experiments/${experimentId}`, () =>
+    buildDemoExperiment(experimentId),
+  );
+}
+
+/**
+ * Fetch experiment reports for one experiment.
+ *
+ * @param experimentId - Experiment identifier.
+ * @returns Experiment reports from the backend or demo fallback data.
+ */
+export async function fetchExperimentReports(
+  experimentId: string,
+): Promise<ApiData<ReportArtifact[]>> {
+  return fetchApiData(`/api/reports/experiments/${experimentId}`, () =>
+    buildDemoExperimentReports(experimentId),
+  );
+}
+
+/**
+ * Fetch all detail page data for one experiment.
+ *
+ * @param experimentId - Experiment identifier.
+ * @returns Experiment detail data.
+ */
+export async function fetchExperimentDetailData(
+  experimentId: string,
+): Promise<ExperimentDetailData> {
+  const experimentResult = await fetchExperiment(experimentId);
+  const [datasetResult, reportsResult] = await Promise.all([
+    fetchDataset(experimentResult.data.dataset_id),
+    fetchExperimentReports(experimentResult.data.experiment_id),
+  ]);
+  return {
+    source: combineDataSources([
+      experimentResult.source,
+      datasetResult.source,
+      reportsResult.source,
+    ]),
+    experiment: experimentResult.data,
+    dataset: datasetResult.data,
+    reports: reportsResult.data,
+  };
+}
+
+/**
  * Fetch model registry entries.
  *
  * @returns Model registry entries from the backend or demo fallback data.
  */
 export async function fetchModels(): Promise<ApiData<ModelRegistryEntry[]>> {
   return fetchApiData("/api/models", buildDemoModels);
+}
+
+/**
+ * Fetch one model registry entry.
+ *
+ * @param modelId - Model identifier.
+ * @returns Model registry entry from the backend or demo fallback data.
+ */
+export async function fetchModel(
+  modelId: string,
+): Promise<ApiData<ModelRegistryEntry>> {
+  return fetchApiData(`/api/models/${modelId}`, () => buildDemoModel(modelId));
+}
+
+/**
+ * Fetch all detail page data for one model.
+ *
+ * @param modelId - Model identifier.
+ * @returns Model detail data.
+ */
+export async function fetchModelDetailData(
+  modelId: string,
+): Promise<ModelDetailData> {
+  const modelResult = await fetchModel(modelId);
+  const [trainingDatasetResult, validationDatasetResult] = await Promise.all([
+    fetchDataset(modelResult.data.training_dataset_id),
+    fetchDataset(modelResult.data.validation_dataset_id),
+  ]);
+  return {
+    source: combineDataSources([
+      modelResult.source,
+      trainingDatasetResult.source,
+      validationDatasetResult.source,
+    ]),
+    model: modelResult.data,
+    trainingDataset: trainingDatasetResult.data,
+    validationDataset: validationDatasetResult.data,
+  };
 }
 
 /**
@@ -939,6 +1102,19 @@ function buildDemoDatasets(): DatasetRecord[] {
 }
 
 /**
+ * Build one deterministic demo dataset record.
+ *
+ * @param datasetId - Dataset identifier.
+ * @returns Demo dataset record.
+ */
+function buildDemoDataset(datasetId: string): DatasetRecord {
+  return {
+    ...buildDemoDatasets()[0],
+    dataset_id: datasetId,
+  };
+}
+
+/**
  * Build deterministic demo dataset quality.
  *
  * @param dataset - Dataset associated with the quality report.
@@ -988,6 +1164,19 @@ function buildDemoExperiments(): ExperimentRecord[] {
 }
 
 /**
+ * Build one deterministic demo experiment record.
+ *
+ * @param experimentId - Experiment identifier.
+ * @returns Demo experiment record.
+ */
+function buildDemoExperiment(experimentId: string): ExperimentRecord {
+  return {
+    ...buildDemoExperiments()[0],
+    experiment_id: experimentId,
+  };
+}
+
+/**
  * Build deterministic demo model registry entries.
  *
  * @returns Demo model registry entries.
@@ -1011,6 +1200,19 @@ function buildDemoModels(): ModelRegistryEntry[] {
       created_at: DEMO_TIME,
     },
   ];
+}
+
+/**
+ * Build one deterministic demo model registry entry.
+ *
+ * @param modelId - Model identifier.
+ * @returns Demo model registry entry.
+ */
+function buildDemoModel(modelId: string): ModelRegistryEntry {
+  return {
+    ...buildDemoModels()[0],
+    model_id: modelId,
+  };
 }
 
 /**
@@ -1219,6 +1421,37 @@ function buildDemoDecisionReports(
         outcome: {
           realized_return: "0.018",
           max_adverse_excursion: "-0.006",
+        },
+      },
+      created_at_sim_time: DEMO_TIME,
+      created_at: DEMO_TIME,
+    },
+  ];
+}
+
+/**
+ * Build deterministic demo experiment report artifacts.
+ *
+ * @param experimentId - Experiment identifier.
+ * @returns Demo experiment report artifacts.
+ */
+function buildDemoExperimentReports(experimentId: string): ReportArtifact[] {
+  return [
+    {
+      report_id: `${DEMO_REPORT_ID.slice(0, -3)}302`,
+      run_id: experimentId,
+      report_type: "experiment",
+      title: "Momentum walk-forward experiment report",
+      summary:
+        "Demo report summarizing queued walk-forward parameters and validation metrics.",
+      sections: {
+        experiment: {
+          experiment_id: experimentId,
+          kind: "walk_forward",
+        },
+        metrics: {
+          simulated_reward: "0.12",
+          max_drawdown: "0.031",
         },
       },
       created_at_sim_time: DEMO_TIME,

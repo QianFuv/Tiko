@@ -81,9 +81,12 @@ export default async function ModelsPage(): Promise<ReactElement> {
               {modelsResult.data.map((model) => (
                 <tr key={model.model_id} className="border-t border-[#edf0f2]">
                   <td className="px-4 py-3">
-                    <p className="font-medium text-[#17201b]">
+                    <Link
+                      href={`/models/${model.model_id}`}
+                      className="font-medium text-[#1f6f8b] hover:text-[#174f63]"
+                    >
                       {model.name}
-                    </p>
+                    </Link>
                     <p className="mt-1 text-xs text-[#6c7671]">
                       {model.version} / {shortId(model.model_id)}
                     </p>
@@ -137,7 +140,9 @@ function ModelStatusBadge({
         ? "border-[#df8b8b] bg-[#fff5f5] text-[#5d1616]"
         : "border-[#e4b06b] bg-[#fff9ed] text-[#5a390b]";
   return (
-    <span className={`rounded-md border px-2 py-1 text-xs font-medium ${classes}`}>
+    <span
+      className={`rounded-md border px-2 py-1 text-xs font-medium ${classes}`}
+    >
       {model.status}
     </span>
   );
