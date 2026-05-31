@@ -245,6 +245,11 @@ def _build_replay_events(
     if not topics:
         return []
     replay_events: list[dict[str, object]] = []
+    stored_events = service.list_realtime_events(run_id)
+    for stored_event in stored_events:
+        topic = stored_event.get("topic")
+        if isinstance(topic, str) and topic in topics:
+            replay_events.append(stored_event)
     if "simulation.status" in topics:
         run = service.get_run(run_id)
         replay_events.append(
@@ -363,8 +368,31 @@ def _build_replay_events(
                     payload=alert.model_dump(mode="json"),
                 )
             )
+    return _sort_replay_events(replay_events)
+
+
+def _sort_replay_events(
+    replay_events: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Sort replay events while preserving the first copy of each event ID.
+
+    Args:
+        replay_events: Realtime event envelopes.
+
+    Returns:
+        Unique replay events ordered by simulated time, topic, and ID.
+    """
+
+    unique_events: list[dict[str, object]] = []
+    seen_event_ids: set[str] = set()
+    for event in replay_events:
+        event_id = str(event.get("event_id"))
+        if event_id in seen_event_ids:
+            continue
+        seen_event_ids.add(event_id)
+        unique_events.append(event)
     return sorted(
-        replay_events,
+        unique_events,
         key=lambda event: (
             str(event["simulated_time"]),
             str(event["topic"]),

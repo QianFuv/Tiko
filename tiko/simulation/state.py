@@ -42,6 +42,7 @@ class SimulationState:
     ledger_entries: list[LedgerEntry] = field(default_factory=list)
     portfolio_snapshots: list[PortfolioSnapshot] = field(default_factory=list)
     metric_snapshots: list[MetricSnapshot] = field(default_factory=list)
+    realtime_events: list[dict[str, object]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

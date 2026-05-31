@@ -9,7 +9,7 @@ from uuid import UUID
 from fastapi.testclient import TestClient
 
 import tiko.services.realtime as realtime_services
-from tiko.api.dependencies import reset_simulation_service
+from tiko.api.dependencies import get_simulation_service, reset_simulation_service
 from tiko.api.main import create_app
 from tiko.api.routes import websocket as websocket_routes
 
@@ -1073,6 +1073,11 @@ def test_simulation_websocket_filters_subscription_topics() -> None:
         json={"confidence": 0.7},
         headers=OPERATOR_HEADERS,
     )
+    stored_event_ids = {
+        str(event["topic"]): str(event["event_id"])
+        for event in get_simulation_service().list_realtime_events(UUID(run_id))
+        if event["topic"] in {"decision.created", "fill.created"}
+    }
 
     with client.websocket_connect(f"/ws/simulations/{run_id}") as websocket:
         websocket.send_json(
@@ -1105,6 +1110,7 @@ def test_simulation_websocket_filters_subscription_topics() -> None:
         "fill.created",
     }
     assert first_event_ids == reconnected_event_ids
+    assert first_event_ids == stored_event_ids
     assert completion["type"] == "replay_complete"
 
 

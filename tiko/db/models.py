@@ -324,6 +324,23 @@ class MarketEventRecord(Base):
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
 
 
+class RealtimeEventRecord(Base):
+    """Persist a canonical realtime event envelope for replay recovery."""
+
+    __tablename__ = "realtime_events"
+
+    event_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("simulation_runs.run_id"))
+    topic: Mapped[str] = mapped_column(String(64), nullable=False)
+    simulated_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    payload: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class ObservationSnapshotRecord(Base):
     """Persist a point-in-time observation snapshot."""
 

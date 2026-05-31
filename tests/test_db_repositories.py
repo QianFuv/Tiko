@@ -251,6 +251,7 @@ def test_metadata_creates_expected_tables(sqlite_engine: Engine) -> None:
         "portfolio_snapshots",
         "positions",
         "projects",
+        "realtime_events",
         "risk_reviews",
         "reports",
         "simulations",
@@ -365,6 +366,51 @@ def test_repository_persists_manual_market_events(
     repository.save_market_event(run.run_id, event)
 
     assert repository.list_market_events(run.run_id) == [event]
+
+
+def test_repository_persists_realtime_event_envelopes(
+    repository: SimulationRepository,
+) -> None:
+    """Verify canonical realtime envelopes round-trip through persistence."""
+
+    service = SimulationService(Settings(), repository=repository)
+    run = service.create_run(
+        name="realtime-events",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    later_envelope: dict[str, object] = {
+        "event_id": "evt-later",
+        "topic": "market.candle",
+        "run_id": str(run.run_id),
+        "simulated_time": "2026-01-01T02:00:00+00:00",
+        "payload": {"event_id": "market-event-later"},
+    }
+    earlier_envelope: dict[str, object] = {
+        "event_id": "evt-earlier",
+        "topic": "decision.created",
+        "run_id": str(run.run_id),
+        "simulated_time": "2026-01-01T01:00:00+00:00",
+        "payload": {"decision_id": "decision-earlier"},
+    }
+
+    repository.save_realtime_events([later_envelope, earlier_envelope])
+
+    assert repository.list_realtime_events(run.run_id) == [
+        earlier_envelope,
+        later_envelope,
+    ]
+    with pytest.raises(ValueError, match="payload"):
+        repository.save_realtime_events(
+            [
+                {
+                    "event_id": "evt-invalid",
+                    "topic": "decision.created",
+                    "run_id": str(run.run_id),
+                    "simulated_time": "2026-01-01T01:00:00+00:00",
+                }
+            ]
+        )
 
 
 def test_repository_persists_assets(repository: SimulationRepository) -> None:

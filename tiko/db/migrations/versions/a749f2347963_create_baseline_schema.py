@@ -298,6 +298,20 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("event_id"),
     )
     op.create_table(
+        "realtime_events",
+        sa.Column("event_id", sa.String(length=128), nullable=False),
+        sa.Column("run_id", sa.String(length=36), nullable=False),
+        sa.Column("topic", sa.String(length=64), nullable=False),
+        sa.Column("simulated_time", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("payload", sa.JSON(), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["run_id"],
+            ["simulation_runs.run_id"],
+        ),
+        sa.PrimaryKeyConstraint("event_id"),
+    )
+    op.create_table(
         "metric_snapshots",
         sa.Column("snapshot_id", sa.String(length=36), nullable=False),
         sa.Column("run_id", sa.String(length=36), nullable=False),
@@ -611,6 +625,7 @@ def downgrade() -> None:
     op.drop_table("orderbook_snapshots")
     op.drop_table("observation_snapshots")
     op.drop_table("metric_snapshots")
+    op.drop_table("realtime_events")
     op.drop_table("market_events")
     op.drop_table("feature_snapshots")
     op.drop_table("decisions")

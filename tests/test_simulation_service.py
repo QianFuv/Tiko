@@ -391,6 +391,19 @@ def test_repository_backed_service_persists_created_run_and_step() -> None:
         result.portfolio_snapshot
     ]
     assert repository.list_metric_snapshots(run.run_id) == [result.metric_snapshot]
+    realtime_events = repository.list_realtime_events(run.run_id)
+    assert service.list_realtime_events(run.run_id) == realtime_events
+    assert {str(event["topic"]) for event in realtime_events} == {
+        "agent.run",
+        "decision.created",
+        "fill.created",
+        "market.candle",
+        "order.updated",
+        "portfolio.updated",
+        "risk.reviewed",
+        "simulation.heartbeat",
+        "simulation.status",
+    }
 
 
 def test_simulation_step_publishes_realtime_fanout_envelopes() -> None:
@@ -428,6 +441,9 @@ def test_simulation_step_publishes_realtime_fanout_envelopes() -> None:
     )
     assert len(service.list_realtime_fanout_receipts()) == 9
     assert all(receipt.published for receipt in service.list_realtime_fanout_receipts())
+    assert {
+        str(event["event_id"]) for event in service.list_realtime_events(run.run_id)
+    } == {str(envelope["event_id"]) for envelope in published_envelopes}
     heartbeat = next(
         envelope
         for envelope in published_envelopes
@@ -470,6 +486,7 @@ def test_rejected_simulation_steps_skip_order_fill_fanout_topics() -> None:
         "simulation.status",
     }
     assert len(service.list_realtime_fanout_receipts()) == 7
+    assert len(service.list_realtime_events(run.run_id)) == 7
 
 
 def test_simulation_step_without_fanout_keeps_existing_behavior() -> None:
@@ -489,6 +506,33 @@ def test_simulation_step_without_fanout_keeps_existing_behavior() -> None:
     assert service.list_orders() == [result.order]
     assert service.list_fills() == [result.fill]
     assert service.list_realtime_fanout_receipts() == []
+    assert len(service.list_realtime_events(run.run_id)) == 9
+
+
+def test_repository_backed_step_persists_realtime_events() -> None:
+    """Verify repository-backed steps persist canonical realtime envelopes."""
+
+    repository = create_test_repository()
+    service = SimulationService(Settings(), repository=repository)
+    run = service.create_run(
+        name="persisted-realtime-events",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    result = service.step_run(run.run_id, confidence=0.7)
+
+    realtime_events = service.list_realtime_events(run.run_id)
+    payloads: list[dict[str, object]] = []
+    for event in realtime_events:
+        payload = event["payload"]
+        if isinstance(payload, dict):
+            payloads.append(payload)
+    assert repository.list_realtime_events(run.run_id) == realtime_events
+    assert len(realtime_events) == 9
+    assert str(result.decision.decision_id) in {
+        str(payload.get("decision_id")) for payload in payloads
+    }
 
 
 def test_service_applies_agent_inference_job_trace_state() -> None:

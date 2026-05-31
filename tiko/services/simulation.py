@@ -332,6 +332,7 @@ class SimulationService:
             ledger_entries=self._repository.list_ledger_entries(run_id),
             portfolio_snapshots=self._repository.list_portfolio_snapshots(run_id),
             metric_snapshots=self._repository.list_metric_snapshots(run_id),
+            realtime_events=self._repository.list_realtime_events(run_id),
         )
         self._states[run_id] = hydrated_state
         return hydrated_state
@@ -591,9 +592,14 @@ class SimulationService:
             portfolio_snapshot=portfolio_snapshot,
             metric_snapshot=metric_snapshot,
         )
+        realtime_envelopes = build_step_result_envelopes(result)
+        state.realtime_events.extend(realtime_envelopes)
         if self._repository is not None:
-            self._repository.save_step_result(result)
-        self._publish_step_result(result)
+            self._repository.save_step_result(
+                result,
+                realtime_envelopes=realtime_envelopes,
+            )
+        self._publish_realtime_envelopes(realtime_envelopes)
         return result
 
     def _next_candle(self, state: SimulationState) -> Candle:
@@ -1049,6 +1055,31 @@ class SimulationService:
         """
 
         return list(self._realtime_fanout_receipts)
+
+    def list_realtime_events(self, run_id: UUID) -> list[dict[str, object]]:
+        """List canonical realtime event envelopes for a simulation run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Realtime event envelopes ordered for replay.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        state = self._get_state(run_id)
+        if self._repository is not None:
+            return self._repository.list_realtime_events(run_id)
+        return sorted(
+            state.realtime_events,
+            key=lambda event: (
+                str(event["simulated_time"]),
+                str(event["topic"]),
+                str(event["event_id"]),
+            ),
+        )
 
     def list_candles(self, run_id: UUID) -> list[Candle]:
         """List candles observed by a simulation run.
@@ -2225,18 +2256,19 @@ class SimulationService:
                     return state, decision
         raise KeyError(decision_id)
 
-    def _publish_step_result(self, result: SimulationStepResult) -> None:
+    def _publish_realtime_envelopes(
+        self,
+        envelopes: Sequence[dict[str, object]],
+    ) -> None:
         """Publish realtime envelopes for a completed simulation step.
 
         Args:
-            result: Completed simulation step result.
+            envelopes: Realtime envelopes produced by the step.
         """
 
         if self._realtime_fanout is None:
             return
-        receipts = self._realtime_fanout.publish_many(
-            build_step_result_envelopes(result)
-        )
+        receipts = self._realtime_fanout.publish_many(list(envelopes))
         self._realtime_fanout_receipts.extend(receipts)
 
     def _require_mapping(
