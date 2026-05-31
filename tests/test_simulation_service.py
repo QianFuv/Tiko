@@ -72,6 +72,11 @@ def test_simulation_step_creates_internal_order_and_fill() -> None:
     assert result.orderbook_snapshot.symbol == "BTCUSDT"
     assert result.feature_snapshot.features["one_step_return"] == "0"
     assert result.observation.symbol == "BTCUSDT"
+    assert result.observation.account == run.account
+    assert result.observation.orderbook == result.orderbook_snapshot
+    assert result.observation.features == result.feature_snapshot.features
+    assert result.observation.positions == []
+    assert result.observation.risk_limits == service.get_risk_limits(run.run_id)
     assert result.agent_run.decision_id == result.decision.decision_id
     assert [message.role for message in result.agent_messages] == [
         "system",
@@ -223,6 +228,36 @@ def test_service_creates_decision_reviews_and_memory_entries() -> None:
     assert service.list_memory_entries(run.run_id) == [memory]
     assert repository.list_decision_reviews(result.decision.decision_id) == [review]
     assert repository.list_memory_entries(run.run_id) == [memory]
+
+
+def test_step_observation_uses_prior_positions_and_available_memory() -> None:
+    """Verify step observations contain prior portfolio and available memory."""
+
+    service = SimulationService(Settings())
+    run = service.create_run(
+        name="context",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    first_result = service.step_run(run.run_id, confidence=0.7)
+    memory = service.create_memory_entry(
+        run_id=run.run_id,
+        memory_type="decision",
+        summary="First fill stayed inside risk budget.",
+        content={"decision_id": str(first_result.decision.decision_id)},
+        tags=["posterior_review"],
+        available_at_sim_time=first_result.run.current_sim_time,
+        decision_id=first_result.decision.decision_id,
+    )
+
+    second_result = service.step_run(run.run_id, confidence=0.7)
+
+    assert first_result.observation.positions == []
+    assert second_result.observation.account == first_result.run.account
+    assert second_result.observation.positions == list(first_result.positions)
+    assert second_result.observation.memory == [memory]
+    assert second_result.observation.orderbook == second_result.orderbook_snapshot
+    assert second_result.observation.features == second_result.feature_snapshot.features
 
 
 def test_service_creates_reports_and_updates_alerts() -> None:

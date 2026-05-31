@@ -15,10 +15,12 @@ from tiko.agents import (
     OpenRouterTraderAgent,
     RuleBasedTraderAgent,
 )
-from tiko.domain.account import SimAccount
+from tiko.domain.account import Position, SimAccount
 from tiko.domain.decision import TradeIntent
-from tiko.domain.market import Candle
+from tiko.domain.market import Candle, OrderBookSnapshot
+from tiko.domain.memory import MemoryEntry
 from tiko.domain.observation import Observation
+from tiko.domain.risk import RiskLimits
 
 
 def create_account() -> SimAccount:
@@ -172,8 +174,59 @@ def test_agent_runtime_rejects_scope_mismatch() -> None:
 def test_openrouter_agent_builds_scoped_trade_intent() -> None:
     """Verify OpenRouter proposals are converted into scoped trade intent."""
 
-    observation = create_observation(
+    base_observation = create_observation(
         [create_candle(Decimal("100"), 1), create_candle(Decimal("105"), 2)]
+    )
+    observation = base_observation.model_copy(
+        update={
+            "orderbook": OrderBookSnapshot(
+                symbol="BTCUSDT",
+                as_of=base_observation.as_of,
+                bids=[(Decimal("104"), Decimal("2"))],
+                asks=[(Decimal("106"), Decimal("2"))],
+                mid_price=Decimal("105"),
+                spread_bps=Decimal("2"),
+                depth_1pct_usd=Decimal("1000"),
+                source="test",
+            ),
+            "features": {"momentum": "up"},
+            "positions": [
+                Position(
+                    position_id=uuid4(),
+                    account_id=base_observation.account.account_id,
+                    symbol="BTCUSDT",
+                    side="long",
+                    quantity=Decimal("1"),
+                    avg_entry_price=Decimal("100"),
+                    mark_price=Decimal("105"),
+                    notional=Decimal("105"),
+                    leverage=Decimal("1"),
+                    unrealized_pnl=Decimal("5"),
+                    realized_pnl=Decimal("0"),
+                    updated_at_sim_time=base_observation.as_of,
+                )
+            ],
+            "risk_limits": RiskLimits(
+                run_id=base_observation.run_id,
+                minimum_confidence=0.55,
+                minimum_data_quality_score=0.8,
+                max_target_weight=Decimal("0.20"),
+                max_order_notional=Decimal("500"),
+            ),
+            "memory": [
+                MemoryEntry(
+                    memory_id=uuid4(),
+                    run_id=base_observation.run_id,
+                    decision_id=None,
+                    memory_type="decision",
+                    summary="Prior review favored patience.",
+                    content={"tag": "review"},
+                    tags=["review"],
+                    available_at_sim_time=base_observation.as_of,
+                    created_at=base_observation.as_of,
+                )
+            ],
+        }
     )
     captured_payload: dict[str, object] = {}
 
@@ -247,6 +300,13 @@ def test_openrouter_agent_builds_scoped_trade_intent() -> None:
         "data_quality_score",
     ]
     assert "hold" in observation_payload["output_contract"]["allowed_actions"]
+    assert observation_payload["orderbook"]["mid_price"] == "105"
+    assert observation_payload["features"] == {"momentum": "up"}
+    assert observation_payload["positions"][0]["symbol"] == "BTCUSDT"
+    assert observation_payload["risk_limits"]["live_trading_allowed"] is False
+    assert (
+        observation_payload["memory"][0]["summary"] == "Prior review favored patience."
+    )
     assert intent.run_id == observation.run_id
     assert intent.symbol == observation.symbol
     assert intent.action == "open_long"

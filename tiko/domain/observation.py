@@ -5,9 +5,11 @@ from uuid import UUID
 
 from pydantic import Field
 
-from tiko.domain.account import SimAccount
+from tiko.domain.account import Position, SimAccount
 from tiko.domain.base import DomainModel
-from tiko.domain.market import Candle, MarketEvent
+from tiko.domain.market import Candle, MarketEvent, OrderBookSnapshot
+from tiko.domain.memory import MemoryEntry
+from tiko.domain.risk import RiskLimits
 
 
 class Observation(DomainModel):
@@ -20,3 +22,8 @@ class Observation(DomainModel):
     account: SimAccount
     candles: list[Candle]
     events: list[MarketEvent]
+    orderbook: OrderBookSnapshot | None = None
+    features: dict[str, object] = Field(default_factory=dict)
+    positions: list[Position] = Field(default_factory=list)
+    risk_limits: RiskLimits | None = None
+    memory: list[MemoryEntry] = Field(default_factory=list)

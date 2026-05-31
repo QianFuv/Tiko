@@ -423,6 +423,29 @@ class SimulationService:
             run_id, candle, previous_candle, event.event_id
         )
         self._event_bus.publish(event)
+        decision_run = state.run.model_copy(
+            update={
+                "status": "running",
+                "current_sim_time": next_time,
+            }
+        )
+        state.candles.append(candle)
+        state.orderbook_snapshots.append(orderbook_snapshot)
+        state.feature_snapshots.append(feature_snapshot)
+        state.events.append(event)
+        observation = self._observation_builder.build(
+            run=decision_run,
+            symbol=symbol,
+            as_of=next_time,
+            candles=state.candles,
+            events=state.events,
+            orderbooks=state.orderbook_snapshots,
+            feature_snapshots=state.feature_snapshots,
+            positions=state.positions,
+            risk_limits=state.risk_limits,
+            memory_entries=state.memory_entries,
+            observation_id=uuid5(NAMESPACE_URL, f"observation:{event.event_id}"),
+        )
         intent = self._create_trade_intent(
             run_id=run_id,
             symbol=symbol,
@@ -433,12 +456,12 @@ class SimulationService:
         order = None
         fill = None
         order_request = self._portfolio_service.create_order_request(
-            account=state.run.account,
+            account=decision_run.account,
             intent=intent,
             risk_review=risk_review,
             reference_price=candle.close,
         )
-        account = state.run.account
+        account = decision_run.account
         ledger_update: LedgerUpdate | None = None
         if order_request is not None:
             order, fill = self._broker.submit_market_order(order_request, candle.close)
@@ -446,27 +469,9 @@ class SimulationService:
             account = ledger_update.account
             state.orders.append(order)
             state.fills.append(fill)
-        updated_run = state.run.model_copy(
-            update={
-                "status": "running",
-                "current_sim_time": next_time,
-                "account": account,
-            }
-        )
+        updated_run = decision_run.model_copy(update={"account": account})
         state.run = updated_run
         state.step_index += 1
-        state.candles.append(candle)
-        state.orderbook_snapshots.append(orderbook_snapshot)
-        state.feature_snapshots.append(feature_snapshot)
-        state.events.append(event)
-        observation = self._observation_builder.build(
-            run=updated_run,
-            symbol=symbol,
-            as_of=next_time,
-            candles=state.candles,
-            events=state.events,
-            observation_id=uuid5(NAMESPACE_URL, f"observation:{intent.decision_id}"),
-        )
         agent_run = self._build_agent_run(intent)
         agent_messages = tuple(self._build_agent_messages(agent_run, intent))
         state.observations.append(observation)
@@ -1008,6 +1013,11 @@ class SimulationService:
             as_of=state.run.current_sim_time,
             candles=state.candles,
             events=state.events,
+            orderbooks=state.orderbook_snapshots,
+            feature_snapshots=state.feature_snapshots,
+            positions=state.positions,
+            risk_limits=state.risk_limits,
+            memory_entries=state.memory_entries,
         )
 
     def list_observation_snapshots(self, run_id: UUID) -> list[Observation]:

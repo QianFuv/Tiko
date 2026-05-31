@@ -422,6 +422,24 @@ class OpenRouterTraderAgent:
             "events": [
                 event.model_dump(mode="json") for event in observation.events[-20:]
             ],
+            "orderbook": (
+                observation.orderbook.model_dump(mode="json")
+                if observation.orderbook is not None
+                else None
+            ),
+            "features": observation.features,
+            "positions": [
+                position.model_dump(mode="json")
+                for position in observation.positions[-20:]
+            ],
+            "risk_limits": (
+                observation.risk_limits.model_dump(mode="json")
+                if observation.risk_limits is not None
+                else None
+            ),
+            "memory": [
+                entry.model_dump(mode="json") for entry in observation.memory[-20:]
+            ],
             "output_contract": {
                 "required_fields": list(REQUIRED_TRADE_INTENT_PROPOSAL_FIELDS),
                 "allowed_actions": list(TRADE_INTENT_ACTIONS),
