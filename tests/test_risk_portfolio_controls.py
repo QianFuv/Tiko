@@ -201,13 +201,19 @@ def test_portfolio_executes_resized_review_with_notional_cap() -> None:
         max_order_notional=Decimal("1000"),
     ).review(intent)
 
-    order_request = PortfolioService().create_order_request(
+    plan = PortfolioService().create_order_plan(
         account=create_account(),
         intent=intent,
         risk_review=review,
         reference_price=Decimal("100"),
     )
+    order_request = plan.order_request
 
+    assert plan.status == "order_created"
+    assert plan.expected_notional == Decimal("1000.000000")
+    assert plan.estimated_fee == Decimal("0.500000")
+    assert plan.estimated_slippage_bps == Decimal("2")
+    assert "approved delta 1000" in plan.sizing_explanation
     assert order_request is not None
     assert order_request.side == "buy"
     assert order_request.quantity == Decimal("10.000000")
@@ -219,7 +225,7 @@ def test_portfolio_skips_order_when_current_exposure_matches_target() -> None:
     intent = create_intent(target_weight=Decimal("0.10"))
     review = RiskService(minimum_confidence=0.5).review(intent)
 
-    order_request = PortfolioService().create_order_request(
+    plan = PortfolioService().create_order_plan(
         account=create_account(),
         intent=intent,
         risk_review=review,
@@ -227,7 +233,9 @@ def test_portfolio_skips_order_when_current_exposure_matches_target() -> None:
         positions=[create_position("long", Decimal("10000"))],
     )
 
-    assert order_request is None
+    assert plan.status == "no_order"
+    assert plan.reason == "target_exposure_already_met"
+    assert plan.order_request is None
 
 
 def test_portfolio_reduces_excess_long_exposure() -> None:
@@ -277,14 +285,34 @@ def test_portfolio_does_not_execute_rejected_review() -> None:
     intent = create_intent(confidence=0.1)
     review = RiskService(minimum_confidence=0.5).review(intent)
 
-    order_request = PortfolioService().create_order_request(
+    plan = PortfolioService().create_order_plan(
         account=create_account(),
         intent=intent,
         risk_review=review,
         reference_price=Decimal("100"),
     )
 
-    assert order_request is None
+    assert plan.status == "no_order"
+    assert plan.reason == "risk_review_not_executable"
+    assert plan.order_request is None
+
+
+def test_portfolio_plan_skips_quantity_below_lot_size() -> None:
+    """Verify portfolio plan explains rounded zero-quantity orders."""
+
+    intent = create_intent(target_weight=Decimal("0.000001"))
+    review = RiskService(minimum_confidence=0.5).review(intent)
+
+    plan = PortfolioService(lot_size=Decimal("1")).create_order_plan(
+        account=create_account(),
+        intent=intent,
+        risk_review=review,
+        reference_price=Decimal("1000000"),
+    )
+
+    assert plan.status == "no_order"
+    assert plan.reason == "quantity_below_lot_size"
+    assert plan.order_request is None
 
 
 def test_risk_circuit_breakers_block_loss_and_drawdown_breaches() -> None:

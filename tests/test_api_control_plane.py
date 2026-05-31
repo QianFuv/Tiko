@@ -172,6 +172,12 @@ def test_simulation_routes_create_and_step_run() -> None:
     assert step_response.status_code == 200
     step_payload = step_response.json()
     assert step_payload["risk_review"]["status"] == "approved"
+    assert step_payload["portfolio_order_plan"]["status"] == "order_created"
+    assert (
+        step_payload["portfolio_order_plan"]["order_request"]["decision_id"]
+        == (step_payload["decision"]["decision_id"])
+    )
+    assert Decimal(str(step_payload["portfolio_order_plan"]["expected_notional"])) > 0
     assert step_payload["order"]["status"] == "filled"
     assert step_payload["fill"]["symbol"] == "BTCUSDT"
 

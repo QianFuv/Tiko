@@ -10,6 +10,7 @@ from tiko.domain.market import Candle, FeatureSnapshot, MarketEvent, OrderBookSn
 from tiko.domain.memory import MemoryEntry
 from tiko.domain.observation import Observation
 from tiko.domain.order import Fill, SimOrder
+from tiko.domain.portfolio import PortfolioOrderPlan
 from tiko.domain.reporting import Alert, ReportArtifact
 from tiko.domain.risk import RiskLimits, RiskReview
 from tiko.domain.simulation import SimulationRun
@@ -61,6 +62,7 @@ class SimulationStepResult:
     agent_messages: tuple[AgentMessage, ...]
     decision: TradeIntent
     risk_review: RiskReview
+    portfolio_order_plan: PortfolioOrderPlan
     order: SimOrder | None
     fill: Fill | None
     positions: tuple[Position, ...]

@@ -20,6 +20,7 @@ from tiko.domain import (
     ExperimentRecord,
     Fill,
     OrderRequest,
+    PortfolioOrderPlan,
     Principal,
     RiskReview,
     SimAccount,
@@ -202,6 +203,60 @@ def test_order_and_fill_schemas_model_simulated_execution() -> None:
 
     assert fill.quantity == request.quantity
     assert order.status == "filled"
+
+
+def test_portfolio_order_plan_schema_models_sizing_output() -> None:
+    """Verify portfolio order plans carry sizing estimates and no-order reasons."""
+
+    run_id = uuid4()
+    account_id = uuid4()
+    decision_id = uuid4()
+    order_request = OrderRequest(
+        run_id=run_id,
+        account_id=account_id,
+        decision_id=decision_id,
+        symbol="BTCUSDT",
+        side="buy",
+        order_type="market",
+        quantity=Decimal("1"),
+        submitted_at_sim_time=current_time(),
+    )
+    plan = PortfolioOrderPlan(
+        run_id=run_id,
+        account_id=account_id,
+        decision_id=decision_id,
+        symbol="BTCUSDT",
+        status="order_created",
+        reason=None,
+        sizing_explanation="Created market order from target delta.",
+        target_notional=Decimal("1000"),
+        current_notional=Decimal("0"),
+        delta_notional=Decimal("1000"),
+        approved_delta_notional=Decimal("1000"),
+        reference_price=Decimal("100"),
+        quantity=Decimal("10"),
+        expected_notional=Decimal("1000"),
+        estimated_fee=Decimal("0.5"),
+        estimated_slippage_bps=Decimal("2"),
+        order_request=order_request,
+    )
+
+    assert plan.order_request == order_request
+    assert plan.estimated_fee == Decimal("0.5")
+    assert (
+        PortfolioOrderPlan.model_validate(
+            plan.model_dump()
+            | {"status": "no_order", "reason": "target_met", "order_request": None}
+        ).reason
+        == "target_met"
+    )
+
+    with pytest.raises(ValidationError):
+        PortfolioOrderPlan.model_validate(plan.model_dump() | {"status": "queued"})
+    with pytest.raises(ValidationError):
+        PortfolioOrderPlan.model_validate(
+            plan.model_dump() | {"status": "no_order", "reason": "target_met"}
+        )
 
 
 def test_risk_review_and_simulation_run_are_validated() -> None:

@@ -52,6 +52,7 @@ from tiko.domain.plugin import (
     SandboxTestReport,
     SandboxTestResult,
 )
+from tiko.domain.portfolio import PortfolioOrderPlan, PortfolioOrderPlanStatus
 from tiko.domain.registry import (
     ProjectRecord,
     SimulationDefinition,
@@ -138,6 +139,8 @@ __all__ = [
     "PluginRegistryEntry",
     "PluginStatus",
     "PluginType",
+    "PortfolioOrderPlan",
+    "PortfolioOrderPlanStatus",
     "PortfolioSnapshot",
     "Position",
     "Principal",

@@ -88,7 +88,10 @@ class SimulationService:
         self._realtime_fanout = realtime_fanout
         self._realtime_fanout_receipts: list[RealtimeFanoutReceipt] = []
         self._states: dict[UUID, SimulationState] = {}
-        self._portfolio_service = PortfolioService()
+        self._portfolio_service = PortfolioService(
+            taker_fee_bps=settings.sim_broker_taker_fee_bps,
+            estimated_slippage_bps=settings.sim_broker_slippage_bps,
+        )
         self._broker = SimBroker(
             fee_bps=settings.sim_broker_taker_fee_bps,
             slippage_bps=settings.sim_broker_slippage_bps,
@@ -648,13 +651,14 @@ class SimulationService:
         )
         order = None
         fill = None
-        order_request = self._portfolio_service.create_order_request(
+        portfolio_order_plan = self._portfolio_service.create_order_plan(
             account=decision_run.account,
             intent=intent,
             risk_review=risk_review,
             reference_price=candle.close,
             positions=state.positions,
         )
+        order_request = portfolio_order_plan.order_request
         intent = self._apply_step_decision_status(intent, risk_review, order_request)
         account = decision_run.account
         ledger_update: LedgerUpdate | None = None
@@ -746,6 +750,7 @@ class SimulationService:
             agent_messages=agent_messages,
             decision=intent,
             risk_review=risk_review,
+            portfolio_order_plan=portfolio_order_plan,
             order=order,
             fill=fill,
             positions=positions,

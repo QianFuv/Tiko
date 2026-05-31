@@ -280,6 +280,13 @@ def test_simulation_step_creates_internal_order_and_fill() -> None:
     assert result.decision.agent_run_id == result.agent_run.agent_run_id
     assert result.decision.input_data_as_of == result.observation.as_of
     assert result.decision.status == "converted_to_order"
+    assert result.portfolio_order_plan.status == "order_created"
+    assert result.portfolio_order_plan.order_request is not None
+    assert result.portfolio_order_plan.order_request.decision_id == (
+        result.decision.decision_id
+    )
+    assert result.portfolio_order_plan.expected_notional > Decimal("0")
+    assert result.portfolio_order_plan.estimated_fee > Decimal("0")
     assert result.agent_messages[0].role == "system"
     assert result.agent_messages[1].role == "observation"
     assert [
@@ -370,6 +377,10 @@ def test_service_uses_configured_broker_fee_and_slippage() -> None:
     assert result.fill.slippage_bps == expected_slippage_bps
     assert result.fill.price == expected_price
     assert result.fill.fee == expected_fee
+    assert result.portfolio_order_plan.estimated_slippage_bps == Decimal("5")
+    assert result.portfolio_order_plan.estimated_fee == (
+        result.portfolio_order_plan.expected_notional * Decimal("10") / Decimal("10000")
+    )
 
 
 def test_service_uses_feature_return_in_slippage_context() -> None:
@@ -647,6 +658,8 @@ def test_low_confidence_intent_is_rejected_without_order() -> None:
 
     assert result.risk_review.status == "rejected"
     assert result.decision.status == "rejected"
+    assert result.portfolio_order_plan.status == "no_order"
+    assert result.portfolio_order_plan.reason == "risk_review_not_executable"
     assert result.observation.symbol == "BTCUSDT"
     assert result.agent_run.decision_id == result.decision.decision_id
     assert result.agent_messages[0].role == "system"
