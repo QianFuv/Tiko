@@ -244,11 +244,12 @@ def test_simulation_step_creates_internal_order_and_fill() -> None:
 def test_service_uses_configured_broker_fee_and_slippage() -> None:
     """Verify simulation fills use configured broker fee and slippage settings."""
 
+    settings = Settings(
+        sim_broker_taker_fee_bps=Decimal("10"),
+        sim_broker_slippage_bps=Decimal("5"),
+    )
     service = SimulationService(
-        Settings(
-            sim_broker_taker_fee_bps=Decimal("10"),
-            sim_broker_slippage_bps=Decimal("5"),
-        )
+        settings,
     )
     run = service.create_run(
         name="broker-config",
@@ -258,17 +259,67 @@ def test_service_uses_configured_broker_fee_and_slippage() -> None:
 
     result = service.step_run(run.run_id, confidence=0.7)
 
+    assert result.order is not None
     assert result.fill is not None
+    one_step_return = Decimal(str(result.feature_snapshot.features["one_step_return"]))
+    order_notional = result.order.quantity * result.candle.close
+    liquidity_impact = (
+        order_notional
+        / result.orderbook_snapshot.depth_1pct_usd
+        * settings.sim_broker_slippage_liquidity_multiplier
+        * Decimal("100")
+    )
+    expected_slippage_bps = (
+        settings.sim_broker_slippage_bps
+        + result.orderbook_snapshot.spread_bps / Decimal("2")
+        + abs(one_step_return)
+        * Decimal("10000")
+        * settings.sim_broker_slippage_volatility_multiplier
+        + liquidity_impact
+    )
     expected_price = (
-        result.candle.close * Decimal("1.0005")
+        result.candle.close * (Decimal("1") + expected_slippage_bps / Decimal("10000"))
         if result.fill.side == "buy"
-        else result.candle.close * Decimal("0.9995")
+        else result.candle.close
+        * (Decimal("1") - expected_slippage_bps / Decimal("10000"))
     )
     expected_fee = result.fill.quantity * result.fill.price * Decimal("10")
     expected_fee /= Decimal("10000")
-    assert result.fill.slippage_bps == Decimal("5")
+    assert result.fill.slippage_bps == expected_slippage_bps
     assert result.fill.price == expected_price
     assert result.fill.fee == expected_fee
+
+
+def test_service_uses_feature_return_in_slippage_context() -> None:
+    """Verify later service fills include feature-derived volatility slippage."""
+
+    settings = Settings(
+        sim_broker_slippage_bps=Decimal("0"),
+        sim_broker_slippage_volatility_multiplier=Decimal("1"),
+        sim_broker_slippage_liquidity_multiplier=Decimal("0"),
+    )
+    service = SimulationService(settings)
+    run = service.create_run(
+        name="volatility-slippage",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    service.step_run(run.run_id, confidence=0.7)
+    second_result = service.step_run(run.run_id, confidence=0.7)
+
+    assert second_result.fill is not None
+    one_step_return = Decimal(
+        str(second_result.feature_snapshot.features["one_step_return"])
+    )
+    expected_slippage_bps = (
+        second_result.orderbook_snapshot.spread_bps / Decimal("2")
+        + abs(one_step_return)
+        * Decimal("10000")
+        * settings.sim_broker_slippage_volatility_multiplier
+    )
+    assert abs(one_step_return) > Decimal("0")
+    assert second_result.fill.slippage_bps == expected_slippage_bps
 
 
 def test_service_create_run_accepts_configured_simulation_fields() -> None:

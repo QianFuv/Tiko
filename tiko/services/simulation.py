@@ -4,7 +4,7 @@ import json
 import re
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Literal
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
@@ -25,7 +25,7 @@ from tiko.domain.decision import DecisionReview, TradeIntent
 from tiko.domain.market import Candle, FeatureSnapshot, MarketEvent, OrderBookSnapshot
 from tiko.domain.memory import MemoryEntry, MemorySearchResult, MemoryType
 from tiko.domain.observation import Observation
-from tiko.domain.order import Fill, SimOrder
+from tiko.domain.order import Fill, OrderRequest, SimOrder
 from tiko.domain.reporting import (
     Alert,
     AlertCategory,
@@ -58,6 +58,7 @@ from tiko.simulation.ledger import (
 )
 from tiko.simulation.metrics import MetricsEngine
 from tiko.simulation.replay import MarketReplay, MarketReplayExhausted
+from tiko.simulation.slippage import SlippageContext
 from tiko.simulation.state import SimulationState, SimulationStepResult
 from tiko.simulation.synthetic import generate_synthetic_candle
 
@@ -622,7 +623,17 @@ class SimulationService:
         account = decision_run.account
         ledger_update: LedgerUpdate | None = None
         if order_request is not None:
-            order, fill = self._broker.submit_market_order(order_request, candle.close)
+            slippage_context = self._build_slippage_context(
+                order_request,
+                candle.close,
+                orderbook_snapshot,
+                feature_snapshot,
+            )
+            order, fill = self._broker.submit_market_order(
+                order_request,
+                candle.close,
+                slippage_context=slippage_context,
+            )
             ledger_update = apply_fill_to_ledger(
                 account,
                 fill,
@@ -801,6 +812,55 @@ class SimulationService:
             },
             source="synthetic_feature_engine",
         )
+
+    def _build_slippage_context(
+        self,
+        order_request: OrderRequest,
+        reference_price: Decimal,
+        orderbook_snapshot: OrderBookSnapshot,
+        feature_snapshot: FeatureSnapshot,
+    ) -> SlippageContext:
+        """Build point-in-time slippage context for one market order.
+
+        Args:
+            order_request: Order request to execute.
+            reference_price: Market reference price used for execution.
+            orderbook_snapshot: Current point-in-time order book snapshot.
+            feature_snapshot: Current point-in-time feature snapshot.
+
+        Returns:
+            Slippage context for simulated market execution.
+        """
+
+        return SlippageContext(
+            volatility_bps=self._extract_feature_volatility_bps(feature_snapshot),
+            spread_bps=orderbook_snapshot.spread_bps,
+            order_notional=order_request.quantity * reference_price,
+            depth_1pct_usd=orderbook_snapshot.depth_1pct_usd,
+        )
+
+    def _extract_feature_volatility_bps(
+        self, feature_snapshot: FeatureSnapshot
+    ) -> Decimal:
+        """Extract a volatility proxy from point-in-time feature data.
+
+        Args:
+            feature_snapshot: Current feature snapshot.
+
+        Returns:
+            Absolute one-step return expressed in basis points.
+        """
+
+        value = feature_snapshot.features.get("one_step_return")
+        if value is None:
+            return Decimal("0")
+        try:
+            one_step_return = Decimal(str(value))
+        except InvalidOperation:
+            return Decimal("0")
+        if not one_step_return.is_finite():
+            return Decimal("0")
+        return abs(one_step_return) * Decimal("10000")
 
     def list_orders(self) -> list[SimOrder]:
         """List simulated orders across all runs.
