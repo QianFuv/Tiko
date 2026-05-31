@@ -33,10 +33,14 @@ class PluginPermissions(DomainModel):
     write_orders: bool = False
     network_access: bool = False
     file_system_access: FileSystemAccess = "sandbox"
+    approved_directories: list[str] = Field(default_factory=list)
     provider_allowlist: list[str] = Field(default_factory=list)
     methods_allowlist: list[str] = Field(default_factory=list)
     rate_limit_per_minute: int | None = Field(default=None, gt=0)
     credential_scope: CredentialScope = "none"
+    cpu_time_limit_seconds: int | None = Field(default=None, gt=0)
+    memory_limit_mb: int | None = Field(default=None, gt=0)
+    wall_time_limit_seconds: int | None = Field(default=None, gt=0)
 
 
 class PluginManifest(DomainModel):

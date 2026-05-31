@@ -12,6 +12,8 @@ SUPPORTED_SANDBOX_TESTS = {
     "test_schema_valid",
     "test_no_write_orders",
     "test_network_policy",
+    "test_approved_directories",
+    "test_resource_limits",
 }
 
 
@@ -57,6 +59,8 @@ def validate_plugin_manifest(manifest: PluginManifest) -> SandboxResult:
             violations.append(
                 "Network plugins require a positive rate_limit_per_minute."
             )
+    violations.extend(_directory_policy_violations(manifest))
+    violations.extend(_resource_limit_violations(manifest))
     if manifest.plugin_type == "market_data_connector" and permissions.write_features:
         warnings.append("Market data connectors should not write features directly.")
     if len(manifest.tests) == 0:
@@ -129,6 +133,28 @@ def _run_sandbox_test(
                 else "Network access violates sandbox rules."
             ),
         )
+    if test_name == "test_approved_directories":
+        passed = _directory_policy_passes(manifest)
+        return SandboxTestResult(
+            name=test_name,
+            passed=passed,
+            message=(
+                "File-system access is constrained to approved directories."
+                if passed
+                else "File-system access violates approved directory policy."
+            ),
+        )
+    if test_name == "test_resource_limits":
+        passed = _resource_limits_pass(manifest)
+        return SandboxTestResult(
+            name=test_name,
+            passed=passed,
+            message=(
+                "CPU, memory, and wall-time limits are declared."
+                if passed
+                else "Plugin resource limits are incomplete."
+            ),
+        )
     return SandboxTestResult(
         name=test_name,
         passed=False,
@@ -137,6 +163,107 @@ def _run_sandbox_test(
             f"{', '.join(sorted(SUPPORTED_SANDBOX_TESTS))}."
         ),
     )
+
+
+def _directory_policy_violations(manifest: PluginManifest) -> list[str]:
+    """Validate plugin approved-directory policy.
+
+    Args:
+        manifest: Plugin manifest under validation.
+
+    Returns:
+        Directory policy violation messages.
+    """
+
+    permissions = manifest.permissions
+    violations: list[str] = []
+    if (
+        permissions.file_system_access != "none"
+        and len(permissions.approved_directories) == 0
+    ):
+        violations.append(
+            "Plugins with file system access require approved_directories."
+        )
+    unsafe_directories = [
+        directory
+        for directory in permissions.approved_directories
+        if not _is_safe_sandbox_directory(directory)
+    ]
+    if unsafe_directories:
+        violations.append(
+            "Plugin approved_directories contain unsafe paths: "
+            f"{', '.join(sorted(unsafe_directories))}."
+        )
+    return violations
+
+
+def _resource_limit_violations(manifest: PluginManifest) -> list[str]:
+    """Validate plugin resource limit policy.
+
+    Args:
+        manifest: Plugin manifest under validation.
+
+    Returns:
+        Resource limit policy violation messages.
+    """
+
+    permissions = manifest.permissions
+    missing_limits: list[str] = []
+    if permissions.cpu_time_limit_seconds is None:
+        missing_limits.append("cpu_time_limit_seconds")
+    if permissions.memory_limit_mb is None:
+        missing_limits.append("memory_limit_mb")
+    if permissions.wall_time_limit_seconds is None:
+        missing_limits.append("wall_time_limit_seconds")
+    if not missing_limits:
+        return []
+    return [
+        "Plugin manifests require positive resource limits: "
+        f"{', '.join(missing_limits)}."
+    ]
+
+
+def _directory_policy_passes(manifest: PluginManifest) -> bool:
+    """Return whether approved-directory policy passes.
+
+    Args:
+        manifest: Plugin manifest under validation.
+
+    Returns:
+        Whether directory policy passes.
+    """
+
+    return not _directory_policy_violations(manifest)
+
+
+def _resource_limits_pass(manifest: PluginManifest) -> bool:
+    """Return whether resource limit policy passes.
+
+    Args:
+        manifest: Plugin manifest under validation.
+
+    Returns:
+        Whether resource limit policy passes.
+    """
+
+    return not _resource_limit_violations(manifest)
+
+
+def _is_safe_sandbox_directory(directory: str) -> bool:
+    """Return whether a directory path is sandbox-relative and non-traversing.
+
+    Args:
+        directory: Directory path from the plugin manifest.
+
+    Returns:
+        `True` when the path is safe for sandbox allowlisting.
+    """
+
+    normalized = directory.replace("\\", "/").strip()
+    if not normalized or normalized.startswith("/") or ":" in normalized:
+        return False
+    segments = [segment for segment in normalized.split("/") if segment]
+    return bool(segments) and ".." not in segments
 
 
 def _network_policy_passes(manifest: PluginManifest) -> bool:

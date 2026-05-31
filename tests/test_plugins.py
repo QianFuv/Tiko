@@ -4,6 +4,26 @@ from tiko.domain.plugin import PluginManifest, PluginPermissions
 from tiko.plugins import run_plugin_sandbox_tests, validate_plugin_manifest
 
 
+def create_safe_permissions(**overrides: object) -> PluginPermissions:
+    """Create safe plugin permissions for sandbox tests.
+
+    Args:
+        **overrides: Permission field overrides.
+
+    Returns:
+        Safe plugin permissions.
+    """
+
+    values = {
+        "write_market_events": True,
+        "approved_directories": ["plugins/synthetic_liquidity_shock_generator"],
+        "cpu_time_limit_seconds": 10,
+        "memory_limit_mb": 128,
+        "wall_time_limit_seconds": 30,
+    } | overrides
+    return PluginPermissions.model_validate(values)
+
+
 def create_safe_manifest() -> PluginManifest:
     """Create a safe plugin manifest fixture.
 
@@ -16,7 +36,7 @@ def create_safe_manifest() -> PluginManifest:
         version="0.1.0",
         plugin_type="event_generation",
         description="Generate synthetic liquidity shocks for simulations.",
-        permissions=PluginPermissions(write_market_events=True),
+        permissions=create_safe_permissions(),
         inputs=["run_id", "symbols"],
         output_schema="MarketEvent",
         tests=["test_schema_valid"],
@@ -36,12 +56,7 @@ def test_sandbox_rejects_order_writing_plugin() -> None:
     """Verify plugins cannot request order-writing permission."""
 
     manifest = create_safe_manifest().model_copy(
-        update={
-            "permissions": PluginPermissions(
-                write_market_events=True,
-                write_orders=True,
-            )
-        }
+        update={"permissions": create_safe_permissions(write_orders=True)}
     )
 
     result = validate_plugin_manifest(manifest)
@@ -55,7 +70,7 @@ def test_sandbox_restricts_network_to_allowlisted_market_data() -> None:
 
     unsafe_manifest = create_safe_manifest().model_copy(
         update={
-            "permissions": PluginPermissions(
+            "permissions": create_safe_permissions(
                 read_market_data=True,
                 network_access=True,
             )
@@ -64,7 +79,8 @@ def test_sandbox_restricts_network_to_allowlisted_market_data() -> None:
     safe_manifest = create_safe_manifest().model_copy(
         update={
             "plugin_type": "market_data_connector",
-            "permissions": PluginPermissions(
+            "permissions": create_safe_permissions(
+                write_market_events=False,
                 read_market_data=True,
                 network_access=True,
                 provider_allowlist=["binance"],
@@ -94,7 +110,8 @@ def test_sandbox_rejects_network_private_methods_and_missing_rate_limit() -> Non
     private_method_manifest = create_safe_manifest().model_copy(
         update={
             "plugin_type": "market_data_connector",
-            "permissions": PluginPermissions(
+            "permissions": create_safe_permissions(
+                write_market_events=False,
                 read_market_data=True,
                 network_access=True,
                 provider_allowlist=["binance"],
@@ -107,7 +124,8 @@ def test_sandbox_rejects_network_private_methods_and_missing_rate_limit() -> Non
     missing_rate_limit_manifest = create_safe_manifest().model_copy(
         update={
             "plugin_type": "market_data_connector",
-            "permissions": PluginPermissions(
+            "permissions": create_safe_permissions(
+                write_market_events=False,
                 read_market_data=True,
                 network_access=True,
                 provider_allowlist=["binance"],
@@ -131,6 +149,61 @@ def test_sandbox_rejects_network_private_methods_and_missing_rate_limit() -> Non
     )
 
 
+def test_sandbox_requires_approved_directories_for_file_access() -> None:
+    """Verify file-system access requires explicit safe directory allowlists."""
+
+    missing_directory_manifest = create_safe_manifest().model_copy(
+        update={"permissions": create_safe_permissions(approved_directories=[])}
+    )
+    unsafe_directory_manifest = create_safe_manifest().model_copy(
+        update={"permissions": create_safe_permissions(approved_directories=["../tmp"])}
+    )
+    disabled_file_access_manifest = create_safe_manifest().model_copy(
+        update={
+            "permissions": create_safe_permissions(
+                file_system_access="none",
+                approved_directories=[],
+            )
+        }
+    )
+
+    missing_directory_result = validate_plugin_manifest(missing_directory_manifest)
+    unsafe_directory_result = validate_plugin_manifest(unsafe_directory_manifest)
+    disabled_file_access_result = validate_plugin_manifest(
+        disabled_file_access_manifest
+    )
+
+    assert missing_directory_result.passed is False
+    assert any(
+        "approved_directories" in violation
+        for violation in missing_directory_result.violations
+    )
+    assert unsafe_directory_result.passed is False
+    assert any(
+        "../tmp" in violation for violation in unsafe_directory_result.violations
+    )
+    assert disabled_file_access_result.passed is True
+
+
+def test_sandbox_requires_resource_limits() -> None:
+    """Verify plugins declare CPU, memory, and wall-time limits."""
+
+    manifest = create_safe_manifest().model_copy(
+        update={
+            "permissions": create_safe_permissions(
+                cpu_time_limit_seconds=None,
+                memory_limit_mb=None,
+            )
+        }
+    )
+
+    result = validate_plugin_manifest(manifest)
+
+    assert result.passed is False
+    assert any("cpu_time_limit_seconds" in violation for violation in result.violations)
+    assert any("memory_limit_mb" in violation for violation in result.violations)
+
+
 def test_sandbox_requires_manifest_tests() -> None:
     """Verify plugin manifests must declare sandbox tests."""
 
@@ -151,6 +224,8 @@ def test_sandbox_executes_supported_manifest_tests() -> None:
                 "test_schema_valid",
                 "test_no_write_orders",
                 "test_network_policy",
+                "test_approved_directories",
+                "test_resource_limits",
             ]
         }
     )
@@ -163,6 +238,8 @@ def test_sandbox_executes_supported_manifest_tests() -> None:
         "test_schema_valid",
         "test_no_write_orders",
         "test_network_policy",
+        "test_approved_directories",
+        "test_resource_limits",
     ]
     assert all(result.passed for result in report.results)
 
@@ -172,10 +249,7 @@ def test_sandbox_test_report_flags_forbidden_order_writes() -> None:
 
     manifest = create_safe_manifest().model_copy(
         update={
-            "permissions": PluginPermissions(
-                write_market_events=True,
-                write_orders=True,
-            ),
+            "permissions": create_safe_permissions(write_orders=True),
             "tests": ["test_no_write_orders"],
         }
     )

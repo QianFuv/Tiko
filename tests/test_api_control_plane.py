@@ -1055,13 +1055,21 @@ def test_plugin_registry_routes_validate_sandbox_policy() -> None:
         "version": "0.1.0",
         "plugin_type": "event_generation",
         "description": "Generate synthetic liquidity shocks for simulations.",
-        "permissions": {"write_market_events": True},
+        "permissions": {
+            "write_market_events": True,
+            "approved_directories": ["plugins/synthetic_liquidity_shock_generator"],
+            "cpu_time_limit_seconds": 10,
+            "memory_limit_mb": 128,
+            "wall_time_limit_seconds": 30,
+        },
         "inputs": ["run_id", "symbols"],
         "output_schema": "MarketEvent",
         "tests": [
             "test_schema_valid",
             "test_no_write_orders",
             "test_network_policy",
+            "test_approved_directories",
+            "test_resource_limits",
         ],
     }
 
@@ -1089,6 +1097,8 @@ def test_plugin_registry_routes_validate_sandbox_policy() -> None:
         "test_schema_valid",
         "test_no_write_orders",
         "test_network_policy",
+        "test_approved_directories",
+        "test_resource_limits",
     ]
     assert create_response.status_code == 200
     plugin_id = create_response.json()["plugin_id"]
@@ -1104,7 +1114,14 @@ def test_plugin_registry_routes_validate_sandbox_policy() -> None:
     )
 
     unsafe_manifest = safe_manifest | {
-        "permissions": {"write_market_events": True, "write_orders": True}
+        "permissions": {
+            "write_market_events": True,
+            "write_orders": True,
+            "approved_directories": ["plugins/synthetic_liquidity_shock_generator"],
+            "cpu_time_limit_seconds": 10,
+            "memory_limit_mb": 128,
+            "wall_time_limit_seconds": 30,
+        }
     }
     unsafe_response = client.post(
         "/api/plugins",
@@ -1426,7 +1443,15 @@ def test_configured_database_persists_api_state_after_cache_reset(
             "version": "0.1.0",
             "plugin_type": "event_generation",
             "description": "Generate synthetic events for persisted API tests.",
-            "permissions": {"write_market_events": True},
+            "permissions": {
+                "write_market_events": True,
+                "approved_directories": [
+                    "plugins/persistent_synthetic_event_generator"
+                ],
+                "cpu_time_limit_seconds": 10,
+                "memory_limit_mb": 128,
+                "wall_time_limit_seconds": 30,
+            },
             "inputs": ["run_id", "symbols"],
             "output_schema": "MarketEvent",
             "tests": ["test_schema_valid"],
