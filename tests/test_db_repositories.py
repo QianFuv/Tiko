@@ -19,6 +19,7 @@ from tiko.domain.decision import DecisionReview
 from tiko.domain.memory import MemoryEntry
 from tiko.domain.model import ModelRegistryEntry
 from tiko.domain.plugin import PluginManifest, PluginPermissions, PluginRegistryEntry
+from tiko.domain.reporting import Alert, ReportArtifact
 from tiko.plugins import validate_plugin_manifest
 from tiko.services import SimulationService
 
@@ -60,6 +61,7 @@ def test_metadata_creates_expected_tables(sqlite_engine: Engine) -> None:
 
     assert table_names == {
         "accounts",
+        "alerts",
         "candles",
         "decision_reviews",
         "decisions",
@@ -70,6 +72,7 @@ def test_metadata_creates_expected_tables(sqlite_engine: Engine) -> None:
         "orders",
         "plugin_registry",
         "risk_reviews",
+        "reports",
         "simulation_runs",
     }
 
@@ -223,6 +226,46 @@ def test_repository_persists_plugin_registry_entries(
 
     assert repository.get_plugin_registry_entry(entry.plugin_id) == entry
     assert repository.list_plugin_registry_entries() == [entry]
+
+
+def test_repository_persists_reports_and_alerts(
+    repository: SimulationRepository,
+) -> None:
+    """Verify report and alert artifacts persist and round-trip."""
+
+    service = SimulationService(Settings())
+    run = service.create_run(
+        name="reporting",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    repository.save_run(run)
+    report = ReportArtifact(
+        report_id=uuid4(),
+        run_id=run.run_id,
+        report_type="simulation",
+        title="Simulation report",
+        summary="No activity yet.",
+        sections={"activity": {"decision_count": 0}},
+        created_at_sim_time=run.current_sim_time,
+        created_at=run.created_at,
+    )
+    alert = Alert(
+        alert_id=uuid4(),
+        run_id=run.run_id,
+        category="drawdown",
+        severity="warning",
+        message="Drawdown near threshold.",
+        status="open",
+        created_at_sim_time=run.current_sim_time,
+        created_at=run.created_at,
+    )
+
+    repository.save_report(report)
+    repository.save_alert(alert)
+
+    assert repository.list_reports(run.run_id) == [report]
+    assert repository.list_alerts(run.run_id) == [alert]
 
 
 def test_repository_persists_rejected_step_without_order_or_fill(

@@ -16,12 +16,24 @@ from tiko.domain.plugin import (
     PluginType,
     SandboxResult,
 )
+from tiko.domain.reporting import (
+    Alert,
+    AlertCategory,
+    AlertSeverity,
+    AlertStatus,
+    ReportArtifact,
+    ReportType,
+)
 from tiko.domain.risk import RiskReview
 from tiko.domain.rl import EnvironmentStep, RewardBreakdown, RewardComponents, RlAction
 from tiko.domain.simulation import SimulationRun
 
 __all__ = [
     "Asset",
+    "Alert",
+    "AlertCategory",
+    "AlertSeverity",
+    "AlertStatus",
     "Candle",
     "DecisionReview",
     "EnvironmentStep",
@@ -43,6 +55,8 @@ __all__ = [
     "PluginType",
     "Position",
     "RiskReview",
+    "ReportArtifact",
+    "ReportType",
     "RewardBreakdown",
     "RewardComponents",
     "RlAction",

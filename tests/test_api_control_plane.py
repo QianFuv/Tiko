@@ -90,6 +90,29 @@ def test_query_routes_expose_simulated_state() -> None:
     assert (
         client.get(f"/api/risk/{run_id}/reviews/latest").json()["status"] == "approved"
     )
+    report_response = client.post(f"/api/reports/simulations/{run_id}")
+    alert_response = client.post(
+        f"/api/risk/{run_id}/alerts",
+        json={
+            "category": "drawdown",
+            "severity": "warning",
+            "message": "Drawdown near threshold.",
+        },
+    )
+
+    assert report_response.status_code == 200
+    assert report_response.json()["report_type"] == "simulation"
+    assert len(client.get(f"/api/reports/simulations/{run_id}").json()) == 1
+    assert alert_response.status_code == 200
+    alert_id = alert_response.json()["alert_id"]
+    assert client.get(f"/api/risk/{run_id}/alerts").json()[0]["status"] == "open"
+    assert (
+        client.post(
+            f"/api/risk/{run_id}/alerts/{alert_id}/status",
+            json={"status": "acknowledged"},
+        ).json()["status"]
+        == "acknowledged"
+    )
     decision_id = client.get("/api/decisions").json()[0]["decision_id"]
     review_response = client.post(
         f"/api/decisions/{decision_id}/review",

@@ -13,6 +13,13 @@ from tiko.domain.market import Candle, MarketEvent
 from tiko.domain.memory import MemoryEntry, MemoryType
 from tiko.domain.observation import Observation
 from tiko.domain.order import Fill, SimOrder
+from tiko.domain.reporting import (
+    Alert,
+    AlertCategory,
+    AlertSeverity,
+    AlertStatus,
+    ReportArtifact,
+)
 from tiko.domain.risk import RiskReview
 from tiko.domain.simulation import SimulationRun
 from tiko.observation import ObservationBuilder
@@ -454,6 +461,151 @@ class SimulationService:
         """
 
         return list(self._states[run_id].memory_entries)
+
+    def create_simulation_report(self, run_id: UUID) -> ReportArtifact:
+        """Create a structured simulation report from current run state.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Created report artifact.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        state = self._states[run_id]
+        run = state.run
+        report = ReportArtifact(
+            report_id=uuid4(),
+            run_id=run_id,
+            report_type="simulation",
+            title=f"{run.name} simulation report",
+            summary=(
+                f"{len(state.decisions)} decisions, {len(state.orders)} orders, "
+                f"{len(state.fills)} fills, status {run.status}."
+            ),
+            sections={
+                "configuration": run.config,
+                "symbols": run.symbols,
+                "account": {
+                    "cash_balance": str(run.account.cash_balance),
+                    "total_equity": str(run.account.total_equity),
+                    "realized_pnl": str(run.account.realized_pnl),
+                    "unrealized_pnl": str(run.account.unrealized_pnl),
+                    "max_drawdown": str(run.account.max_drawdown),
+                },
+                "activity": {
+                    "decision_count": len(state.decisions),
+                    "risk_review_count": len(state.risk_reviews),
+                    "order_count": len(state.orders),
+                    "fill_count": len(state.fills),
+                    "memory_count": len(state.memory_entries),
+                },
+            },
+            created_at_sim_time=run.current_sim_time,
+            created_at=datetime.now(UTC),
+        )
+        state.reports.append(report)
+        if self._repository is not None:
+            self._repository.save_report(report)
+        return report
+
+    def list_reports(self, run_id: UUID) -> list[ReportArtifact]:
+        """List structured reports for a run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Reports for the run.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        return list(self._states[run_id].reports)
+
+    def create_alert(
+        self,
+        run_id: UUID,
+        category: AlertCategory,
+        severity: AlertSeverity,
+        message: str,
+    ) -> Alert:
+        """Create an operator-facing run alert.
+
+        Args:
+            run_id: Simulation run identifier.
+            category: Alert category.
+            severity: Alert severity.
+            message: Alert message.
+
+        Returns:
+            Created alert.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        state = self._states[run_id]
+        alert = Alert(
+            alert_id=uuid4(),
+            run_id=run_id,
+            category=category,
+            severity=severity,
+            message=message,
+            status="open",
+            created_at_sim_time=state.run.current_sim_time,
+            created_at=datetime.now(UTC),
+        )
+        state.alerts.append(alert)
+        if self._repository is not None:
+            self._repository.save_alert(alert)
+        return alert
+
+    def list_alerts(self, run_id: UUID) -> list[Alert]:
+        """List alerts for a run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Alerts for the run.
+
+        Raises:
+            KeyError: If no run exists for the ID.
+        """
+
+        return list(self._states[run_id].alerts)
+
+    def update_alert_status(
+        self, run_id: UUID, alert_id: UUID, status: AlertStatus
+    ) -> Alert:
+        """Update a run alert status.
+
+        Args:
+            run_id: Simulation run identifier.
+            alert_id: Alert identifier.
+            status: New alert status.
+
+        Returns:
+            Updated alert.
+
+        Raises:
+            KeyError: If no run or alert exists for the ID.
+        """
+
+        state = self._states[run_id]
+        for index, alert in enumerate(state.alerts):
+            if alert.alert_id == alert_id:
+                updated_alert = alert.model_copy(update={"status": status})
+                state.alerts[index] = updated_alert
+                if self._repository is not None:
+                    self._repository.save_alert(updated_alert)
+                return updated_alert
+        raise KeyError(alert_id)
 
     def _find_decision_state(
         self, decision_id: UUID

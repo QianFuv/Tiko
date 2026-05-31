@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from tiko.db.models import (
     AccountRecord,
+    AlertRecord,
     CandleRecord,
     DecisionRecord,
     DecisionReviewRecord,
@@ -18,6 +19,7 @@ from tiko.db.models import (
     ModelRegistryRecord,
     OrderRecord,
     PluginRegistryRecord,
+    ReportRecord,
     RiskReviewRecord,
     SimulationRunRecord,
 )
@@ -32,6 +34,14 @@ from tiko.domain.plugin import (
     PluginRegistryEntry,
     PluginStatus,
     SandboxResult,
+)
+from tiko.domain.reporting import (
+    Alert,
+    AlertCategory,
+    AlertSeverity,
+    AlertStatus,
+    ReportArtifact,
+    ReportType,
 )
 from tiko.domain.risk import RiskReview
 from tiko.domain.simulation import SimulationRun
@@ -403,6 +413,64 @@ class SimulationRepository:
             ).all()
             return [self._to_plugin_registry_entry(record) for record in records]
 
+    def save_report(self, report: ReportArtifact) -> None:
+        """Persist a structured report.
+
+        Args:
+            report: Report artifact to persist.
+        """
+
+        with self._session_factory() as session:
+            self._merge_report(session, report)
+            session.commit()
+
+    def list_reports(self, run_id: UUID) -> list[ReportArtifact]:
+        """List reports for a simulation run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Reports ordered by creation time.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(ReportRecord)
+                .where(ReportRecord.run_id == str(run_id))
+                .order_by(ReportRecord.created_at)
+            ).all()
+            return [self._to_report(record) for record in records]
+
+    def save_alert(self, alert: Alert) -> None:
+        """Persist a run-scoped alert.
+
+        Args:
+            alert: Alert to persist.
+        """
+
+        with self._session_factory() as session:
+            self._merge_alert(session, alert)
+            session.commit()
+
+    def list_alerts(self, run_id: UUID) -> list[Alert]:
+        """List alerts for a simulation run.
+
+        Args:
+            run_id: Simulation run identifier.
+
+        Returns:
+            Alerts ordered by creation time.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(AlertRecord)
+                .where(AlertRecord.run_id == str(run_id))
+                .order_by(AlertRecord.created_at)
+            ).all()
+            return [self._to_alert(record) for record in records]
+
     def _merge_run(self, session: Session, run: SimulationRun) -> None:
         """Merge a run and its account into the active session.
 
@@ -648,6 +716,48 @@ class SimulationRepository:
                 sandbox_result=entry.sandbox_result.model_dump(mode="json"),
                 status=entry.status,
                 created_at=entry.created_at,
+            )
+        )
+
+    def _merge_report(self, session: Session, report: ReportArtifact) -> None:
+        """Merge a report artifact into the active session.
+
+        Args:
+            session: Active SQLAlchemy session.
+            report: Report artifact to merge.
+        """
+
+        session.merge(
+            ReportRecord(
+                report_id=str(report.report_id),
+                run_id=str(report.run_id),
+                report_type=report.report_type,
+                title=report.title,
+                summary=report.summary,
+                sections=report.sections,
+                created_at_sim_time=report.created_at_sim_time,
+                created_at=report.created_at,
+            )
+        )
+
+    def _merge_alert(self, session: Session, alert: Alert) -> None:
+        """Merge an alert into the active session.
+
+        Args:
+            session: Active SQLAlchemy session.
+            alert: Alert to merge.
+        """
+
+        session.merge(
+            AlertRecord(
+                alert_id=str(alert.alert_id),
+                run_id=str(alert.run_id),
+                category=alert.category,
+                severity=alert.severity,
+                message=alert.message,
+                status=alert.status,
+                created_at_sim_time=alert.created_at_sim_time,
+                created_at=alert.created_at,
             )
         )
 
@@ -955,6 +1065,48 @@ class SimulationRepository:
             manifest=PluginManifest.model_validate(record.manifest),
             sandbox_result=SandboxResult.model_validate(record.sandbox_result),
             status=cast(PluginStatus, record.status),
+            created_at=self._aware_datetime(record.created_at),
+        )
+
+    def _to_report(self, record: ReportRecord) -> ReportArtifact:
+        """Convert a report row to a domain model.
+
+        Args:
+            record: Persisted report row.
+
+        Returns:
+            Report artifact domain model.
+        """
+
+        return ReportArtifact(
+            report_id=UUID(record.report_id),
+            run_id=UUID(record.run_id),
+            report_type=cast(ReportType, record.report_type),
+            title=record.title,
+            summary=record.summary,
+            sections=dict(record.sections),
+            created_at_sim_time=self._aware_datetime(record.created_at_sim_time),
+            created_at=self._aware_datetime(record.created_at),
+        )
+
+    def _to_alert(self, record: AlertRecord) -> Alert:
+        """Convert an alert row to a domain model.
+
+        Args:
+            record: Persisted alert row.
+
+        Returns:
+            Alert domain model.
+        """
+
+        return Alert(
+            alert_id=UUID(record.alert_id),
+            run_id=UUID(record.run_id),
+            category=cast(AlertCategory, record.category),
+            severity=cast(AlertSeverity, record.severity),
+            message=record.message,
+            status=cast(AlertStatus, record.status),
+            created_at_sim_time=self._aware_datetime(record.created_at_sim_time),
             created_at=self._aware_datetime(record.created_at),
         )
 

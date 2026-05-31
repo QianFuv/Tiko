@@ -177,6 +177,41 @@ def test_service_creates_decision_reviews_and_memory_entries() -> None:
     assert repository.list_memory_entries(run.run_id) == [memory]
 
 
+def test_service_creates_reports_and_updates_alerts() -> None:
+    """Verify service creates reports and alert workflow artifacts."""
+
+    repository = create_test_repository()
+    service = SimulationService(Settings(), repository=repository)
+    run = service.create_run(
+        name="reporting",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    service.step_run(run.run_id, confidence=0.7)
+
+    report = service.create_simulation_report(run.run_id)
+    alert = service.create_alert(
+        run_id=run.run_id,
+        category="drawdown",
+        severity="warning",
+        message="Drawdown near threshold.",
+    )
+    updated_alert = service.update_alert_status(
+        run_id=run.run_id,
+        alert_id=alert.alert_id,
+        status="acknowledged",
+    )
+
+    activity = report.sections["activity"]
+    assert isinstance(activity, dict)
+    assert activity["decision_count"] == 1
+    assert service.list_reports(run.run_id) == [report]
+    assert updated_alert.status == "acknowledged"
+    assert service.list_alerts(run.run_id) == [updated_alert]
+    assert repository.list_reports(run.run_id) == [report]
+    assert repository.list_alerts(run.run_id) == [updated_alert]
+
+
 def test_service_rejects_memory_for_decision_from_another_run() -> None:
     """Verify memory entries cannot reference decisions from another run."""
 
