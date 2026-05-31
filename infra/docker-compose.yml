@@ -12,6 +12,15 @@ x-api-environment: &api-environment
   TIKO_DATABASE_URL: "postgresql+psycopg://tiko:${POSTGRES_PASSWORD:-tiko}@postgres:5432/tiko"
   TIKO_REDIS_URL: redis://redis:6379/0
   TIKO_OBJECT_STORE_ENDPOINT: http://object-store:9000
+  TIKO_PRIMARY_HISTORICAL_CONNECTOR: ccxt
+  TIKO_PRIMARY_REALTIME_CONNECTOR: cryptofeed
+  TIKO_RAW_STORAGE_URI: s3://tiko-market-data/raw
+  TIKO_NORMALIZED_STORAGE: postgresql
+  TIKO_CCXT_ENABLED: "true"
+  TIKO_CCXT_ENABLED_EXCHANGES: '["binance","okx"]'
+  TIKO_CRYPTOFEED_ENABLED: "true"
+  TIKO_CRYPTOFEED_CHANNELS: '["trades","l2_book","ticker","candles","funding","open_interest"]'
+  TIKO_CRYPTOFEED_AUTHENTICATED_CHANNELS_ENABLED: "false"
 
 services:
   web:

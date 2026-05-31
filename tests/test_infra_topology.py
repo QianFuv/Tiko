@@ -98,6 +98,17 @@ def test_process_services_use_simulation_only_safety_flags() -> None:
         assert environment["TIKO_SAFETY_MODE"] == "simulation_only"
         assert environment["TIKO_ALLOW_PRIVATE_EXCHANGE_METHODS"] == "false"
         assert environment["TIKO_ALLOW_TRADING_CREDENTIALS"] == "false"
+        assert environment["TIKO_PRIMARY_HISTORICAL_CONNECTOR"] == "ccxt"
+        assert environment["TIKO_PRIMARY_REALTIME_CONNECTOR"] == "cryptofeed"
+        assert environment["TIKO_RAW_STORAGE_URI"] == "s3://tiko-market-data/raw"
+        assert environment["TIKO_NORMALIZED_STORAGE"] == "postgresql"
+        assert environment["TIKO_CCXT_ENABLED"] == "true"
+        assert environment["TIKO_CCXT_ENABLED_EXCHANGES"] == '["binance","okx"]'
+        assert environment["TIKO_CRYPTOFEED_ENABLED"] == "true"
+        assert environment["TIKO_CRYPTOFEED_CHANNELS"] == (
+            '["trades","l2_book","ticker","candles","funding","open_interest"]'
+        )
+        assert environment["TIKO_CRYPTOFEED_AUTHENTICATED_CHANNELS_ENABLED"] == "false"
         assert "TIKO_OPENROUTER_API_KEY" not in environment
         assert "OPENROUTER_API_KEY" not in environment
 

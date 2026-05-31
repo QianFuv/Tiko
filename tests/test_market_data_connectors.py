@@ -7,9 +7,12 @@ from uuid import uuid4
 
 import pytest
 
+from tiko.core.config import Settings
 from tiko.data import (
+    ALLOWED_PUBLIC_METHODS,
     CRYPTOFEED_FORBIDDEN_CHANNELS,
     CRYPTOFEED_PUBLIC_CHANNELS,
+    FORBIDDEN_PRIVATE_METHODS,
     GuardedExchangeClient,
     MarketDataPermissionError,
     validate_cryptofeed_channels,
@@ -207,3 +210,39 @@ def test_cryptofeed_channel_policy_allows_only_public_market_data() -> None:
 
     with pytest.raises(MarketDataPermissionError):
         validate_cryptofeed_channels(["private_user_stream"])
+
+
+def test_market_data_settings_default_to_read_only_connectors() -> None:
+    """Verify market data settings default to architecture-safe connectors."""
+
+    settings = Settings()
+
+    assert settings.primary_historical_connector == "ccxt"
+    assert settings.primary_realtime_connector == "cryptofeed"
+    assert settings.allow_private_exchange_methods is False
+    assert settings.allow_trading_credentials is False
+    assert settings.raw_storage_uri == "file://.tiko/raw"
+    assert settings.normalized_storage == "postgresql"
+    assert set(settings.ccxt_methods_allowlist) == ALLOWED_PUBLIC_METHODS
+    assert set(settings.ccxt_methods_blocklist) == FORBIDDEN_PRIVATE_METHODS
+    assert set(settings.cryptofeed_channels) == CRYPTOFEED_PUBLIC_CHANNELS
+    assert settings.cryptofeed_authenticated_channels_enabled is False
+    assert validate_cryptofeed_channels(settings.cryptofeed_channels) == tuple(
+        settings.cryptofeed_channels
+    )
+
+
+def test_market_data_settings_parse_environment_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify market data settings parse deployment environment aliases."""
+
+    monkeypatch.setenv("RAW_STORAGE_URI", "file://override/raw")
+    monkeypatch.setenv("TIKO_CCXT_ENABLED_EXCHANGES", '["binance","coinbase"]')
+    monkeypatch.setenv("TIKO_CRYPTOFEED_CHANNELS", '["trades","ticker"]')
+
+    settings = Settings()
+
+    assert settings.raw_storage_uri == "file://override/raw"
+    assert settings.ccxt_enabled_exchanges == ["binance", "coinbase"]
+    assert settings.cryptofeed_channels == ["trades", "ticker"]

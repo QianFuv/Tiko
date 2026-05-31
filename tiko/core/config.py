@@ -29,6 +29,85 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("TIKO_REDIS_URL", "REDIS_URL"),
     )
     object_store_endpoint: str | None = None
+    primary_historical_connector: str = Field(
+        default="ccxt",
+        min_length=1,
+        validation_alias=AliasChoices(
+            "TIKO_PRIMARY_HISTORICAL_CONNECTOR", "PRIMARY_HISTORICAL_CONNECTOR"
+        ),
+    )
+    primary_realtime_connector: str = Field(
+        default="cryptofeed",
+        min_length=1,
+        validation_alias=AliasChoices(
+            "TIKO_PRIMARY_REALTIME_CONNECTOR", "PRIMARY_REALTIME_CONNECTOR"
+        ),
+    )
+    raw_storage_uri: str = Field(
+        default="file://.tiko/raw",
+        min_length=1,
+        validation_alias=AliasChoices("TIKO_RAW_STORAGE_URI", "RAW_STORAGE_URI"),
+    )
+    normalized_storage: str = Field(
+        default="postgresql",
+        min_length=1,
+        validation_alias=AliasChoices("TIKO_NORMALIZED_STORAGE", "NORMALIZED_STORAGE"),
+    )
+    ccxt_enabled: bool = True
+    ccxt_enabled_exchanges: list[str] = Field(
+        default=["binance", "okx"],
+        validation_alias=AliasChoices(
+            "TIKO_CCXT_ENABLED_EXCHANGES", "CCXT_ENABLED_EXCHANGES"
+        ),
+    )
+    ccxt_methods_allowlist: list[str] = Field(
+        default=[
+            "fetchMarkets",
+            "fetchTicker",
+            "fetchTickers",
+            "fetchTrades",
+            "fetchOrderBook",
+            "fetchOHLCV",
+        ],
+        validation_alias=AliasChoices(
+            "TIKO_CCXT_METHODS_ALLOWLIST", "CCXT_METHODS_ALLOWLIST"
+        ),
+    )
+    ccxt_methods_blocklist: list[str] = Field(
+        default=[
+            "createOrder",
+            "cancelOrder",
+            "cancelAllOrders",
+            "editOrder",
+            "fetchBalance",
+            "fetchOrder",
+            "fetchOpenOrders",
+            "fetchClosedOrders",
+            "fetchMyTrades",
+            "fetchPosition",
+            "fetchPositions",
+            "fetchLedger",
+            "withdraw",
+            "transfer",
+        ],
+        validation_alias=AliasChoices(
+            "TIKO_CCXT_METHODS_BLOCKLIST", "CCXT_METHODS_BLOCKLIST"
+        ),
+    )
+    cryptofeed_enabled: bool = True
+    cryptofeed_channels: list[str] = Field(
+        default=["trades", "l2_book", "ticker", "candles", "funding", "open_interest"],
+        validation_alias=AliasChoices(
+            "TIKO_CRYPTOFEED_CHANNELS", "CRYPTOFEED_CHANNELS"
+        ),
+    )
+    cryptofeed_authenticated_channels_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "TIKO_CRYPTOFEED_AUTHENTICATED_CHANNELS_ENABLED",
+            "CRYPTOFEED_AUTHENTICATED_CHANNELS_ENABLED",
+        ),
+    )
     artifact_root: str = ".tiko/artifacts"
     openrouter_api_key: SecretStr | None = Field(
         default=None,
