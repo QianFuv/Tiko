@@ -10,19 +10,21 @@ from pydantic import BaseModel, Field
 
 from tiko.api.dependencies import (
     get_audit_service,
+    get_dataset_service,
     get_simulation_service,
     require_permission,
 )
-from tiko.domain.market import MarketEvent
+from tiko.domain.market import Candle, MarketEvent
 from tiko.domain.memory import MemoryEntry, MemorySearchResult, MemoryType
 from tiko.domain.observation import Observation
 from tiko.domain.security import Principal
 from tiko.domain.simulation import SimulationRun
-from tiko.services import AuditService, SimulationService
+from tiko.services import AuditService, DatasetService, SimulationService
 from tiko.simulation.state import SimulationStepResult
 
 router = APIRouter(prefix="/simulations", tags=["simulations"])
 SimulationServiceDep = Annotated[SimulationService, Depends(get_simulation_service)]
+DatasetServiceDep = Annotated[DatasetService, Depends(get_dataset_service)]
 AuditServiceDep = Annotated[AuditService, Depends(get_audit_service)]
 ManageSimulationPrincipalDep = Annotated[
     Principal, Depends(require_permission("manage_simulations"))
@@ -38,7 +40,10 @@ class SimulationCreateRequest(BaseModel):
     name: str = Field(min_length=1)
     symbols: list[str] = Field(min_length=1)
     start_sim_time: datetime | None = None
-    mode: Literal["live_simulated_clock", "synthetic_market"] = "synthetic_market"
+    mode: Literal["historical_replay", "live_simulated_clock", "synthetic_market"] = (
+        "synthetic_market"
+    )
+    dataset_id: UUID | None = None
     end_sim_time: datetime | None = None
     speed_multiplier: Decimal = Field(default=Decimal("1"), gt=Decimal("0"))
     timeframe: str = Field(default="1h", min_length=1)
@@ -87,6 +92,7 @@ def list_simulations(service: SimulationServiceDep) -> list[SimulationRun]:
 def create_simulation(
     request: SimulationCreateRequest,
     service: SimulationServiceDep,
+    dataset_service: DatasetServiceDep,
     audit_service: AuditServiceDep,
     principal: ManageSimulationPrincipalDep,
 ) -> SimulationRun:
@@ -95,6 +101,7 @@ def create_simulation(
     Args:
         request: Simulation creation request.
         service: Simulation service dependency.
+        dataset_service: Dataset service dependency.
         audit_service: Audit service dependency.
         principal: Authorized caller principal.
 
@@ -103,17 +110,23 @@ def create_simulation(
     """
 
     try:
+        replay_candles, non_replay_mode = _resolve_replay_create_inputs(
+            request, dataset_service
+        )
         run = service.create_run(
             name=request.name,
             symbols=request.symbols,
             start_sim_time=request.start_sim_time,
-            mode=request.mode,
+            replay_candles=replay_candles,
+            mode=non_replay_mode,
             end_sim_time=request.end_sim_time,
             speed_multiplier=request.speed_multiplier,
             timeframe=request.timeframe,
             decision_interval=request.decision_interval,
             initial_equity=request.initial_equity,
         )
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Dataset not found.") from error
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     audit_service.record(
@@ -121,9 +134,47 @@ def create_simulation(
         action="simulation.create",
         resource_type="simulation_run",
         resource_id=str(run.run_id),
-        metadata={"name": run.name, "symbols": run.symbols},
+        metadata={
+            "name": run.name,
+            "symbols": run.symbols,
+            "dataset_id": str(request.dataset_id) if request.dataset_id else None,
+        },
     )
     return run
+
+
+def _resolve_replay_create_inputs(
+    request: SimulationCreateRequest,
+    dataset_service: DatasetService,
+) -> tuple[list[Candle] | None, Literal["live_simulated_clock", "synthetic_market"]]:
+    """Resolve replay candles and non-replay mode for simulation creation.
+
+    Args:
+        request: Simulation create request.
+        dataset_service: Dataset service used to load imported candles.
+
+    Returns:
+        Replay candles and the fallback non-replay mode for the simulation service.
+
+    Raises:
+        KeyError: If the dataset does not exist.
+        ValueError: If historical replay is requested without a usable dataset.
+    """
+
+    if request.dataset_id is None:
+        if request.mode == "historical_replay":
+            raise ValueError("dataset_id is required for historical_replay mode.")
+        return None, request.mode
+    dataset = dataset_service.get_dataset(request.dataset_id)
+    if dataset.status != "validated":
+        raise ValueError("historical replay requires a validated dataset.")
+    return (
+        dataset_service.list_candles(
+            request.dataset_id,
+            limit=dataset.candle_count,
+        ),
+        "synthetic_market",
+    )
 
 
 @router.get("/{run_id}", response_model=SimulationRun)

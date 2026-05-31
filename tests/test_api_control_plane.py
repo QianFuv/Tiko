@@ -424,6 +424,115 @@ def test_simulation_create_accepts_configured_run_fields() -> None:
     assert invalid_equity_response.status_code == 422
 
 
+def test_simulation_create_uses_dataset_for_historical_replay(
+    tmp_path: Path,
+) -> None:
+    """Verify simulation create route can use imported candles for replay."""
+
+    client = create_test_client()
+    valid_path = tmp_path / "valid-replay.csv"
+    valid_path.write_text(
+        "\n".join(
+            [
+                "symbol,timeframe,open_time,close_time,open,high,low,close,"
+                "volume,quote_volume,source,as_of,created_at",
+                "BTCUSDT,1h,2026-01-01T00:00:00Z,2026-01-01T01:00:00Z,"
+                "100,110,95,105,2.5,262.5,csv,2026-01-01T01:00:00Z,"
+                "2026-01-01T01:00:00Z",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    invalid_path = tmp_path / "invalid-replay.csv"
+    invalid_path.write_text(
+        "\n".join(
+            [
+                "symbol,timeframe,open_time,close_time,open,high,low,close,"
+                "volume,quote_volume,source,as_of,created_at",
+                "BTCUSDT,1h,2026-01-01T00:00:00Z,2026-01-01T01:00:00Z,"
+                "100,90,95,105,2.5,262.5,csv,2026-01-01T01:00:00Z,"
+                "2026-01-01T01:00:00Z",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    dataset_response = client.post(
+        "/api/datasets/upload",
+        json={"name": "valid replay", "source_path": str(valid_path)},
+        headers=ADMIN_HEADERS,
+    )
+    invalid_dataset_response = client.post(
+        "/api/datasets/upload",
+        json={"name": "invalid replay", "source_path": str(invalid_path)},
+        headers=ADMIN_HEADERS,
+    )
+    dataset_id = dataset_response.json()["dataset_id"]
+    invalid_dataset_id = invalid_dataset_response.json()["dataset_id"]
+
+    create_response = client.post(
+        "/api/simulations",
+        json={
+            "name": "dataset-replay",
+            "symbols": ["BTCUSDT"],
+            "mode": "historical_replay",
+            "dataset_id": dataset_id,
+        },
+        headers=OPERATOR_HEADERS,
+    )
+    missing_dataset_response = client.post(
+        "/api/simulations",
+        json={
+            "name": "missing-replay-dataset",
+            "symbols": ["BTCUSDT"],
+            "mode": "historical_replay",
+        },
+        headers=OPERATOR_HEADERS,
+    )
+    unknown_dataset_response = client.post(
+        "/api/simulations",
+        json={
+            "name": "unknown-replay-dataset",
+            "symbols": ["BTCUSDT"],
+            "mode": "historical_replay",
+            "dataset_id": "00000000-0000-0000-0000-000000000000",
+        },
+        headers=OPERATOR_HEADERS,
+    )
+    invalid_dataset_create_response = client.post(
+        "/api/simulations",
+        json={
+            "name": "invalid-replay-dataset",
+            "symbols": ["BTCUSDT"],
+            "mode": "historical_replay",
+            "dataset_id": invalid_dataset_id,
+        },
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert dataset_response.status_code == 200
+    assert invalid_dataset_response.status_code == 200
+    assert invalid_dataset_response.json()["status"] == "invalid"
+    assert create_response.status_code == 200
+    payload = create_response.json()
+    assert payload["mode"] == "historical_replay"
+    assert payload["start_sim_time"].startswith("2026-01-01T00:00:00")
+    assert payload["config"]["data_source"] == "replay"
+    step_response = client.post(
+        f"/api/simulations/{payload['run_id']}/step",
+        json={"confidence": 0.7},
+        headers=OPERATOR_HEADERS,
+    )
+    assert step_response.status_code == 200
+    assert step_response.json()["event"]["simulated_time"].startswith(
+        "2026-01-01T01:00:00"
+    )
+    assert missing_dataset_response.status_code == 422
+    assert "dataset_id" in missing_dataset_response.json()["detail"]
+    assert unknown_dataset_response.status_code == 404
+    assert invalid_dataset_create_response.status_code == 422
+    assert "validated dataset" in invalid_dataset_create_response.json()["detail"]
+
+
 def test_risk_limit_update_requires_operator_and_affects_reviews() -> None:
     """Verify risk limit updates are authorized, audited, and applied."""
 
