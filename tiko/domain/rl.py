@@ -43,3 +43,14 @@ class EnvironmentStep(DomainModel):
     reward: Decimal
     done: bool
     info: dict[str, object]
+
+
+class RlTrainingSummary(DomainModel):
+    """Represent deterministic advisory RL training output."""
+
+    algorithm: str = Field(min_length=1)
+    episode_count: int = Field(ge=1)
+    best_action_id: int
+    best_total_reward: Decimal
+    action_rewards: dict[int, Decimal]
+    metrics: dict[str, object]

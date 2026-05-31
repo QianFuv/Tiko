@@ -4,9 +4,16 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
+import pytest
+
 from tiko.domain import RlAction, SimAccount, SimulationRun
 from tiko.domain.market import Candle
-from tiko.rl_lab import TradingEnvironment, build_reward_components, calculate_reward
+from tiko.rl_lab import (
+    TradingEnvironment,
+    build_reward_components,
+    calculate_reward,
+    train_static_policy,
+)
 
 
 def create_run() -> SimulationRun:
@@ -125,3 +132,44 @@ def test_reward_calculation_subtracts_all_penalties() -> None:
     reward = calculate_reward(components)
 
     assert reward.reward == Decimal("0.009900")
+
+
+def test_static_policy_training_selects_best_reward_action() -> None:
+    """Verify deterministic training selects the highest reward static action."""
+
+    summary = train_static_policy(
+        run=create_run(),
+        candles=create_candles(),
+        candidate_action_ids=[0, 1, 2, 3],
+    )
+
+    assert summary.algorithm == "static_discrete_policy_search"
+    assert summary.episode_count == 4
+    assert summary.best_action_id == 3
+    assert summary.best_total_reward == summary.action_rewards[3]
+    assert summary.action_rewards[3] > summary.action_rewards[0]
+    assert summary.metrics["best_target_weight"] == "0.50"
+
+
+def test_static_policy_training_penalizes_invalid_action_candidates() -> None:
+    """Verify invalid action candidates cannot beat valid positive-reward actions."""
+
+    summary = train_static_policy(
+        run=create_run(),
+        candles=create_candles(),
+        candidate_action_ids=[3, 99],
+    )
+
+    assert summary.best_action_id == 3
+    assert summary.action_rewards[99] < Decimal("0")
+
+
+def test_static_policy_training_requires_candidate_actions() -> None:
+    """Verify static policy training rejects empty candidate lists."""
+
+    with pytest.raises(ValueError, match="at least one action"):
+        train_static_policy(
+            run=create_run(),
+            candles=create_candles(),
+            candidate_action_ids=[],
+        )

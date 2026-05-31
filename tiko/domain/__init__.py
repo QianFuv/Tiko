@@ -64,7 +64,13 @@ from tiko.domain.reporting import (
     ReportType,
 )
 from tiko.domain.risk import RiskLimits, RiskReview
-from tiko.domain.rl import EnvironmentStep, RewardBreakdown, RewardComponents, RlAction
+from tiko.domain.rl import (
+    EnvironmentStep,
+    RewardBreakdown,
+    RewardComponents,
+    RlAction,
+    RlTrainingSummary,
+)
 from tiko.domain.runtime import (
     BackgroundJob,
     JobStatus,
@@ -139,6 +145,7 @@ __all__ = [
     "RewardBreakdown",
     "RewardComponents",
     "RlAction",
+    "RlTrainingSummary",
     "Role",
     "RunBenchmark",
     "RunComparison",
