@@ -6,12 +6,20 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from tiko.agents import AgentRuntime, AgentRuntimeError, RuleBasedTraderAgent
+from tiko.agents import (
+    AgentRuntime,
+    AgentRuntimeError,
+    OpenRouterAgentError,
+    OpenRouterClient,
+    OpenRouterTraderAgent,
+    RuleBasedTraderAgent,
+)
 from tiko.api.dependencies import (
     get_audit_service,
     get_simulation_service,
     require_permission,
 )
+from tiko.core.config import Settings, get_settings
 from tiko.domain.agent import AgentMessage, AgentRun
 from tiko.domain.decision import TradeIntent
 from tiko.domain.observation import Observation
@@ -21,13 +29,14 @@ from tiko.services import AuditService, SimulationService
 router = APIRouter(prefix="/agents", tags=["agents"])
 SimulationServiceDep = Annotated[SimulationService, Depends(get_simulation_service)]
 AuditServiceDep = Annotated[AuditService, Depends(get_audit_service)]
+SettingsDep = Annotated[Settings, Depends(get_settings)]
 ManageResearchPrincipalDep = Annotated[
     Principal, Depends(require_permission("manage_research"))
 ]
 
 
 class AgentInfoResponse(BaseModel):
-    """Represent an available deterministic agent."""
+    """Represent an available simulation-only agent."""
 
     agent_id: str
     agent_type: str
@@ -35,8 +44,11 @@ class AgentInfoResponse(BaseModel):
 
 
 @router.get("", response_model=list[AgentInfoResponse])
-def list_agents() -> list[AgentInfoResponse]:
+def list_agents(settings: SettingsDep) -> list[AgentInfoResponse]:
     """List available agent runtimes.
+
+    Args:
+        settings: Application settings dependency.
 
     Returns:
         Available agent metadata.
@@ -47,7 +59,14 @@ def list_agents() -> list[AgentInfoResponse]:
             agent_id="rule_based_trader",
             agent_type="rule_based",
             live_trading_allowed=False,
-        )
+        ),
+        AgentInfoResponse(
+            agent_id="openrouter_trader",
+            agent_type="llm_openrouter"
+            if settings.openrouter_api_key is not None
+            else "llm_openrouter_unconfigured",
+            live_trading_allowed=False,
+        ),
     ]
 
 
@@ -167,3 +186,55 @@ def evaluate_rule_based_agent(observation: Observation) -> TradeIntent:
         return AgentRuntime(RuleBasedTraderAgent()).evaluate(observation)
     except AgentRuntimeError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/openrouter/evaluate", response_model=TradeIntent)
+def evaluate_openrouter_agent(
+    observation: Observation,
+    settings: SettingsDep,
+    audit_service: AuditServiceDep,
+    principal: ManageResearchPrincipalDep,
+) -> TradeIntent:
+    """Evaluate the optional OpenRouter structured agent.
+
+    Args:
+        observation: Point-in-time observation.
+        settings: Application settings dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
+
+    Returns:
+        Structured trade intent.
+
+    Raises:
+        HTTPException: If the key is missing, provider output fails, or scope is
+            invalid.
+    """
+
+    if (
+        settings.openrouter_api_key is None
+        or not settings.openrouter_api_key.get_secret_value()
+    ):
+        raise HTTPException(
+            status_code=503, detail="OpenRouter API key is not configured."
+        )
+    client = OpenRouterClient(
+        api_key=settings.openrouter_api_key.get_secret_value(),
+        model=settings.openrouter_model,
+        endpoint=settings.openrouter_chat_endpoint,
+        timeout_seconds=settings.openrouter_timeout_seconds,
+    )
+    try:
+        intent = AgentRuntime(OpenRouterTraderAgent(client)).evaluate(observation)
+    except AgentRuntimeError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except OpenRouterAgentError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    audit_service.record(
+        principal=principal,
+        action="agent.openrouter.evaluate",
+        resource_type="simulation_run",
+        resource_id=str(observation.run_id),
+        metadata={"symbol": observation.symbol, "agent_id": intent.agent_id},
+    )
+    return intent

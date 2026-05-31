@@ -530,6 +530,47 @@ def test_agent_routes_evaluate_rule_based_agent() -> None:
     assert intent_payload["action"] == "hold"
 
 
+def test_openrouter_agent_route_requires_key_and_research_permission(
+    monkeypatch,
+) -> None:
+    """Verify OpenRouter route fails safely when no API key is configured."""
+
+    monkeypatch.setenv("TIKO_OPENROUTER_API_KEY", "")
+    client = create_test_client()
+    run_id = client.post(
+        "/api/simulations",
+        json={"name": "openrouter-demo", "symbols": ["BTCUSDT"]},
+        headers=OPERATOR_HEADERS,
+    ).json()["run_id"]
+    client.post(
+        f"/api/simulations/{run_id}/step",
+        json={"confidence": 0.7},
+        headers=OPERATOR_HEADERS,
+    )
+    observation = client.get(f"/api/simulations/{run_id}/observations/BTCUSDT").json()
+
+    agents_response = client.get("/api/agents")
+    viewer_response = client.post(
+        "/api/agents/openrouter/evaluate",
+        json=observation,
+        headers=VIEWER_HEADERS,
+    )
+    researcher_response = client.post(
+        "/api/agents/openrouter/evaluate",
+        json=observation,
+        headers=RESEARCHER_HEADERS,
+    )
+
+    assert any(
+        agent["agent_id"] == "openrouter_trader" for agent in agents_response.json()
+    )
+    assert viewer_response.status_code == 403
+    assert researcher_response.status_code == 503
+    assert researcher_response.json()["detail"] == (
+        "OpenRouter API key is not configured."
+    )
+
+
 def test_model_registry_routes_manage_research_models() -> None:
     """Verify model registry routes manage advisory research models."""
 

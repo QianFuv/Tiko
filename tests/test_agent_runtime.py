@@ -1,12 +1,20 @@
 """Tests for structured agent runtime behavior."""
 
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
 import pytest
 
-from tiko.agents import AgentRuntime, AgentRuntimeError, RuleBasedTraderAgent
+from tiko.agents import (
+    AgentRuntime,
+    AgentRuntimeError,
+    OpenRouterAgentError,
+    OpenRouterClient,
+    OpenRouterTraderAgent,
+    RuleBasedTraderAgent,
+)
 from tiko.domain.account import SimAccount
 from tiko.domain.decision import TradeIntent
 from tiko.domain.market import Candle
@@ -159,3 +167,129 @@ def test_agent_runtime_rejects_scope_mismatch() -> None:
 
     with pytest.raises(AgentRuntimeError, match="symbol"):
         AgentRuntime(WrongSymbolAgent()).evaluate(create_observation([]))
+
+
+def test_openrouter_agent_builds_scoped_trade_intent() -> None:
+    """Verify OpenRouter proposals are converted into scoped trade intent."""
+
+    observation = create_observation(
+        [create_candle(Decimal("100"), 1), create_candle(Decimal("105"), 2)]
+    )
+    captured_payload: dict[str, object] = {}
+
+    def transport(
+        endpoint: str,
+        headers: dict[str, str],
+        payload: dict[str, object],
+        timeout_seconds: int,
+    ) -> dict[str, object]:
+        """Return a fake OpenRouter structured response."""
+
+        captured_payload["endpoint"] = endpoint
+        captured_payload["headers"] = headers
+        captured_payload["payload"] = payload
+        captured_payload["timeout_seconds"] = timeout_seconds
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "run_id": str(uuid4()),
+                                "symbol": "ETHUSDT",
+                                "action": "open_long",
+                                "target_weight": "0.12",
+                                "max_leverage": "1",
+                                "confidence": 0.67,
+                                "expected_holding_period": "1h",
+                                "thesis": "Point-in-time candles are rising.",
+                                "evidence": [{"type": "candle_direction"}],
+                                "invalidation_conditions": ["trend_reverses"],
+                                "data_quality_score": 1.0,
+                            }
+                        )
+                    }
+                }
+            ]
+        }
+
+    client = OpenRouterClient(api_key="test-key", transport=transport)
+    intent = AgentRuntime(OpenRouterTraderAgent(client)).evaluate(observation)
+
+    request_payload = captured_payload["payload"]
+    assert isinstance(request_payload, dict)
+    assert request_payload["model"] == "openrouter/free"
+    assert "response_format" in request_payload
+    assert intent.run_id == observation.run_id
+    assert intent.symbol == observation.symbol
+    assert intent.action == "open_long"
+    assert intent.target_weight == Decimal("0.12")
+    assert intent.confidence == 0.67
+
+
+def test_openrouter_agent_rejects_malformed_response() -> None:
+    """Verify malformed provider responses fail before intent validation."""
+
+    def transport(
+        endpoint: str,
+        headers: dict[str, str],
+        payload: dict[str, object],
+        timeout_seconds: int,
+    ) -> dict[str, object]:
+        """Return an invalid OpenRouter message payload."""
+
+        return {"choices": [{"message": {"content": "not-json"}}]}
+
+    client = OpenRouterClient(api_key="test-key", transport=transport)
+
+    with pytest.raises(OpenRouterAgentError, match="valid JSON"):
+        OpenRouterTraderAgent(client).decide(create_observation([]))
+
+
+def test_openrouter_client_falls_back_to_json_object_mode() -> None:
+    """Verify provider schema-mode failures can fall back to JSON object mode."""
+
+    response_format_types: list[str] = []
+
+    def transport(
+        endpoint: str,
+        headers: dict[str, str],
+        payload: dict[str, object],
+        timeout_seconds: int,
+    ) -> dict[str, object]:
+        """Fail the first request and accept the JSON object retry."""
+
+        response_format = payload["response_format"]
+        assert isinstance(response_format, dict)
+        response_format_type = response_format["type"]
+        assert isinstance(response_format_type, str)
+        response_format_types.append(response_format_type)
+        if response_format_type == "json_schema":
+            return {"error": {"message": "Provider returned error"}}
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "action": "hold",
+                                "target_weight": "0",
+                                "max_leverage": "1",
+                                "confidence": 0.5,
+                                "expected_holding_period": "1h",
+                                "thesis": "No edge.",
+                                "evidence": [],
+                                "invalidation_conditions": [],
+                                "data_quality_score": 0.5,
+                            }
+                        )
+                    }
+                }
+            ]
+        }
+
+    client = OpenRouterClient(api_key="test-key", transport=transport)
+    intent = OpenRouterTraderAgent(client).decide(create_observation([]))
+
+    assert response_format_types == ["json_schema", "json_object"]
+    assert intent.action == "hold"
