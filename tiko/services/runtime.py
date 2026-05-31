@@ -15,6 +15,7 @@ from tiko.domain.runtime import (
 
 MAX_HEALTHY_QUEUE_DEPTH = 1000
 MAX_HEALTHY_CLOCK_LAG_MS = 60_000
+MAX_RUNNING_JOB_AGE_SECONDS = 3_600
 
 
 class RuntimeService:
@@ -240,13 +241,17 @@ class RuntimeService:
             key=lambda heartbeat: heartbeat.worker_name,
         )
 
-    def run_watchdog(self) -> WatchdogReport:
+    def run_watchdog(self, now: datetime | None = None) -> WatchdogReport:
         """Run deterministic runtime watchdog checks.
+
+        Args:
+            now: Optional evaluation time for deterministic checks.
 
         Returns:
             Watchdog report over current process-local runtime state.
         """
 
+        checked_at = now or datetime.now(UTC)
         heartbeats = self.list_heartbeats()
         queued_job_count = sum(
             1 for job in self._jobs.values() if job.status == "queued"
@@ -285,6 +290,7 @@ class RuntimeService:
             )
         checks.extend(self._queue_depth_checks(heartbeats))
         checks.extend(self._clock_lag_checks(heartbeats))
+        checks.extend(self._running_job_checks(checked_at))
         if not checks:
             checks.append(
                 WatchdogCheck(
@@ -296,7 +302,7 @@ class RuntimeService:
 
         return WatchdogReport(
             report_id=uuid4(),
-            checked_at=datetime.now(UTC),
+            checked_at=checked_at,
             worker_status=worker_status,
             queued_job_count=queued_job_count,
             unhealthy_workers=unhealthy_workers,
@@ -346,6 +352,34 @@ class RuntimeService:
                         message=(
                             f"{heartbeat.worker_name} event queue depth is "
                             f"{heartbeat.event_queue_depth}."
+                        ),
+                    )
+                )
+        return checks
+
+    def _running_job_checks(self, now: datetime) -> list[WatchdogCheck]:
+        """Build watchdog checks for stale running jobs.
+
+        Args:
+            now: Watchdog evaluation time.
+
+        Returns:
+            Running-job watchdog checks.
+        """
+
+        checks: list[WatchdogCheck] = []
+        for job in self._jobs.values():
+            if job.status != "running" or job.started_at is None:
+                continue
+            running_seconds = int((now - job.started_at).total_seconds())
+            if running_seconds > MAX_RUNNING_JOB_AGE_SECONDS:
+                checks.append(
+                    WatchdogCheck(
+                        code="running_job_stale",
+                        severity="warning",
+                        message=(
+                            f"{job.job_type} job {job.job_id} has been running "
+                            f"for {running_seconds} seconds."
                         ),
                     )
                 )

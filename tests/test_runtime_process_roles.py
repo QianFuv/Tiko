@@ -12,7 +12,7 @@ from tiko.domain.reporting import ReportArtifact
 from tiko.domain.runtime import BackgroundJob
 from tiko.domain.simulation import SimulationRun
 from tiko.runtime.scheduler import run_scheduler_once
-from tiko.services.runtime import RuntimeService
+from tiko.services.runtime import MAX_RUNNING_JOB_AGE_SECONDS, RuntimeService
 from tiko.workers import (
     build_worker_definitions,
     process_worker_jobs,
@@ -176,6 +176,40 @@ def test_runtime_job_lifecycle_claims_only_eligible_jobs() -> None:
     assert completed_job.completed_at is not None
     assert next_job is None
     assert service.count_queued_jobs() == 1
+
+
+def test_watchdog_flags_stale_running_jobs() -> None:
+    """Verify watchdog detects jobs running past the stale threshold."""
+
+    service = RuntimeService()
+    service.record_heartbeat(
+        worker_name="backtest-worker",
+        worker_status="healthy",
+        event_queue_depth=0,
+        clock_lag_ms=0,
+    )
+    job = service.create_job(
+        job_type="experiment_run",
+        resource_type="experiment",
+        resource_id="experiment-1",
+        payload={},
+    )
+    claimed_job = service.claim_next_job(
+        worker_name="backtest-worker",
+        job_types=("experiment_run",),
+    )
+    assert claimed_job is not None
+    assert claimed_job.started_at is not None
+    evaluation_time = claimed_job.started_at + timedelta(
+        seconds=MAX_RUNNING_JOB_AGE_SECONDS + 1
+    )
+
+    report = service.run_watchdog(now=evaluation_time)
+
+    assert service.get_job(job.job_id).status == "running"
+    assert report.worker_status == "healthy"
+    assert report.checked_at == evaluation_time
+    assert "running_job_stale" in {check.code for check in report.checks}
 
 
 def test_worker_process_roles_record_healthy_heartbeats() -> None:
