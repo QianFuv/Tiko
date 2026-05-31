@@ -104,6 +104,32 @@ export type ReportArtifact = {
   created_at: string;
 };
 
+export type AlertCategory =
+  | "pnl"
+  | "drawdown"
+  | "agent_timeout"
+  | "data_quality"
+  | "order_anomaly"
+  | "runtime_stuck"
+  | "worker_health"
+  | "risk_circuit_breaker"
+  | "model_degradation";
+
+export type AlertSeverity = "info" | "warning" | "critical";
+
+export type AlertStatus = "open" | "acknowledged" | "resolved";
+
+export type Alert = {
+  alert_id: string;
+  run_id: string;
+  category: AlertCategory;
+  severity: AlertSeverity;
+  message: string;
+  status: AlertStatus;
+  created_at_sim_time: string;
+  created_at: string;
+};
+
 export type MarketSymbolsResponse = {
   symbols: string[];
   data_policy: string;
@@ -363,6 +389,7 @@ export type RiskLimits = {
   max_target_weight: string;
   min_order_notional: string;
   max_order_notional: string;
+  max_leverage: string;
   max_drawdown: string;
   max_daily_loss: string;
   live_trading_allowed: boolean;
@@ -392,6 +419,7 @@ export type RunDashboardData = {
   positions: PositionView[];
   riskLimits: RiskLimits;
   latestRiskReview: RiskReview | null;
+  alerts: Alert[];
 };
 
 export type RunMarketData = {

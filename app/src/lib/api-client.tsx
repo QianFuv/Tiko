@@ -5,6 +5,7 @@
 import type {
   AgentMessage,
   AgentRun,
+  Alert,
   ApiData,
   BackendHealthState,
   Candle,
@@ -867,6 +868,20 @@ export async function fetchLatestRiskReview(
 }
 
 /**
+ * Fetch risk alerts for a run.
+ *
+ * @param runId - Simulation run identifier.
+ * @returns Risk alerts from the backend or demo fallback data.
+ */
+export async function fetchRiskAlerts(
+  runId: string,
+): Promise<ApiData<Alert[]>> {
+  return fetchApiData(`/api/risk/${runId}/alerts`, () =>
+    buildDemoAlerts(runId),
+  );
+}
+
+/**
  * Fetch all data needed by run-level observation pages.
  *
  * @param runId - Simulation run identifier.
@@ -884,6 +899,7 @@ export async function fetchRunDashboardData(
     portfolioSummaryResult,
     riskLimitsResult,
     latestRiskReviewResult,
+    alertsResult,
   ] = await Promise.all([
     fetchBackendHealth(),
     fetchSimulation(runId),
@@ -893,6 +909,7 @@ export async function fetchRunDashboardData(
     fetchPortfolioSummary(runId),
     fetchRiskLimits(runId),
     fetchLatestRiskReview(runId),
+    fetchRiskAlerts(runId),
   ]);
   return {
     apiBaseUrl: getApiBaseUrl(),
@@ -904,6 +921,7 @@ export async function fetchRunDashboardData(
       portfolioSummaryResult.source,
       riskLimitsResult.source,
       latestRiskReviewResult.source,
+      alertsResult.source,
     ]),
     health,
     run: runResult.data,
@@ -914,6 +932,7 @@ export async function fetchRunDashboardData(
     positions: buildPositionsFromFills(runResult.data, fillsResult.data),
     riskLimits: riskLimitsResult.data,
     latestRiskReview: latestRiskReviewResult.data,
+    alerts: alertsResult.data,
   };
 }
 
@@ -1627,6 +1646,7 @@ function buildDemoRiskLimits(runId: string): RiskLimits {
     max_target_weight: "0.25",
     min_order_notional: "0",
     max_order_notional: "25000",
+    max_leverage: "1",
     max_drawdown: "0.20",
     max_daily_loss: "0.05",
     live_trading_allowed: false,
@@ -1654,6 +1674,27 @@ function buildDemoRiskReview(): RiskReview {
     ],
     created_at_sim_time: DEMO_TIME,
   };
+}
+
+/**
+ * Build deterministic demo alerts.
+ *
+ * @param runId - Simulation run identifier.
+ * @returns Demo risk alerts.
+ */
+function buildDemoAlerts(runId: string): Alert[] {
+  return [
+    {
+      alert_id: `${DEMO_REVIEW_ID.slice(0, -3)}901`,
+      run_id: runId,
+      category: "drawdown",
+      severity: "warning",
+      message: "Drawdown is approaching the configured review threshold.",
+      status: "open",
+      created_at_sim_time: DEMO_TIME,
+      created_at: DEMO_TIME,
+    },
+  ];
 }
 
 /**
