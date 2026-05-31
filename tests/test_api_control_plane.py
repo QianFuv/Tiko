@@ -1062,11 +1062,13 @@ def test_plugin_registry_routes_validate_sandbox_policy() -> None:
             "memory_limit_mb": 128,
             "wall_time_limit_seconds": 30,
         },
-        "inputs": ["run_id", "symbols"],
+        "inputs": ["run_id", "symbols", "current_sim_time", "seed"],
         "output_schema": "MarketEvent",
         "tests": [
             "test_schema_valid",
             "test_no_write_orders",
+            "test_no_future_events",
+            "test_deterministic_seed",
             "test_network_policy",
             "test_approved_directories",
             "test_resource_limits",
@@ -1096,6 +1098,8 @@ def test_plugin_registry_routes_validate_sandbox_policy() -> None:
     assert [result["name"] for result in sandbox_report["results"]] == [
         "test_schema_valid",
         "test_no_write_orders",
+        "test_no_future_events",
+        "test_deterministic_seed",
         "test_network_policy",
         "test_approved_directories",
         "test_resource_limits",

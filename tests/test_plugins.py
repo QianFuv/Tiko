@@ -37,7 +37,7 @@ def create_safe_manifest() -> PluginManifest:
         plugin_type="event_generation",
         description="Generate synthetic liquidity shocks for simulations.",
         permissions=create_safe_permissions(),
-        inputs=["run_id", "symbols"],
+        inputs=["run_id", "symbols", "current_sim_time", "seed"],
         output_schema="MarketEvent",
         tests=["test_schema_valid"],
     )
@@ -204,6 +204,70 @@ def test_sandbox_requires_resource_limits() -> None:
     assert any("memory_limit_mb" in violation for violation in result.violations)
 
 
+def test_sandbox_requires_time_bound_event_tests() -> None:
+    """Verify MarketEvent plugins declare point-in-time input boundaries."""
+
+    missing_time_manifest = create_safe_manifest().model_copy(
+        update={
+            "inputs": ["run_id", "symbols", "seed"],
+            "tests": ["test_no_future_events"],
+        }
+    )
+    bounded_manifest = create_safe_manifest().model_copy(
+        update={"tests": ["test_no_future_events"]}
+    )
+    non_event_manifest = create_safe_manifest().model_copy(
+        update={
+            "plugin_type": "analysis_tool",
+            "permissions": create_safe_permissions(write_market_events=False),
+            "inputs": ["run_id"],
+            "output_schema": "AnalysisReport",
+            "tests": ["test_no_future_events"],
+        }
+    )
+
+    missing_time_report = run_plugin_sandbox_tests(missing_time_manifest)
+    bounded_report = run_plugin_sandbox_tests(bounded_manifest)
+    non_event_report = run_plugin_sandbox_tests(non_event_manifest)
+
+    assert missing_time_report.passed is False
+    assert "simulated-time" in missing_time_report.results[0].message
+    assert bounded_report.passed is True
+    assert non_event_report.passed is True
+
+
+def test_sandbox_requires_deterministic_seed_for_stochastic_plugins() -> None:
+    """Verify stochastic plugins expose deterministic seed inputs."""
+
+    missing_seed_manifest = create_safe_manifest().model_copy(
+        update={
+            "inputs": ["run_id", "symbols", "current_sim_time"],
+            "tests": ["test_deterministic_seed"],
+        }
+    )
+    seeded_manifest = create_safe_manifest().model_copy(
+        update={"tests": ["test_deterministic_seed"]}
+    )
+    analysis_manifest = create_safe_manifest().model_copy(
+        update={
+            "plugin_type": "analysis_tool",
+            "permissions": create_safe_permissions(write_market_events=False),
+            "inputs": ["run_id"],
+            "output_schema": "AnalysisReport",
+            "tests": ["test_deterministic_seed"],
+        }
+    )
+
+    missing_seed_report = run_plugin_sandbox_tests(missing_seed_manifest)
+    seeded_report = run_plugin_sandbox_tests(seeded_manifest)
+    analysis_report = run_plugin_sandbox_tests(analysis_manifest)
+
+    assert missing_seed_report.passed is False
+    assert "deterministic seed" in missing_seed_report.results[0].message
+    assert seeded_report.passed is True
+    assert analysis_report.passed is True
+
+
 def test_sandbox_requires_manifest_tests() -> None:
     """Verify plugin manifests must declare sandbox tests."""
 
@@ -223,6 +287,8 @@ def test_sandbox_executes_supported_manifest_tests() -> None:
             "tests": [
                 "test_schema_valid",
                 "test_no_write_orders",
+                "test_no_future_events",
+                "test_deterministic_seed",
                 "test_network_policy",
                 "test_approved_directories",
                 "test_resource_limits",
@@ -237,6 +303,8 @@ def test_sandbox_executes_supported_manifest_tests() -> None:
     assert [result.name for result in report.results] == [
         "test_schema_valid",
         "test_no_write_orders",
+        "test_no_future_events",
+        "test_deterministic_seed",
         "test_network_policy",
         "test_approved_directories",
         "test_resource_limits",

@@ -11,10 +11,15 @@ from tiko.domain.plugin import (
 SUPPORTED_SANDBOX_TESTS = {
     "test_schema_valid",
     "test_no_write_orders",
+    "test_no_future_events",
+    "test_deterministic_seed",
     "test_network_policy",
     "test_approved_directories",
     "test_resource_limits",
 }
+TIME_BOUND_INPUTS = {"as_of", "current_sim_time", "simulated_time"}
+DETERMINISTIC_SEED_INPUTS = {"deterministic_seed", "random_seed", "seed"}
+STOCHASTIC_PLUGIN_TYPES = {"event_generation", "experiment", "synthetic_market"}
 
 
 def validate_plugin_manifest(manifest: PluginManifest) -> SandboxResult:
@@ -122,6 +127,28 @@ def _run_sandbox_test(
                 else "Plugin requested forbidden order-writing permission."
             ),
         )
+    if test_name == "test_no_future_events":
+        passed = _future_event_policy_passes(manifest)
+        return SandboxTestResult(
+            name=test_name,
+            passed=passed,
+            message=(
+                "Event output is bounded by point-in-time inputs."
+                if passed
+                else "MarketEvent output requires an as-of or simulated-time input."
+            ),
+        )
+    if test_name == "test_deterministic_seed":
+        passed = _deterministic_seed_policy_passes(manifest)
+        return SandboxTestResult(
+            name=test_name,
+            passed=passed,
+            message=(
+                "Plugin declares a deterministic seed input."
+                if passed
+                else "Stochastic plugin types require a deterministic seed input."
+            ),
+        )
     if test_name == "test_network_policy":
         passed = _network_policy_passes(manifest)
         return SandboxTestResult(
@@ -163,6 +190,36 @@ def _run_sandbox_test(
             f"{', '.join(sorted(SUPPORTED_SANDBOX_TESTS))}."
         ),
     )
+
+
+def _future_event_policy_passes(manifest: PluginManifest) -> bool:
+    """Return whether event output is bounded by point-in-time inputs.
+
+    Args:
+        manifest: Plugin manifest under validation.
+
+    Returns:
+        Whether the manifest can be checked for future-event safety.
+    """
+
+    if manifest.output_schema != "MarketEvent":
+        return True
+    return bool(set(manifest.inputs).intersection(TIME_BOUND_INPUTS))
+
+
+def _deterministic_seed_policy_passes(manifest: PluginManifest) -> bool:
+    """Return whether stochastic plugin output has a deterministic seed input.
+
+    Args:
+        manifest: Plugin manifest under validation.
+
+    Returns:
+        Whether deterministic-seed policy passes.
+    """
+
+    if manifest.plugin_type not in STOCHASTIC_PLUGIN_TYPES:
+        return True
+    return bool(set(manifest.inputs).intersection(DETERMINISTIC_SEED_INPUTS))
 
 
 def _directory_policy_violations(manifest: PluginManifest) -> list[str]:
