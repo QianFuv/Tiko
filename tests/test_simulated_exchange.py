@@ -243,6 +243,49 @@ def test_matching_engine_leaves_uncrossed_limit_order_open() -> None:
     assert fill is None
 
 
+def test_matching_engine_partially_fills_limit_order_by_available_depth() -> None:
+    """Verify crossed limit orders cap fill quantity by simulated depth."""
+
+    order, fill = MatchingEngine(
+        maker_fee_engine=FeeEngine(fee_bps=Decimal("2")),
+    ).match_limit_order(
+        create_limit_order_request("buy", Decimal("101")),
+        reference_price=Decimal("100"),
+        available_quantity=Decimal("0.5"),
+    )
+
+    assert fill is not None
+    assert order.status == "partially_filled"
+    assert order.quantity == Decimal("2")
+    assert fill.quantity == Decimal("0.5")
+    assert fill.price == Decimal("100")
+    assert fill.fee == Decimal("0.01")
+
+
+def test_matching_engine_keeps_crossed_limit_open_without_available_depth() -> None:
+    """Verify crossed limit orders do not fill when simulated depth is zero."""
+
+    order, fill = MatchingEngine().match_limit_order(
+        create_limit_order_request("buy", Decimal("101")),
+        reference_price=Decimal("100"),
+        available_quantity=Decimal("0"),
+    )
+
+    assert order.status == "open"
+    assert fill is None
+
+
+def test_matching_engine_rejects_negative_available_depth() -> None:
+    """Verify limit matching rejects impossible negative simulated depth."""
+
+    with pytest.raises(ValueError, match="available_quantity"):
+        MatchingEngine().match_limit_order(
+            create_limit_order_request("buy", Decimal("101")),
+            reference_price=Decimal("100"),
+            available_quantity=Decimal("-1"),
+        )
+
+
 def test_matching_engine_requires_limit_price() -> None:
     """Verify limit matching rejects incomplete limit requests."""
 
@@ -283,6 +326,24 @@ def test_sim_broker_uses_maker_fee_for_limit_orders() -> None:
     assert fill.price == Decimal("100")
     assert fill.fee == Decimal("0.04")
     assert fill.slippage_bps == Decimal("0")
+
+
+def test_sim_broker_passes_available_depth_to_limit_matching() -> None:
+    """Verify broker limit submissions can produce partial fills."""
+
+    order, fill = SimBroker(
+        fee_bps=Decimal("5"),
+        maker_fee_bps=Decimal("2"),
+    ).submit_limit_order(
+        create_limit_order_request("sell", Decimal("99")),
+        reference_price=Decimal("100"),
+        available_quantity=Decimal("0.25"),
+    )
+
+    assert fill is not None
+    assert order.status == "partially_filled"
+    assert fill.quantity == Decimal("0.25")
+    assert fill.fee == Decimal("0.005")
 
 
 def test_ledger_update_preserves_account_output_and_exposes_metadata() -> None:

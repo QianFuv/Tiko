@@ -69,42 +69,52 @@ class MatchingEngine:
         return order, fill
 
     def match_limit_order(
-        self, order_request: OrderRequest, reference_price: Decimal
+        self,
+        order_request: OrderRequest,
+        reference_price: Decimal,
+        available_quantity: Decimal | None = None,
     ) -> tuple[SimOrder, Fill | None]:
         """Match an internal limit order request against a reference price.
 
         Args:
             order_request: Internal limit order request.
             reference_price: Current market reference price.
+            available_quantity: Optional simulated depth available to fill.
 
         Returns:
             Simulated order and optional fill.
 
         Raises:
-            ValueError: If the request is not a limit order or has no limit price.
+            ValueError: If the request is invalid.
         """
 
         if order_request.order_type != "limit":
             raise ValueError("Limit matching requires a limit order request.")
         if order_request.limit_price is None:
             raise ValueError("Limit order requests require limit_price.")
+        if available_quantity is not None and available_quantity < Decimal("0"):
+            raise ValueError("available_quantity must not be negative.")
         order_id = uuid4()
         if not self._limit_crosses(
             order_request.side, order_request.limit_price, reference_price
         ):
             return self._build_order(order_request, order_id, "open"), None
-        order = self._build_order(order_request, order_id, "filled")
+        fill_quantity = self._limit_fill_quantity(order_request, available_quantity)
+        if fill_quantity <= Decimal("0"):
+            return self._build_order(order_request, order_id, "open"), None
+        status: Literal["partially_filled", "filled"] = (
+            "filled" if fill_quantity == order_request.quantity else "partially_filled"
+        )
+        order = self._build_order(order_request, order_id, status)
         fill = Fill(
             fill_id=uuid4(),
             order_id=order_id,
             run_id=order_request.run_id,
             symbol=order_request.symbol,
             side=order_request.side,
-            quantity=order_request.quantity,
+            quantity=fill_quantity,
             price=reference_price,
-            fee=self._maker_fee_engine.calculate_fee(
-                order_request.quantity, reference_price
-            ),
+            fee=self._maker_fee_engine.calculate_fee(fill_quantity, reference_price),
             slippage_bps=Decimal("0"),
             filled_at_sim_time=order_request.submitted_at_sim_time,
         )
@@ -114,7 +124,7 @@ class MatchingEngine:
         self,
         order_request: OrderRequest,
         order_id: UUID,
-        status: Literal["open", "filled"],
+        status: Literal["open", "partially_filled", "filled"],
     ) -> SimOrder:
         """Build a simulated order from one request.
 
@@ -141,6 +151,25 @@ class MatchingEngine:
             submitted_at_sim_time=order_request.submitted_at_sim_time,
             updated_at_sim_time=order_request.submitted_at_sim_time,
         )
+
+    def _limit_fill_quantity(
+        self,
+        order_request: OrderRequest,
+        available_quantity: Decimal | None,
+    ) -> Decimal:
+        """Calculate filled quantity for a crossed limit order.
+
+        Args:
+            order_request: Source order request.
+            available_quantity: Optional simulated depth available to fill.
+
+        Returns:
+            Filled quantity.
+        """
+
+        if available_quantity is None:
+            return order_request.quantity
+        return min(order_request.quantity, available_quantity)
 
     def _limit_crosses(
         self,
