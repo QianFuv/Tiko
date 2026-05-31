@@ -13,7 +13,7 @@ from tiko.api.dependencies import (
     get_simulation_service,
     require_permission,
 )
-from tiko.domain.market import Candle, MarketEvent
+from tiko.domain.market import Candle, MarketEvent, OrderBookSnapshot
 from tiko.domain.security import Principal
 from tiko.services import AuditService, SimulationService
 
@@ -37,8 +37,14 @@ class MarketOrderBookResponse(BaseModel):
     """Represent read-only order book availability for a symbol."""
 
     symbol: str
+    run_id: UUID | None = None
+    as_of: datetime | None = None
     bids: list[tuple[Decimal, Decimal]]
     asks: list[tuple[Decimal, Decimal]]
+    mid_price: Decimal | None = Field(default=None, gt=Decimal("0"))
+    spread_bps: Decimal | None = Field(default=None, ge=Decimal("0"))
+    depth_1pct_usd: Decimal | None = Field(default=None, ge=Decimal("0"))
+    source: str | None = None
     data_policy: str
     private_methods_allowed: bool
 
@@ -111,22 +117,66 @@ def list_market_candles(
 
 @router.get("/orderbook", response_model=MarketOrderBookResponse)
 def get_market_orderbook(
+    service: SimulationServiceDep,
     symbol: Annotated[str, Query(min_length=1)],
+    run_id: Annotated[UUID | None, Query()] = None,
 ) -> MarketOrderBookResponse:
-    """Return read-only order book policy metadata for a symbol.
+    """Return the latest read-only order book snapshot for a symbol.
 
     Args:
+        service: Simulation service dependency.
         symbol: Market symbol.
+        run_id: Optional simulation run identifier.
 
     Returns:
-        Empty order book placeholder with explicit data policy.
+        Latest order book snapshot or an explicit unavailable response.
+
+    Raises:
+        HTTPException: If the supplied run does not exist.
+    """
+
+    try:
+        snapshot = service.get_latest_orderbook_snapshot(symbol=symbol, run_id=run_id)
+    except KeyError as error:
+        raise HTTPException(
+            status_code=404, detail="Simulation run not found."
+        ) from error
+    if snapshot is not None:
+        return build_orderbook_response(snapshot, run_id)
+    return MarketOrderBookResponse(
+        symbol=symbol,
+        run_id=run_id,
+        bids=[],
+        asks=[],
+        data_policy="read_only_orderbook_snapshot_unavailable",
+        private_methods_allowed=False,
+    )
+
+
+def build_orderbook_response(
+    snapshot: OrderBookSnapshot, run_id: UUID | None
+) -> MarketOrderBookResponse:
+    """Build an API response from a read-only order book snapshot.
+
+    Args:
+        snapshot: Source order book snapshot.
+        run_id: Optional scoped run identifier from the request.
+
+    Returns:
+        API response with snapshot metadata and safety policy.
     """
 
     return MarketOrderBookResponse(
-        symbol=symbol,
-        bids=[],
-        asks=[],
-        data_policy="orderbook_storage_not_configured",
+        symbol=snapshot.symbol,
+        run_id=run_id,
+        as_of=snapshot.as_of,
+        bids=snapshot.bids,
+        asks=snapshot.asks,
+        mid_price=snapshot.mid_price,
+        spread_bps=snapshot.spread_bps,
+        depth_1pct_usd=snapshot.depth_1pct_usd,
+        source=snapshot.source,
+        data_policy="read_only_simulated_orderbook_snapshot",
         private_methods_allowed=False,
     )
 

@@ -128,8 +128,14 @@ export type Candle = {
 
 export type MarketOrderBook = {
   symbol: string;
+  run_id: string | null;
+  as_of: string | null;
   bids: [string, string][];
   asks: [string, string][];
+  mid_price: string | null;
+  spread_bps: string | null;
+  depth_1pct_usd: string | null;
+  source: string | null;
   data_policy: string;
   private_methods_allowed: boolean;
 };

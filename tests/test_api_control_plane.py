@@ -293,12 +293,6 @@ def test_query_routes_expose_simulated_state() -> None:
     assert len(client.get(f"/api/simulations/{run_id}/events").json()) == 1
     assert len(client.get(f"/api/market/candles?run_id={run_id}").json()) == 1
     assert len(client.get("/api/market/events").json()) == 1
-    assert (
-        client.get("/api/market/orderbook?symbol=BTCUSDT").json()[
-            "private_methods_allowed"
-        ]
-        is False
-    )
     observation_response = client.get(f"/api/simulations/{run_id}/observations/BTCUSDT")
     assert observation_response.status_code == 200
     observation_payload = observation_response.json()
@@ -472,6 +466,51 @@ def test_query_routes_expose_simulated_state() -> None:
         client.get(f"/api/simulations/{run_id}/memory").json()[0]["memory_type"]
         == "decision"
     )
+
+
+def test_market_orderbook_route_returns_latest_snapshot_and_safe_empty() -> None:
+    """Verify market order book route exposes simulated snapshots safely."""
+
+    client = create_test_client()
+    run_id = client.post(
+        "/api/simulations",
+        json={"name": "orderbook-demo", "symbols": ["BTCUSDT"]},
+        headers=OPERATOR_HEADERS,
+    ).json()["run_id"]
+    client.post(
+        f"/api/simulations/{run_id}/step",
+        json={"confidence": 0.7},
+        headers=OPERATOR_HEADERS,
+    )
+
+    response = client.get(f"/api/market/orderbook?symbol=BTCUSDT&run_id={run_id}")
+    unscoped_response = client.get("/api/market/orderbook?symbol=BTCUSDT")
+    missing_response = client.get(
+        f"/api/market/orderbook?symbol=ETHUSDT&run_id={run_id}"
+    )
+    unknown_run_response = client.get(
+        "/api/market/orderbook?symbol=BTCUSDT"
+        "&run_id=00000000-0000-0000-0000-000000000000"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data_policy"] == "read_only_simulated_orderbook_snapshot"
+    assert payload["private_methods_allowed"] is False
+    assert payload["run_id"] == run_id
+    assert payload["bids"]
+    assert payload["asks"]
+    assert payload["mid_price"] == "50035"
+    assert payload["spread_bps"] == "2"
+    assert payload["depth_1pct_usd"] == "5003500"
+    assert payload["source"] == "synthetic_orderbook"
+    assert unscoped_response.json()["mid_price"] == payload["mid_price"]
+    assert missing_response.status_code == 200
+    assert missing_response.json()["data_policy"] == (
+        "read_only_orderbook_snapshot_unavailable"
+    )
+    assert missing_response.json()["bids"] == []
+    assert unknown_run_response.status_code == 404
 
 
 def test_agent_routes_evaluate_rule_based_agent() -> None:

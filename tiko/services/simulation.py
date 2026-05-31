@@ -924,6 +924,36 @@ class SimulationService:
 
         return list(self._get_state(run_id).orderbook_snapshots)
 
+    def get_latest_orderbook_snapshot(
+        self, symbol: str, run_id: UUID | None = None
+    ) -> OrderBookSnapshot | None:
+        """Return the latest order book snapshot for a symbol.
+
+        Args:
+            symbol: Market symbol.
+            run_id: Optional simulation run identifier.
+
+        Returns:
+            Latest matching order book snapshot, or `None`.
+
+        Raises:
+            KeyError: If `run_id` is supplied and no run exists for it.
+        """
+
+        states = (
+            [self._get_state(run_id)] if run_id is not None else self._list_states()
+        )
+        snapshots = sorted(
+            (
+                snapshot
+                for state in states
+                for snapshot in state.orderbook_snapshots
+                if snapshot.symbol == symbol
+            ),
+            key=lambda snapshot: (snapshot.as_of, snapshot.source),
+        )
+        return snapshots[-1] if snapshots else None
+
     def list_feature_snapshots(self, run_id: UUID) -> list[FeatureSnapshot]:
         """List feature snapshots generated for a simulation run.
 

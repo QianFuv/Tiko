@@ -1286,7 +1286,7 @@ function buildDemoCandles(): Candle[] {
 }
 
 /**
- * Build deterministic demo order book policy data.
+ * Build deterministic demo order book data.
  *
  * @param symbol - Market symbol.
  * @returns Demo order book data.
@@ -1294,6 +1294,8 @@ function buildDemoCandles(): Candle[] {
 function buildDemoOrderBook(symbol: string): MarketOrderBook {
   return {
     symbol,
+    run_id: null,
+    as_of: DEMO_TIME,
     bids: [
       ["67990.00", "0.84"],
       ["67975.00", "1.12"],
@@ -1302,7 +1304,11 @@ function buildDemoOrderBook(symbol: string): MarketOrderBook {
       ["68010.00", "0.76"],
       ["68025.00", "1.40"],
     ],
-    data_policy: "read_only_public_market_data",
+    mid_price: "68000.00",
+    spread_bps: "2.94",
+    depth_1pct_usd: "280000.00",
+    source: "demo",
+    data_policy: "read_only_demo_orderbook_snapshot",
     private_methods_allowed: false,
   };
 }

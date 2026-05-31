@@ -126,6 +126,39 @@ def test_simulation_step_is_deterministic_for_observable_market_values() -> None
     assert first_result.fill.price == second_result.fill.price
 
 
+def test_service_returns_latest_orderbook_snapshot_for_symbol() -> None:
+    """Verify order book lookup returns latest read-only simulated snapshots."""
+
+    service = SimulationService(Settings())
+    first_run = service.create_run(
+        name="first-orderbook",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    second_run = service.create_run(
+        name="second-orderbook",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+    first_step = service.step_run(first_run.run_id)
+    latest_first_run_step = service.step_run(first_run.run_id)
+    latest_second_run_step = service.step_run(second_run.run_id)
+
+    assert (
+        service.get_latest_orderbook_snapshot("BTCUSDT", first_run.run_id)
+        == latest_first_run_step.orderbook_snapshot
+    )
+    assert (
+        service.get_latest_orderbook_snapshot("BTCUSDT")
+        == latest_second_run_step.orderbook_snapshot
+    )
+    assert (
+        first_step.orderbook_snapshot.as_of
+        < latest_first_run_step.orderbook_snapshot.as_of
+    )
+    assert service.get_latest_orderbook_snapshot("ETHUSDT", first_run.run_id) is None
+
+
 def test_low_confidence_intent_is_rejected_without_order() -> None:
     """Verify risk rejection prevents simulated order creation."""
 
