@@ -20,8 +20,9 @@ from tiko.domain.memory import MemoryEntry
 from tiko.domain.model import ModelRegistryEntry
 from tiko.domain.plugin import PluginManifest, PluginPermissions, PluginRegistryEntry
 from tiko.domain.reporting import Alert, ReportArtifact
+from tiko.domain.security import AuditLogEntry, Principal
 from tiko.plugins import validate_plugin_manifest
-from tiko.services import SimulationService
+from tiko.services import AuditService, SimulationService
 
 
 @pytest.fixture
@@ -62,6 +63,7 @@ def test_metadata_creates_expected_tables(sqlite_engine: Engine) -> None:
     assert table_names == {
         "accounts",
         "alerts",
+        "audit_logs",
         "candles",
         "decision_reviews",
         "decisions",
@@ -75,6 +77,45 @@ def test_metadata_creates_expected_tables(sqlite_engine: Engine) -> None:
         "reports",
         "simulation_runs",
     }
+
+
+def test_repository_persists_audit_logs(repository: SimulationRepository) -> None:
+    """Verify audit log entries round-trip through the repository."""
+
+    entry = AuditLogEntry(
+        audit_id=uuid4(),
+        user_id="operator@example.test",
+        role="operator",
+        action="simulation.start",
+        resource_type="simulation_run",
+        resource_id="run-1",
+        metadata={"status": "running"},
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    repository.save_audit_log_entry(entry)
+
+    assert repository.list_audit_log_entries() == [entry]
+
+
+def test_audit_service_writes_through_repository(
+    repository: SimulationRepository,
+) -> None:
+    """Verify repository-backed audit service persists created entries."""
+
+    service = AuditService(repository)
+    principal = Principal(user_id="admin@example.test", role="admin")
+
+    entry = service.record(
+        principal=principal,
+        action="dataset.upload",
+        resource_type="dataset",
+        resource_id="dataset-1",
+        metadata={"source": "csv"},
+    )
+
+    assert service.list_entries() == [entry]
+    assert repository.list_audit_log_entries() == [entry]
 
 
 def test_repository_round_trips_run_and_updates_account(

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from tiko.db.models import (
     AccountRecord,
     AlertRecord,
+    AuditLogRecord,
     CandleRecord,
     DecisionRecord,
     DecisionReviewRecord,
@@ -44,6 +45,7 @@ from tiko.domain.reporting import (
     ReportType,
 )
 from tiko.domain.risk import RiskReview
+from tiko.domain.security import AuditLogEntry, Role
 from tiko.domain.simulation import SimulationRun
 from tiko.simulation.state import SimulationStepResult
 
@@ -165,6 +167,41 @@ class SimulationRepository:
                 self._to_run(record, self._require_account(session, record.account_id))
                 for record in records
             ]
+
+    def save_audit_log_entry(self, entry: AuditLogEntry) -> None:
+        """Persist an audit log entry.
+
+        Args:
+            entry: Audit log entry to persist.
+        """
+
+        with self._session_factory() as session:
+            session.merge(
+                AuditLogRecord(
+                    audit_id=str(entry.audit_id),
+                    user_id=entry.user_id,
+                    role=entry.role,
+                    action=entry.action,
+                    resource_type=entry.resource_type,
+                    resource_id=entry.resource_id,
+                    metadata_=entry.metadata,
+                    created_at=entry.created_at,
+                )
+            )
+            session.commit()
+
+    def list_audit_log_entries(self) -> list[AuditLogEntry]:
+        """List persisted audit log entries.
+
+        Returns:
+            Audit log entries ordered by creation time.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(AuditLogRecord).order_by(AuditLogRecord.created_at)
+            ).all()
+            return [self._to_audit_log_entry(record) for record in records]
 
     def list_candles(self, run_id: UUID) -> list[Candle]:
         """List candles persisted for a simulation run.
@@ -827,6 +864,27 @@ class SimulationRepository:
         if record is None:
             raise LookupError(f"Missing account row {account_id}.")
         return record
+
+    def _to_audit_log_entry(self, record: AuditLogRecord) -> AuditLogEntry:
+        """Convert an audit log row to a domain model.
+
+        Args:
+            record: Persisted audit log row.
+
+        Returns:
+            Audit log domain model.
+        """
+
+        return AuditLogEntry(
+            audit_id=UUID(record.audit_id),
+            user_id=record.user_id,
+            role=cast(Role, record.role),
+            action=record.action,
+            resource_type=record.resource_type,
+            resource_id=record.resource_id,
+            metadata=dict(record.metadata_),
+            created_at=self._aware_datetime(record.created_at),
+        )
 
     def _to_run(
         self, record: SimulationRunRecord, account_record: AccountRecord

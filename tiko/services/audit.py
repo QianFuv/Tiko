@@ -3,15 +3,21 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from tiko.db.repositories import SimulationRepository
 from tiko.domain.security import AuditLogEntry, Principal
 
 
 class AuditService:
     """Store process-local audit log entries."""
 
-    def __init__(self) -> None:
-        """Initialize an empty audit log."""
+    def __init__(self, repository: SimulationRepository | None = None) -> None:
+        """Initialize an audit log service.
 
+        Args:
+            repository: Optional repository for durable audit log storage.
+        """
+
+        self._repository = repository
         self._entries: list[AuditLogEntry] = []
 
     def record(
@@ -46,6 +52,8 @@ class AuditService:
             created_at=datetime.now(UTC),
         )
         self._entries.append(entry)
+        if self._repository is not None:
+            self._repository.save_audit_log_entry(entry)
         return entry
 
     def list_entries(self) -> list[AuditLogEntry]:
@@ -55,4 +63,6 @@ class AuditService:
             Audit log entries in creation order.
         """
 
+        if self._repository is not None:
+            return self._repository.list_audit_log_entries()
         return list(self._entries)

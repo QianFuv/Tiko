@@ -74,6 +74,25 @@ class Base(DeclarativeBase):
     """Provide shared SQLAlchemy declarative metadata."""
 
 
+class AuditLogRecord(Base):
+    """Persist an audited control-plane action."""
+
+    __tablename__ = "audit_logs"
+
+    audit_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    action: Mapped[str] = mapped_column(String(128), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    resource_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    metadata_: Mapped[dict[str, object]] = mapped_column(
+        "metadata", JSON, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class AccountRecord(Base):
     """Persist a simulated account that is never linked to a real exchange."""
 
