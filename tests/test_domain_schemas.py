@@ -9,11 +9,14 @@ from pydantic import ValidationError
 
 from tiko.core.auth import ROLE_PERMISSIONS, has_permission
 from tiko.domain import (
+    AgentMessage,
+    AgentRun,
     Asset,
     BackgroundJob,
     Candle,
     DatasetQualityReport,
     DatasetRecord,
+    DecisionTrace,
     ExperimentRecord,
     Fill,
     OrderRequest,
@@ -323,3 +326,55 @@ def test_runtime_schemas_validate_worker_and_job_state() -> None:
         )
     with pytest.raises(ValidationError):
         BackgroundJob.model_validate(job.model_dump() | {"job_type": "live_order"})
+
+
+def test_agent_traceability_schemas_validate_known_roles() -> None:
+    """Verify agent trace schemas constrain message roles and statuses."""
+
+    run_id = uuid4()
+    decision = TradeIntent(
+        decision_id=uuid4(),
+        run_id=run_id,
+        agent_id="rule_based_trader",
+        symbol="BTCUSDT",
+        market_type="synthetic",
+        action="hold",
+        target_weight=Decimal("0"),
+        max_leverage=Decimal("1"),
+        confidence=0.5,
+        expected_holding_period="1h",
+        thesis="No edge.",
+        evidence=[],
+        invalidation_conditions=[],
+        data_quality_score=1.0,
+        created_at_sim_time=current_time(),
+    )
+    agent_run = AgentRun(
+        agent_run_id=uuid4(),
+        run_id=run_id,
+        decision_id=decision.decision_id,
+        agent_id=decision.agent_id,
+        status="completed",
+        started_at_sim_time=current_time(),
+        completed_at_sim_time=current_time(),
+    )
+    message = AgentMessage(
+        message_id=uuid4(),
+        agent_run_id=agent_run.agent_run_id,
+        role="assistant",
+        content={"action": decision.action},
+        created_at_sim_time=current_time(),
+    )
+    trace = DecisionTrace(
+        decision=decision,
+        agent_run=agent_run,
+        messages=[message],
+    )
+
+    assert trace.agent_run.decision_id == decision.decision_id
+    assert trace.messages[0].role == "assistant"
+
+    with pytest.raises(ValidationError):
+        AgentMessage.model_validate(message.model_dump() | {"role": "tool"})
+    with pytest.raises(ValidationError):
+        AgentRun.model_validate(agent_run.model_dump() | {"status": "live"})

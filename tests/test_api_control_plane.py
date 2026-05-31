@@ -304,6 +304,48 @@ def test_query_routes_expose_simulated_state() -> None:
         == "acknowledged"
     )
     decision_id = client.get("/api/decisions").json()[0]["decision_id"]
+    decision_response = client.get(f"/api/decisions/{decision_id}")
+    trace_response = client.get(f"/api/decisions/{decision_id}/trace")
+
+    assert decision_response.status_code == 200
+    assert decision_response.json()["decision_id"] == decision_id
+    assert trace_response.status_code == 200
+    trace_payload = trace_response.json()
+    assert trace_payload["decision"]["decision_id"] == decision_id
+    assert trace_payload["risk_review"]["status"] == "approved"
+    assert trace_payload["order"]["status"] == "filled"
+    assert trace_payload["fill"]["symbol"] == "BTCUSDT"
+    order_id = trace_payload["order"]["order_id"]
+    fill_id = trace_payload["fill"]["fill_id"]
+    assert client.get(f"/api/orders/{order_id}").json()["order_id"] == order_id
+    assert client.get(f"/api/fills/{fill_id}").json()["fill_id"] == fill_id
+    assert (
+        client.get("/api/orders/00000000-0000-0000-0000-000000000000").status_code
+        == 404
+    )
+    assert (
+        client.post(
+            f"/api/decisions/{decision_id}/annotate",
+            json={"summary": "blocked"},
+            headers=VIEWER_HEADERS,
+        ).status_code
+        == 403
+    )
+    annotation_response = client.post(
+        f"/api/decisions/{decision_id}/annotate",
+        json={
+            "summary": "Trace annotation.",
+            "content": {"note": "Risk and fill were reviewed."},
+            "tags": ["trace"],
+        },
+        headers=RESEARCHER_HEADERS,
+    )
+    assert annotation_response.status_code == 200
+    assert annotation_response.json()["memory_type"] == "decision"
+    assert (
+        client.get("/api/decisions/00000000-0000-0000-0000-000000000000").status_code
+        == 404
+    )
     review_response = client.post(
         f"/api/decisions/{decision_id}/review",
         json={
@@ -358,10 +400,38 @@ def test_agent_routes_evaluate_rule_based_agent() -> None:
     observation = client.get(f"/api/simulations/{run_id}/observations/BTCUSDT").json()
 
     agents_response = client.get("/api/agents")
+    agent_runs_response = client.get("/api/agents/runs")
     intent_response = client.post("/api/agents/rule-based/evaluate", json=observation)
 
     assert agents_response.status_code == 200
     assert agents_response.json()[0]["live_trading_allowed"] is False
+    assert agent_runs_response.status_code == 200
+    agent_run_id = agent_runs_response.json()[0]["agent_run_id"]
+    assert client.get(f"/api/agents/runs/{agent_run_id}").status_code == 200
+    messages_response = client.get(f"/api/agents/runs/{agent_run_id}/messages")
+    assert messages_response.status_code == 200
+    assert [message["role"] for message in messages_response.json()] == [
+        "system",
+        "observation",
+        "assistant",
+    ]
+    assert (
+        client.post(
+            f"/api/agents/runs/{agent_run_id}/replay",
+            headers=VIEWER_HEADERS,
+        ).status_code
+        == 403
+    )
+    replay_response = client.post(
+        f"/api/agents/runs/{agent_run_id}/replay",
+        headers=RESEARCHER_HEADERS,
+    )
+    assert replay_response.status_code == 200
+    assert replay_response.json()["agent_id"] == "synthetic_trader"
+    assert (
+        client.get("/api/agents/runs/00000000-0000-0000-0000-000000000000").status_code
+        == 404
+    )
     assert intent_response.status_code == 200
     intent_payload = intent_response.json()
     assert intent_payload["run_id"] == run_id

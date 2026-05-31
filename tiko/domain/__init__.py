@@ -1,6 +1,13 @@
 """Domain schemas for the Tiko simulation architecture."""
 
 from tiko.domain.account import Position, SimAccount
+from tiko.domain.agent import (
+    AgentMessage,
+    AgentMessageRole,
+    AgentRun,
+    AgentRunStatus,
+    DecisionTrace,
+)
 from tiko.domain.comparison import RunBenchmark, RunComparison
 from tiko.domain.dataset import (
     DatasetQualityIssue,
@@ -54,6 +61,10 @@ __all__ = [
     "AlertCategory",
     "AlertSeverity",
     "AlertStatus",
+    "AgentMessage",
+    "AgentMessageRole",
+    "AgentRun",
+    "AgentRunStatus",
     "AuditLogEntry",
     "BackgroundJob",
     "Candle",
@@ -63,6 +74,7 @@ __all__ = [
     "DatasetSource",
     "DatasetStatus",
     "DecisionReview",
+    "DecisionTrace",
     "EnvironmentStep",
     "ExperimentKind",
     "ExperimentRecord",

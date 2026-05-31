@@ -6,10 +6,12 @@ from decimal import Decimal
 from typing import Literal
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
+from tiko.agents import AgentRuntime, RuleBasedTraderAgent
 from tiko.analysis import build_run_benchmark, compare_run_benchmarks
 from tiko.core.config import Settings
 from tiko.db.repositories import SimulationRepository
 from tiko.domain.account import Position, SimAccount
+from tiko.domain.agent import AgentMessage, AgentMessageRole, AgentRun, DecisionTrace
 from tiko.domain.comparison import RunBenchmark, RunComparison
 from tiko.domain.decision import DecisionReview, TradeIntent
 from tiko.domain.market import Candle, MarketEvent
@@ -323,6 +325,24 @@ class SimulationService:
 
         return [order for state in self._states.values() for order in state.orders]
 
+    def get_order(self, order_id: UUID) -> SimOrder:
+        """Get one simulated order by ID.
+
+        Args:
+            order_id: Simulated order identifier.
+
+        Returns:
+            Simulated order.
+
+        Raises:
+            KeyError: If no order exists for the ID.
+        """
+
+        for order in self.list_orders():
+            if order.order_id == order_id:
+                return order
+        raise KeyError(order_id)
+
     def list_fills(self) -> list[Fill]:
         """List simulated fills across all runs.
 
@@ -331,6 +351,24 @@ class SimulationService:
         """
 
         return [fill for state in self._states.values() for fill in state.fills]
+
+    def get_fill(self, fill_id: UUID) -> Fill:
+        """Get one simulated fill by ID.
+
+        Args:
+            fill_id: Simulated fill identifier.
+
+        Returns:
+            Simulated fill.
+
+        Raises:
+            KeyError: If no fill exists for the ID.
+        """
+
+        for fill in self.list_fills():
+            if fill.fill_id == fill_id:
+                return fill
+        raise KeyError(fill_id)
 
     def list_decisions(self) -> list[TradeIntent]:
         """List generated trade intents across all runs.
@@ -342,6 +380,175 @@ class SimulationService:
         return [
             decision for state in self._states.values() for decision in state.decisions
         ]
+
+    def get_decision(self, decision_id: UUID) -> TradeIntent:
+        """Get one trade intent by ID.
+
+        Args:
+            decision_id: Trade intent identifier.
+
+        Returns:
+            Trade intent.
+
+        Raises:
+            KeyError: If no decision exists for the ID.
+        """
+
+        _state, decision = self._find_decision_state(decision_id)
+        return decision
+
+    def list_agent_runs(self) -> list[AgentRun]:
+        """List derived agent runs for generated decisions.
+
+        Returns:
+            Agent runs derived from decisions.
+        """
+
+        return [
+            self._build_agent_run(decision)
+            for state in self._states.values()
+            for decision in state.decisions
+        ]
+
+    def get_agent_run(self, agent_run_id: UUID) -> AgentRun:
+        """Get one derived agent run.
+
+        Args:
+            agent_run_id: Agent run identifier.
+
+        Returns:
+            Agent run.
+
+        Raises:
+            KeyError: If no agent run exists for the ID.
+        """
+
+        for agent_run in self.list_agent_runs():
+            if agent_run.agent_run_id == agent_run_id:
+                return agent_run
+        raise KeyError(agent_run_id)
+
+    def list_agent_messages(self, agent_run_id: UUID) -> list[AgentMessage]:
+        """List derived trace messages for one agent run.
+
+        Args:
+            agent_run_id: Agent run identifier.
+
+        Returns:
+            Agent messages.
+
+        Raises:
+            KeyError: If no agent run exists for the ID.
+        """
+
+        agent_run = self.get_agent_run(agent_run_id)
+        decision = self.get_decision(agent_run.decision_id)
+        return self._build_agent_messages(agent_run, decision)
+
+    def replay_agent_run(self, agent_run_id: UUID) -> TradeIntent:
+        """Replay a deterministic agent run against the current observation.
+
+        Args:
+            agent_run_id: Agent run identifier.
+
+        Returns:
+            Replayed structured trade intent.
+
+        Raises:
+            KeyError: If no agent run exists for the ID.
+        """
+
+        agent_run = self.get_agent_run(agent_run_id)
+        decision = self.get_decision(agent_run.decision_id)
+        observation = self.build_observation(decision.run_id, decision.symbol)
+        return AgentRuntime(RuleBasedTraderAgent(agent_id=agent_run.agent_id)).evaluate(
+            observation
+        )
+
+    def build_decision_trace(self, decision_id: UUID) -> DecisionTrace:
+        """Build joined trace artifacts for one decision.
+
+        Args:
+            decision_id: Trade intent identifier.
+
+        Returns:
+            Decision trace.
+
+        Raises:
+            KeyError: If no decision exists for the ID.
+        """
+
+        state, decision = self._find_decision_state(decision_id)
+        agent_run = self._build_agent_run(decision)
+        order = next(
+            (
+                candidate
+                for candidate in state.orders
+                if candidate.decision_id == decision_id
+            ),
+            None,
+        )
+        fill = (
+            next(
+                (
+                    candidate
+                    for candidate in state.fills
+                    if order is not None and candidate.order_id == order.order_id
+                ),
+                None,
+            )
+            if order is not None
+            else None
+        )
+        risk_review = next(
+            (
+                candidate
+                for candidate in state.risk_reviews
+                if candidate.decision_id == decision_id
+            ),
+            None,
+        )
+        return DecisionTrace(
+            decision=decision,
+            agent_run=agent_run,
+            messages=self._build_agent_messages(agent_run, decision),
+            risk_review=risk_review,
+            order=order,
+            fill=fill,
+        )
+
+    def annotate_decision(
+        self,
+        decision_id: UUID,
+        summary: str,
+        content: dict[str, object],
+        tags: list[str],
+    ) -> MemoryEntry:
+        """Annotate a decision by creating a decision memory entry.
+
+        Args:
+            decision_id: Trade intent identifier.
+            summary: Annotation summary.
+            content: Structured annotation content.
+            tags: Annotation tags.
+
+        Returns:
+            Created memory entry.
+
+        Raises:
+            KeyError: If no decision exists for the ID.
+        """
+
+        state, decision = self._find_decision_state(decision_id)
+        return self.create_memory_entry(
+            run_id=decision.run_id,
+            memory_type="decision",
+            summary=summary,
+            content=content,
+            tags=tags,
+            available_at_sim_time=state.run.current_sim_time,
+            decision_id=decision_id,
+        )
 
     def list_events(self, run_id: UUID) -> list[MarketEvent]:
         """List market events for a simulation run.
@@ -918,3 +1125,76 @@ class SimulationService:
             data_quality_score=1.0,
             created_at_sim_time=simulated_time,
         )
+
+    def _build_agent_run(self, decision: TradeIntent) -> AgentRun:
+        """Build a deterministic agent run for a decision.
+
+        Args:
+            decision: Source trade intent.
+
+        Returns:
+            Derived agent run.
+        """
+
+        return AgentRun(
+            agent_run_id=uuid5(NAMESPACE_URL, f"agent-run:{decision.decision_id}"),
+            run_id=decision.run_id,
+            decision_id=decision.decision_id,
+            agent_id=decision.agent_id,
+            status="completed",
+            started_at_sim_time=decision.created_at_sim_time,
+            completed_at_sim_time=decision.created_at_sim_time,
+        )
+
+    def _build_agent_messages(
+        self, agent_run: AgentRun, decision: TradeIntent
+    ) -> list[AgentMessage]:
+        """Build deterministic trace messages for a decision.
+
+        Args:
+            agent_run: Derived agent run.
+            decision: Source trade intent.
+
+        Returns:
+            Derived agent messages.
+        """
+
+        message_specs: list[tuple[AgentMessageRole, dict[str, object]]] = [
+            (
+                "system",
+                {
+                    "boundary": "simulation_only",
+                    "live_trading_allowed": False,
+                },
+            ),
+            (
+                "observation",
+                {
+                    "run_id": str(decision.run_id),
+                    "symbol": decision.symbol,
+                    "created_at_sim_time": decision.created_at_sim_time.isoformat(),
+                },
+            ),
+            (
+                "assistant",
+                {
+                    "action": decision.action,
+                    "confidence": decision.confidence,
+                    "thesis": decision.thesis,
+                    "evidence": decision.evidence,
+                },
+            ),
+        ]
+        return [
+            AgentMessage(
+                message_id=uuid5(
+                    NAMESPACE_URL,
+                    f"agent-message:{agent_run.agent_run_id}:{index}:{role}",
+                ),
+                agent_run_id=agent_run.agent_run_id,
+                role=role,
+                content=content,
+                created_at_sim_time=decision.created_at_sim_time,
+            )
+            for index, (role, content) in enumerate(message_specs)
+        ]

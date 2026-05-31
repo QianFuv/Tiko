@@ -1,13 +1,29 @@
 """Agent runtime routes."""
 
-from fastapi import APIRouter, HTTPException
+from typing import Annotated
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from tiko.agents import AgentRuntime, AgentRuntimeError, RuleBasedTraderAgent
+from tiko.api.dependencies import (
+    get_audit_service,
+    get_simulation_service,
+    require_permission,
+)
+from tiko.domain.agent import AgentMessage, AgentRun
 from tiko.domain.decision import TradeIntent
 from tiko.domain.observation import Observation
+from tiko.domain.security import Principal
+from tiko.services import AuditService, SimulationService
 
 router = APIRouter(prefix="/agents", tags=["agents"])
+SimulationServiceDep = Annotated[SimulationService, Depends(get_simulation_service)]
+AuditServiceDep = Annotated[AuditService, Depends(get_audit_service)]
+ManageResearchPrincipalDep = Annotated[
+    Principal, Depends(require_permission("manage_research"))
+]
 
 
 class AgentInfoResponse(BaseModel):
@@ -33,6 +49,104 @@ def list_agents() -> list[AgentInfoResponse]:
             live_trading_allowed=False,
         )
     ]
+
+
+@router.get("/runs", response_model=list[AgentRun])
+def list_agent_runs(service: SimulationServiceDep) -> list[AgentRun]:
+    """List derived agent runs.
+
+    Args:
+        service: Simulation service dependency.
+
+    Returns:
+        Agent runs.
+    """
+
+    return service.list_agent_runs()
+
+
+@router.get("/runs/{agent_run_id}", response_model=AgentRun)
+def get_agent_run(
+    agent_run_id: UUID,
+    service: SimulationServiceDep,
+) -> AgentRun:
+    """Get one derived agent run.
+
+    Args:
+        agent_run_id: Agent run identifier.
+        service: Simulation service dependency.
+
+    Returns:
+        Agent run.
+
+    Raises:
+        HTTPException: If the agent run does not exist.
+    """
+
+    try:
+        return service.get_agent_run(agent_run_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Agent run not found.") from error
+
+
+@router.get("/runs/{agent_run_id}/messages", response_model=list[AgentMessage])
+def list_agent_messages(
+    agent_run_id: UUID,
+    service: SimulationServiceDep,
+) -> list[AgentMessage]:
+    """List trace messages for one agent run.
+
+    Args:
+        agent_run_id: Agent run identifier.
+        service: Simulation service dependency.
+
+    Returns:
+        Agent messages.
+
+    Raises:
+        HTTPException: If the agent run does not exist.
+    """
+
+    try:
+        return service.list_agent_messages(agent_run_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Agent run not found.") from error
+
+
+@router.post("/runs/{agent_run_id}/replay", response_model=TradeIntent)
+def replay_agent_run(
+    agent_run_id: UUID,
+    service: SimulationServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManageResearchPrincipalDep,
+) -> TradeIntent:
+    """Replay one deterministic agent run.
+
+    Args:
+        agent_run_id: Agent run identifier.
+        service: Simulation service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
+
+    Returns:
+        Replayed trade intent.
+
+    Raises:
+        HTTPException: If the agent run does not exist.
+    """
+
+    try:
+        intent = service.replay_agent_run(agent_run_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Agent run not found.") from error
+    audit_service.record(
+        principal=principal,
+        action="agent.run.replay",
+        resource_type="agent_run",
+        resource_id=str(agent_run_id),
+        metadata={"decision_id": str(intent.decision_id)},
+    )
+    return intent
 
 
 @router.post("/rule-based/evaluate", response_model=TradeIntent)
