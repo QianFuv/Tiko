@@ -15,6 +15,7 @@ from tiko.db.models import (
     FillRecord,
     MarketEventRecord,
     MemoryEntryRecord,
+    ModelRegistryRecord,
     OrderRecord,
     RiskReviewRecord,
     SimulationRunRecord,
@@ -23,6 +24,7 @@ from tiko.domain.account import SimAccount
 from tiko.domain.decision import DecisionReview, TradeIntent
 from tiko.domain.market import Candle, MarketEvent
 from tiko.domain.memory import MemoryEntry
+from tiko.domain.model import ModelRegistryEntry, ModelStatus, ModelType
 from tiko.domain.order import Fill, SimOrder
 from tiko.domain.risk import RiskReview
 from tiko.domain.simulation import SimulationRun
@@ -314,6 +316,46 @@ class SimulationRepository:
             ).all()
             return [self._to_memory_entry(record) for record in records]
 
+    def save_model_registry_entry(self, entry: ModelRegistryEntry) -> None:
+        """Persist a model registry entry.
+
+        Args:
+            entry: Model registry entry to persist.
+        """
+
+        with self._session_factory() as session:
+            self._merge_model_registry_entry(session, entry)
+            session.commit()
+
+    def get_model_registry_entry(self, model_id: UUID) -> ModelRegistryEntry | None:
+        """Load one model registry entry.
+
+        Args:
+            model_id: Model identifier.
+
+        Returns:
+            Model registry entry or `None`.
+        """
+
+        with self._session_factory() as session:
+            record = session.get(ModelRegistryRecord, str(model_id))
+            if record is None:
+                return None
+            return self._to_model_registry_entry(record)
+
+    def list_model_registry_entries(self) -> list[ModelRegistryEntry]:
+        """List model registry entries ordered by creation time.
+
+        Returns:
+            Persisted model registry entries.
+        """
+
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(ModelRegistryRecord).order_by(ModelRegistryRecord.created_at)
+            ).all()
+            return [self._to_model_registry_entry(record) for record in records]
+
     def _merge_run(self, session: Session, run: SimulationRun) -> None:
         """Merge a run and its account into the active session.
 
@@ -512,6 +554,32 @@ class SimulationRepository:
                 content=entry.content,
                 tags=entry.tags,
                 available_at_sim_time=entry.available_at_sim_time,
+                created_at=entry.created_at,
+            )
+        )
+
+    def _merge_model_registry_entry(
+        self, session: Session, entry: ModelRegistryEntry
+    ) -> None:
+        """Merge a model registry entry into the active session.
+
+        Args:
+            session: Active SQLAlchemy session.
+            entry: Model registry entry to merge.
+        """
+
+        session.merge(
+            ModelRegistryRecord(
+                model_id=str(entry.model_id),
+                name=entry.name,
+                version=entry.version,
+                model_type=entry.model_type,
+                algorithm=entry.algorithm,
+                training_dataset_id=str(entry.training_dataset_id),
+                validation_dataset_id=str(entry.validation_dataset_id),
+                metrics=entry.metrics,
+                artifact_uri=entry.artifact_uri,
+                status=entry.status,
                 created_at=entry.created_at,
             )
         )
@@ -774,6 +842,32 @@ class SimulationRepository:
             content=dict(record.content),
             tags=list(record.tags),
             available_at_sim_time=self._aware_datetime(record.available_at_sim_time),
+            created_at=self._aware_datetime(record.created_at),
+        )
+
+    def _to_model_registry_entry(
+        self, record: ModelRegistryRecord
+    ) -> ModelRegistryEntry:
+        """Convert a model registry row to a domain model.
+
+        Args:
+            record: Persisted model registry row.
+
+        Returns:
+            Model registry domain model.
+        """
+
+        return ModelRegistryEntry(
+            model_id=UUID(record.model_id),
+            name=record.name,
+            version=record.version,
+            model_type=cast(ModelType, record.model_type),
+            algorithm=record.algorithm,
+            training_dataset_id=UUID(record.training_dataset_id),
+            validation_dataset_id=UUID(record.validation_dataset_id),
+            metrics=dict(record.metrics),
+            artifact_uri=record.artifact_uri,
+            status=cast(ModelStatus, record.status),
             created_at=self._aware_datetime(record.created_at),
         )
 

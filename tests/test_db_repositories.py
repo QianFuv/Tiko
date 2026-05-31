@@ -3,6 +3,7 @@
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import Engine, inspect
@@ -16,6 +17,7 @@ from tiko.db import (
 )
 from tiko.domain.decision import DecisionReview
 from tiko.domain.memory import MemoryEntry
+from tiko.domain.model import ModelRegistryEntry
 from tiko.services import SimulationService
 
 
@@ -62,6 +64,7 @@ def test_metadata_creates_expected_tables(sqlite_engine: Engine) -> None:
         "fills",
         "market_events",
         "memory_entries",
+        "model_registry",
         "orders",
         "risk_reviews",
         "simulation_runs",
@@ -163,6 +166,31 @@ def test_repository_persists_decision_reviews_and_memory_entries(
 
     assert repository.list_decision_reviews(result.decision.decision_id) == [review]
     assert repository.list_memory_entries(run.run_id) == [entry]
+
+
+def test_repository_persists_model_registry_entries(
+    repository: SimulationRepository,
+) -> None:
+    """Verify model registry entries persist and round-trip."""
+
+    entry = ModelRegistryEntry(
+        model_id=uuid4(),
+        name="baseline-rl",
+        version="0.1.0",
+        model_type="rl",
+        algorithm="discrete_policy",
+        training_dataset_id=uuid4(),
+        validation_dataset_id=uuid4(),
+        metrics={"reward": "0.12"},
+        artifact_uri="memory://baseline-rl",
+        status="draft",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    repository.save_model_registry_entry(entry)
+
+    assert repository.get_model_registry_entry(entry.model_id) == entry
+    assert repository.list_model_registry_entries() == [entry]
 
 
 def test_repository_persists_rejected_step_without_order_or_fill(

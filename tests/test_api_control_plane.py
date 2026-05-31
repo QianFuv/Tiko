@@ -149,6 +149,46 @@ def test_agent_routes_evaluate_rule_based_agent() -> None:
     assert intent_payload["action"] == "hold"
 
 
+def test_model_registry_routes_manage_research_models() -> None:
+    """Verify model registry routes manage advisory research models."""
+
+    client = create_test_client()
+    training_dataset_id = "00000000-0000-4000-8000-000000000901"
+    validation_dataset_id = "00000000-0000-4000-8000-000000000902"
+
+    create_response = client.post(
+        "/api/models",
+        json={
+            "name": "baseline-rl",
+            "version": "0.1.0",
+            "model_type": "rl",
+            "algorithm": "discrete_policy",
+            "training_dataset_id": training_dataset_id,
+            "validation_dataset_id": validation_dataset_id,
+            "metrics": {"reward": "0.12"},
+            "artifact_uri": "memory://baseline-rl",
+            "status": "draft",
+        },
+    )
+
+    assert create_response.status_code == 200
+    model_id = create_response.json()["model_id"]
+    assert client.get("/api/models").json()[0]["model_id"] == model_id
+    assert client.get(f"/api/models/{model_id}").json()["status"] == "draft"
+
+    status_response = client.post(
+        f"/api/models/{model_id}/status",
+        json={"status": "validated"},
+    )
+
+    assert status_response.status_code == 200
+    assert status_response.json()["status"] == "validated"
+    assert (
+        client.get("/api/models/00000000-0000-0000-0000-000000000000").status_code
+        == 404
+    )
+
+
 def test_simulation_websocket_returns_event_snapshot() -> None:
     """Verify WebSocket route returns current simulation events."""
 

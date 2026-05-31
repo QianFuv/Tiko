@@ -257,6 +257,26 @@ class MemoryEntryRecord(Base):
     )
 
 
+class ModelRegistryRecord(Base):
+    """Persist research model metadata for simulated use review."""
+
+    __tablename__ = "model_registry"
+
+    model_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    algorithm: Mapped[str] = mapped_column(String(128), nullable=False)
+    training_dataset_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    validation_dataset_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    metrics: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    artifact_uri: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class OrderRecord(Base):
     """Persist an internal simulated order."""
 
