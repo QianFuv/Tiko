@@ -941,6 +941,10 @@ def test_plugin_registry_service_reads_through_repository(
 
     assert persisted_service.list_plugins() == [entry]
     assert persisted_service.get_plugin(entry.plugin_id) == entry
+    with pytest.raises(ValueError, match="Unsupported sandbox test"):
+        persisted_service.register_plugin(
+            manifest.model_copy(update={"tests": ["test_unknown_policy"]})
+        )
     enabled = persisted_service.update_status(entry.plugin_id, "enabled")
     assert enabled.status == "enabled"
     assert PluginRegistryService(repository).get_plugin(entry.plugin_id) == enabled

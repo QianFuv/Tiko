@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 
 from tiko.db.repositories import SimulationRepository
 from tiko.domain.plugin import PluginManifest, PluginRegistryEntry, PluginStatus
-from tiko.plugins import validate_plugin_manifest
+from tiko.plugins import run_plugin_sandbox_tests
 
 
 class PluginRegistryService:
@@ -34,13 +34,21 @@ class PluginRegistryService:
             ValueError: If sandbox validation fails.
         """
 
-        sandbox_result = validate_plugin_manifest(manifest)
-        if not sandbox_result.passed:
-            raise ValueError("; ".join(sandbox_result.violations))
+        sandbox_report = run_plugin_sandbox_tests(manifest)
+        if not sandbox_report.passed:
+            violations = [
+                *sandbox_report.validation.violations,
+                *[
+                    result.message
+                    for result in sandbox_report.results
+                    if not result.passed
+                ],
+            ]
+            raise ValueError("; ".join(violations))
         entry = PluginRegistryEntry(
             plugin_id=uuid4(),
             manifest=manifest,
-            sandbox_result=sandbox_result,
+            sandbox_result=sandbox_report.validation,
             status="validated",
             created_at=datetime.now(UTC),
         )

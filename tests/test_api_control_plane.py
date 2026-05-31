@@ -1132,9 +1132,16 @@ def test_plugin_registry_routes_validate_sandbox_policy() -> None:
         json=unsafe_manifest,
         headers=RESEARCHER_HEADERS,
     )
+    unsupported_response = client.post(
+        "/api/plugins",
+        json=safe_manifest | {"tests": ["test_unknown_policy"]},
+        headers=RESEARCHER_HEADERS,
+    )
 
     assert unsafe_response.status_code == 422
     assert "write_orders" in unsafe_response.json()["detail"]
+    assert unsupported_response.status_code == 422
+    assert "Unsupported sandbox test" in unsupported_response.json()["detail"]
 
 
 def test_simulation_websocket_replays_default_subscription() -> None:
