@@ -618,6 +618,113 @@ def test_sim_broker_passes_time_in_force_to_limit_matching() -> None:
     assert fill is None
 
 
+def test_sim_broker_retains_unfilled_gtc_limit_orders() -> None:
+    """Verify GTC limit orders stay open when they do not cross."""
+
+    broker = SimBroker()
+
+    order, fill = broker.submit_limit_order(
+        create_limit_order_request("buy", Decimal("99")),
+        reference_price=Decimal("100"),
+    )
+
+    assert order.status == "open"
+    assert fill is None
+    assert broker.list_open_orders() == (order,)
+
+
+def test_sim_broker_reevaluates_open_gtc_limit_orders() -> None:
+    """Verify later prices can fill retained GTC limit orders."""
+
+    broker = SimBroker()
+    order, fill = broker.submit_limit_order(
+        create_limit_order_request("buy", Decimal("99")),
+        reference_price=Decimal("100"),
+    )
+    fill_time = datetime(2026, 1, 1, 1, tzinfo=UTC)
+
+    results = broker.reevaluate_open_orders(
+        reference_price=Decimal("98"),
+        as_of=fill_time,
+    )
+
+    updated_order, later_fill = results[0]
+    assert fill is None
+    assert updated_order.order_id == order.order_id
+    assert updated_order.status == "filled"
+    assert updated_order.updated_at_sim_time == fill_time
+    assert later_fill is not None
+    assert later_fill.order_id == order.order_id
+    assert later_fill.price == Decimal("98")
+    assert later_fill.quantity == Decimal("2")
+    assert later_fill.filled_at_sim_time == fill_time
+    assert broker.list_open_orders() == ()
+
+
+def test_sim_broker_continues_partially_filled_gtc_limit_orders() -> None:
+    """Verify partially filled GTC orders retain only remaining quantity."""
+
+    broker = SimBroker(
+        fee_bps=Decimal("5"),
+        maker_fee_bps=Decimal("2"),
+    )
+    order, first_fill = broker.submit_limit_order(
+        create_limit_order_request("sell", Decimal("99")),
+        reference_price=Decimal("100"),
+        available_quantity=Decimal("0.25"),
+    )
+    fill_time = datetime(2026, 1, 1, 1, tzinfo=UTC)
+
+    results = broker.reevaluate_open_orders(
+        reference_price=Decimal("100"),
+        as_of=fill_time,
+        available_quantity=Decimal("1.75"),
+    )
+
+    updated_order, second_fill = results[0]
+    assert first_fill is not None
+    assert first_fill.quantity == Decimal("0.25")
+    assert broker.list_open_orders() == ()
+    assert updated_order.order_id == order.order_id
+    assert updated_order.status == "filled"
+    assert second_fill is not None
+    assert second_fill.order_id == order.order_id
+    assert second_fill.quantity == Decimal("1.75")
+    assert second_fill.fee == Decimal("0.035")
+
+
+def test_sim_broker_cancels_open_limit_orders() -> None:
+    """Verify broker cancellation removes retained open orders."""
+
+    broker = SimBroker()
+    first_order, _first_fill = broker.submit_limit_order(
+        create_limit_order_request("buy", Decimal("99")),
+        reference_price=Decimal("100"),
+    )
+    second_order, _second_fill = broker.submit_limit_order(
+        create_limit_order_request("buy", Decimal("98")),
+        reference_price=Decimal("100"),
+    )
+    cancel_time = datetime(2026, 1, 1, 1, tzinfo=UTC)
+    cancel_all_time = datetime(2026, 1, 1, 2, tzinfo=UTC)
+
+    canceled_order = broker.cancel_order(first_order.order_id, cancel_time)
+    canceled_orders = broker.cancel_all_orders(cancel_all_time)
+
+    assert canceled_order.order_id == first_order.order_id
+    assert canceled_order.status == "canceled"
+    assert canceled_order.updated_at_sim_time == cancel_time
+    assert broker.list_open_orders() == ()
+    assert canceled_orders == (
+        second_order.model_copy(
+            update={
+                "status": "canceled",
+                "updated_at_sim_time": cancel_all_time,
+            }
+        ),
+    )
+
+
 def test_ledger_update_preserves_account_output_and_exposes_metadata() -> None:
     """Verify ledger metadata matches the account update path."""
 

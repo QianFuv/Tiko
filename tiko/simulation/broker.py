@@ -1,12 +1,23 @@
 """Internal simulated broker and matching behavior."""
 
+from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from tiko.domain.order import Fill, OrderRequest, SimOrder
 from tiko.simulation.fee import FeeEngine
 from tiko.simulation.matching import MatchingEngine, TimeInForce
 from tiko.simulation.slippage import SlippageContext, SlippageEngine
+
+
+@dataclass(frozen=True)
+class OpenOrderRecord:
+    """Track broker-private state for an open simulated order."""
+
+    order: SimOrder
+    filled_quantity: Decimal
+    time_in_force: TimeInForce
 
 
 class SimBroker:
@@ -49,6 +60,7 @@ class SimBroker:
         self.min_market_depth_1pct_usd = min_market_depth_1pct_usd
         self.allow_market = allow_market
         self.allow_limit = allow_limit
+        self._open_orders: dict[UUID, OpenOrderRecord] = {}
         self._matching_engine = matching_engine or MatchingEngine(
             fee_engine=FeeEngine(fee_bps),
             maker_fee_engine=FeeEngine(self.maker_fee_bps),
@@ -106,8 +118,107 @@ class SimBroker:
 
         if not self.allow_limit:
             return self._build_rejected_order(order_request), None
-        return self._matching_engine.match_limit_order(
+        order, fill = self._matching_engine.match_limit_order(
             order_request, reference_price, available_quantity, time_in_force
+        )
+        self._store_open_limit_order(order, fill, time_in_force)
+        return order, fill
+
+    def list_open_orders(self) -> tuple[SimOrder, ...]:
+        """List currently open broker orders.
+
+        Returns:
+            Open or partially filled orders in insertion order.
+        """
+
+        return tuple(record.order for record in self._open_orders.values())
+
+    def reevaluate_open_orders(
+        self,
+        reference_price: Decimal,
+        as_of: datetime,
+        available_quantity: Decimal | None = None,
+    ) -> tuple[tuple[SimOrder, Fill | None], ...]:
+        """Re-evaluate open limit orders against a later reference price.
+
+        Args:
+            reference_price: Current market reference price.
+            as_of: Simulated time for fills and order updates.
+            available_quantity: Optional total depth available across orders.
+
+        Returns:
+            Order update and optional fill for each open order evaluated.
+
+        Raises:
+            ValueError: If `available_quantity` is negative.
+        """
+
+        if available_quantity is not None and available_quantity < Decimal("0"):
+            raise ValueError("available_quantity must not be negative.")
+        results: list[tuple[SimOrder, Fill | None]] = []
+        remaining_available_quantity = available_quantity
+        for order_id in tuple(self._open_orders):
+            result = self._reevaluate_open_order(
+                order_id,
+                reference_price,
+                as_of,
+                remaining_available_quantity,
+            )
+            results.append(result)
+            fill = result[1]
+            if fill is not None and remaining_available_quantity is not None:
+                remaining_available_quantity -= fill.quantity
+                if remaining_available_quantity < Decimal("0"):
+                    remaining_available_quantity = Decimal("0")
+        return tuple(results)
+
+    def cancel_order(self, order_id: UUID, canceled_at_sim_time: datetime) -> SimOrder:
+        """Cancel one open simulated order.
+
+        Args:
+            order_id: Open order identifier.
+            canceled_at_sim_time: Simulated cancellation time.
+
+        Returns:
+            Canceled order record.
+
+        Raises:
+            KeyError: If the order is not open.
+        """
+
+        record = self._open_orders.pop(order_id)
+        return record.order.model_copy(
+            update={
+                "status": "canceled",
+                "updated_at_sim_time": canceled_at_sim_time,
+            }
+        )
+
+    def cancel_all_orders(
+        self,
+        canceled_at_sim_time: datetime,
+        run_id: UUID | None = None,
+        symbol: str | None = None,
+    ) -> tuple[SimOrder, ...]:
+        """Cancel all open orders matching optional filters.
+
+        Args:
+            canceled_at_sim_time: Simulated cancellation time.
+            run_id: Optional run filter.
+            symbol: Optional symbol filter.
+
+        Returns:
+            Canceled order records in insertion order.
+        """
+
+        order_ids = [
+            order_id
+            for order_id, record in self._open_orders.items()
+            if (run_id is None or record.order.run_id == run_id)
+            and (symbol is None or record.order.symbol == symbol)
+        ]
+        return tuple(
+            self.cancel_order(order_id, canceled_at_sim_time) for order_id in order_ids
         )
 
     def _build_rejected_order(self, order_request: OrderRequest) -> SimOrder:
@@ -133,4 +244,130 @@ class SimBroker:
             status="rejected",
             submitted_at_sim_time=order_request.submitted_at_sim_time,
             updated_at_sim_time=order_request.submitted_at_sim_time,
+        )
+
+    def _store_open_limit_order(
+        self,
+        order: SimOrder,
+        fill: Fill | None,
+        time_in_force: TimeInForce,
+    ) -> None:
+        """Store a GTC order when it remains open after submission.
+
+        Args:
+            order: Broker order returned by matching.
+            fill: Optional immediate fill.
+            time_in_force: Time-in-force used for matching.
+        """
+
+        if time_in_force != "gtc" or order.status not in {"open", "partially_filled"}:
+            return
+        filled_quantity = fill.quantity if fill is not None else Decimal("0")
+        if filled_quantity >= order.quantity:
+            return
+        self._open_orders[order.order_id] = OpenOrderRecord(
+            order=order,
+            filled_quantity=filled_quantity,
+            time_in_force=time_in_force,
+        )
+
+    def _reevaluate_open_order(
+        self,
+        order_id: UUID,
+        reference_price: Decimal,
+        as_of: datetime,
+        available_quantity: Decimal | None,
+    ) -> tuple[SimOrder, Fill | None]:
+        """Re-evaluate one open order.
+
+        Args:
+            order_id: Open order identifier.
+            reference_price: Current market reference price.
+            as_of: Simulated update time.
+            available_quantity: Optional remaining shared depth.
+
+        Returns:
+            Updated order and optional fill.
+        """
+
+        record = self._open_orders[order_id]
+        remaining_quantity = record.order.quantity - record.filled_quantity
+        remaining_request = self._build_remaining_limit_request(
+            record.order,
+            remaining_quantity,
+            as_of,
+        )
+        matched_order, fill = self._matching_engine.match_limit_order(
+            remaining_request,
+            reference_price,
+            available_quantity,
+            record.time_in_force,
+        )
+        if fill is None:
+            status = (
+                "partially_filled"
+                if record.filled_quantity > Decimal("0")
+                and matched_order.status == "open"
+                else matched_order.status
+            )
+            updated_order = record.order.model_copy(update={"status": status})
+            self._open_orders[order_id] = OpenOrderRecord(
+                order=updated_order,
+                filled_quantity=record.filled_quantity,
+                time_in_force=record.time_in_force,
+            )
+            return updated_order, None
+        broker_fill = fill.model_copy(
+            update={
+                "order_id": order_id,
+                "filled_at_sim_time": as_of,
+            }
+        )
+        filled_quantity = record.filled_quantity + broker_fill.quantity
+        status = (
+            "filled" if filled_quantity >= record.order.quantity else "partially_filled"
+        )
+        updated_order = record.order.model_copy(
+            update={
+                "status": status,
+                "updated_at_sim_time": as_of,
+            }
+        )
+        if status == "filled":
+            del self._open_orders[order_id]
+        else:
+            self._open_orders[order_id] = OpenOrderRecord(
+                order=updated_order,
+                filled_quantity=filled_quantity,
+                time_in_force=record.time_in_force,
+            )
+        return updated_order, broker_fill
+
+    def _build_remaining_limit_request(
+        self,
+        order: SimOrder,
+        quantity: Decimal,
+        submitted_at_sim_time: datetime,
+    ) -> OrderRequest:
+        """Build a request for the unfilled portion of an open order.
+
+        Args:
+            order: Existing open broker order.
+            quantity: Remaining quantity to match.
+            submitted_at_sim_time: Simulated matching time.
+
+        Returns:
+            Limit order request for the remaining quantity.
+        """
+
+        return OrderRequest(
+            run_id=order.run_id,
+            account_id=order.account_id,
+            decision_id=order.decision_id,
+            symbol=order.symbol,
+            side=order.side,
+            order_type="limit",
+            quantity=quantity,
+            limit_price=order.limit_price,
+            submitted_at_sim_time=submitted_at_sim_time,
         )
