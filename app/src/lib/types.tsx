@@ -412,6 +412,7 @@ export type RunDashboardData = {
   source: DataSource;
   health: BackendHealthState;
   run: SimulationRun;
+  events: MarketEvent[];
   decisions: TradeIntent[];
   orders: SimOrder[];
   fills: Fill[];

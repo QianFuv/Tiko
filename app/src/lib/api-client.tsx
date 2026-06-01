@@ -903,6 +903,7 @@ export async function fetchRunDashboardData(
   const [
     health,
     runResult,
+    eventsResult,
     decisionsResult,
     ordersResult,
     fillsResult,
@@ -913,6 +914,7 @@ export async function fetchRunDashboardData(
   ] = await Promise.all([
     fetchBackendHealth(),
     fetchSimulation(runId),
+    fetchMarketEvents(runId),
     fetchDecisions(runId),
     fetchOrders(runId),
     fetchFills(runId),
@@ -925,6 +927,7 @@ export async function fetchRunDashboardData(
     apiBaseUrl: getApiBaseUrl(),
     source: combineDataSources([
       runResult.source,
+      eventsResult.source,
       decisionsResult.source,
       ordersResult.source,
       fillsResult.source,
@@ -935,6 +938,7 @@ export async function fetchRunDashboardData(
     ]),
     health,
     run: runResult.data,
+    events: eventsResult.data,
     decisions: decisionsResult.data,
     orders: ordersResult.data,
     fills: fillsResult.data,
