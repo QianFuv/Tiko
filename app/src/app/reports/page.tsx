@@ -19,8 +19,14 @@ import type { Metric, ReportArtifact } from "@/lib/types";
 export default async function ReportsPage(): Promise<ReactElement> {
   const reportsResult = await fetchReports();
   const decisionReports = countReportsByType(reportsResult.data, "decision");
-  const experimentReports = countReportsByType(reportsResult.data, "experiment");
-  const simulationReports = countReportsByType(reportsResult.data, "simulation");
+  const experimentReports = countReportsByType(
+    reportsResult.data,
+    "experiment",
+  );
+  const simulationReports = countReportsByType(
+    reportsResult.data,
+    "simulation",
+  );
   const metrics: Metric[] = [
     {
       label: "Reports",
@@ -76,11 +82,12 @@ export default async function ReportsPage(): Promise<ReactElement> {
             </thead>
             <tbody>
               {reportsResult.data.map((report) => (
-                <tr key={report.report_id} className="border-t border-[#edf0f2]">
+                <tr
+                  key={report.report_id}
+                  className="border-t border-[#edf0f2]"
+                >
                   <td className="px-4 py-3">
-                    <p className="font-medium text-[#17201b]">
-                      {report.title}
-                    </p>
+                    <p className="font-medium text-[#17201b]">{report.title}</p>
                     <p className="mt-1 max-w-[22rem] text-xs text-[#6c7671]">
                       {report.summary}
                     </p>
@@ -133,11 +140,7 @@ function countReportsByType(
  * @param props - Report type badge props.
  * @returns Type badge element.
  */
-function ReportTypeBadge({
-  report,
-}: {
-  report: ReportArtifact;
-}): ReactElement {
+function ReportTypeBadge({ report }: { report: ReportArtifact }): ReactElement {
   const classes =
     report.report_type === "simulation"
       ? "border-[#9bc5ae] bg-[#f4fbf6] text-[#173f2a]"
@@ -145,7 +148,9 @@ function ReportTypeBadge({
         ? "border-[#b8a2d8] bg-[#f8f5ff] text-[#3f2764]"
         : "border-[#e4b06b] bg-[#fff9ed] text-[#5a390b]";
   return (
-    <span className={`rounded-md border px-2 py-1 text-xs font-medium ${classes}`}>
+    <span
+      className={`rounded-md border px-2 py-1 text-xs font-medium ${classes}`}
+    >
       {report.report_type}
     </span>
   );
