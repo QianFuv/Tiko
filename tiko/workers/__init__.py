@@ -5,6 +5,7 @@ from tiko.workers.main import (
     build_worker_definitions,
     process_worker_jobs,
     record_worker_heartbeats,
+    run_worker_loop,
 )
 
 __all__ = [
@@ -13,4 +14,5 @@ __all__ = [
     "build_worker_definitions",
     "process_worker_jobs",
     "record_worker_heartbeats",
+    "run_worker_loop",
 ]

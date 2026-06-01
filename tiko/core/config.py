@@ -195,6 +195,8 @@ class Settings(BaseSettings):
     synthetic_funding_interval_steps: int = Field(default=1, ge=1)
     synthetic_seed: int = 42
     scheduler_interval_seconds: float = Field(default=5.0, gt=0)
+    worker_poll_interval_seconds: float = Field(default=2.0, gt=0)
+    worker_max_jobs_per_tick: int = Field(default=1, ge=1)
 
 
 @lru_cache

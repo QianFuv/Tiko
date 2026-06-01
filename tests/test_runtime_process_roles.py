@@ -32,6 +32,7 @@ from tiko.workers import (
     build_worker_definitions,
     process_worker_jobs,
     record_worker_heartbeats,
+    run_worker_loop,
 )
 
 
@@ -461,6 +462,43 @@ def test_worker_process_roles_record_healthy_heartbeats() -> None:
     }
     assert report.worker_status == "healthy"
     assert report.checks[0].code == "runtime_healthy"
+
+
+def test_worker_loop_processes_roles_repeatedly_without_real_sleep() -> None:
+    """Verify worker daemon loops can be bounded for tests."""
+
+    service = RuntimeService()
+    job = service.create_job(
+        job_type="backtest",
+        resource_type="dataset",
+        resource_id="dataset-1",
+        payload={
+            "candles": [
+                candle.model_dump(mode="json") for candle in create_rl_candles()
+            ],
+        },
+    )
+    definition = next(
+        definition
+        for definition in build_worker_definitions()
+        if definition.worker_name == "backtest-worker"
+    )
+    sleep_delays: list[float] = []
+
+    loop_results = run_worker_loop(
+        service=service,
+        definitions=(definition,),
+        max_jobs_per_tick=1,
+        interval_seconds=0.5,
+        max_iterations=2,
+        sleep=sleep_delays.append,
+    )
+
+    assert len(loop_results) == 2
+    assert loop_results[0][0].completed_job_ids == (job.job_id,)
+    assert loop_results[1][0].claimed_job_ids == ()
+    assert service.get_job(job.job_id).status == "completed"
+    assert sleep_delays == [0.5]
 
 
 def test_worker_process_jobs_completes_eligible_runtime_jobs() -> None:
