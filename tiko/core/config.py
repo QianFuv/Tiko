@@ -194,6 +194,7 @@ class Settings(BaseSettings):
     synthetic_funding_rate: Decimal = Decimal("0")
     synthetic_funding_interval_steps: int = Field(default=1, ge=1)
     synthetic_seed: int = 42
+    scheduler_interval_seconds: float = Field(default=5.0, gt=0)
 
 
 @lru_cache

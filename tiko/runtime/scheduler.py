@@ -1,8 +1,12 @@
-"""One-shot runtime scheduler process helpers."""
+"""Long-running runtime scheduler process helpers."""
 
 import json
+import time
+from collections.abc import Callable
 from datetime import datetime
 
+from tiko.api.dependencies import get_runtime_service, get_simulation_service
+from tiko.core.config import get_settings
 from tiko.domain.reporting import Alert
 from tiko.domain.runtime import WatchdogReport
 from tiko.services.runtime import RuntimeService
@@ -113,15 +117,79 @@ def run_simulation_clock_once(
     ).tick_simulation_clock(now=now)
 
 
+def run_scheduler_loop(
+    service: RuntimeService,
+    simulation_service: SimulationService | None,
+    interval_seconds: float,
+    max_iterations: int | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    on_report: Callable[[WatchdogReport], None] | None = None,
+) -> tuple[WatchdogReport, ...]:
+    """Run scheduler ticks until stopped.
+
+    Args:
+        service: Runtime service used for watchdog checks.
+        simulation_service: Optional simulation service advanced by clock ticks.
+        interval_seconds: Delay between scheduler ticks.
+        max_iterations: Optional upper bound for tests.
+        sleep: Sleep function used between ticks.
+        on_report: Optional callback receiving each watchdog report.
+
+    Returns:
+        Watchdog reports for bounded runs.
+
+    Raises:
+        ValueError: If loop settings are invalid.
+    """
+
+    if interval_seconds <= 0:
+        raise ValueError("interval_seconds must be greater than zero.")
+    if max_iterations is not None and max_iterations < 1:
+        raise ValueError("max_iterations must be at least one when provided.")
+
+    scheduler = RuntimeScheduler(service, simulation_service)
+    reports: list[WatchdogReport] = []
+    iteration = 0
+    while max_iterations is None or iteration < max_iterations:
+        scheduler.tick_simulation_clock()
+        report = scheduler.tick()
+        if on_report is not None:
+            on_report(report)
+        if max_iterations is not None:
+            reports.append(report)
+        iteration += 1
+        if max_iterations is None or iteration < max_iterations:
+            sleep(interval_seconds)
+    return tuple(reports)
+
+
 def main() -> int:
-    """Run one scheduler pass and print a JSON watchdog report.
+    """Run the scheduler loop and print JSON watchdog reports.
 
     Returns:
         Process exit code.
     """
 
-    report = run_scheduler_once()
-    print(json.dumps(report.model_dump(mode="json"), sort_keys=True))
+    settings = get_settings()
+
+    def print_report(report: WatchdogReport) -> None:
+        """Print one watchdog report as JSON.
+
+        Args:
+            report: Watchdog report from one scheduler tick.
+        """
+
+        print(json.dumps(report.model_dump(mode="json"), sort_keys=True), flush=True)
+
+    try:
+        run_scheduler_loop(
+            service=get_runtime_service(),
+            simulation_service=get_simulation_service(),
+            interval_seconds=settings.scheduler_interval_seconds,
+            on_report=print_report,
+        )
+    except KeyboardInterrupt:
+        return 0
     return 0
 
 

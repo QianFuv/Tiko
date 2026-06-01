@@ -15,7 +15,11 @@ from tiko.domain.order import SimOrder
 from tiko.domain.reporting import Alert, ReportArtifact
 from tiko.domain.runtime import BackgroundJob
 from tiko.domain.simulation import SimulationRun
-from tiko.runtime.scheduler import RuntimeScheduler, run_scheduler_once
+from tiko.runtime.scheduler import (
+    RuntimeScheduler,
+    run_scheduler_loop,
+    run_scheduler_once,
+)
 from tiko.services.experiments import ExperimentService
 from tiko.services.runtime import (
     MAX_OPEN_ORDER_AGE_SECONDS,
@@ -224,6 +228,31 @@ def test_simulation_clock_scheduler_advances_due_running_runs() -> None:
     assert len(due_tick) == 1
     assert due_tick[0].run.current_sim_time == run_start + timedelta(hours=1)
     assert disabled_scheduler_tick == ()
+
+
+def test_scheduler_loop_runs_repeated_ticks_without_real_sleep() -> None:
+    """Verify scheduler daemon loops can be bounded for tests."""
+
+    service = RuntimeService()
+    service.create_job(
+        job_type="experiment_run",
+        resource_type="experiment",
+        resource_id="experiment-1",
+        payload={},
+    )
+    sleep_delays: list[float] = []
+
+    reports = run_scheduler_loop(
+        service=service,
+        simulation_service=None,
+        interval_seconds=0.25,
+        max_iterations=2,
+        sleep=sleep_delays.append,
+    )
+
+    assert len(reports) == 2
+    assert [report.queued_job_count for report in reports] == [1, 1]
+    assert sleep_delays == [0.25]
 
 
 def test_scheduler_watchdog_includes_open_order_checks() -> None:
