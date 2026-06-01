@@ -13,6 +13,7 @@ from tiko.domain.simulation import SimulationRun
 from tiko.simulation.broker import SimBroker
 from tiko.simulation.fee import FeeEngine
 from tiko.simulation.ledger import (
+    InsufficientCashError,
     apply_fill_to_account,
     apply_fill_to_ledger,
     apply_funding_to_ledger,
@@ -635,6 +636,53 @@ def test_ledger_update_preserves_account_output_and_exposes_metadata() -> None:
     assert ledger_update.cash_delta == Decimal("-200.14002")
     assert ledger_update.realized_pnl_delta == Decimal("-0.10002")
     assert ledger_update.account.realized_pnl == Decimal("-0.10002")
+
+
+def test_ledger_rejects_buy_fill_when_cash_is_insufficient() -> None:
+    """Verify buy fills cannot overdraw simulated cash."""
+
+    account = create_account().model_copy(
+        update={
+            "cash_balance": Decimal("5"),
+            "total_equity": Decimal("5"),
+        }
+    )
+    fill = Fill(
+        fill_id=uuid4(),
+        order_id=uuid4(),
+        run_id=uuid4(),
+        symbol="BTCUSDT",
+        side="buy",
+        quantity=Decimal("1"),
+        price=Decimal("10"),
+        fee=Decimal("1"),
+        slippage_bps=Decimal("0"),
+        filled_at_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    with pytest.raises(InsufficientCashError):
+        apply_fill_to_ledger(account, fill)
+
+
+def test_funding_update_preserves_negative_account_values() -> None:
+    """Verify funding accounting does not clamp negative cash or equity."""
+
+    account = create_account().model_copy(
+        update={
+            "cash_balance": Decimal("0.05"),
+            "total_equity": Decimal("0.05"),
+        }
+    )
+
+    update = apply_funding_to_ledger(
+        account,
+        [create_position("long")],
+        Decimal("0.001"),
+    )
+
+    assert update.cash_delta == Decimal("-0.200")
+    assert update.account.cash_balance == Decimal("-0.15")
+    assert update.account.total_equity == Decimal("-0.15")
 
 
 def test_fill_accounting_partial_close_preserves_average_entry() -> None:

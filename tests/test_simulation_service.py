@@ -516,6 +516,35 @@ def test_service_records_exchange_rejected_market_order_without_fill() -> None:
     assert result.metric_snapshot.metrics["fill_count"] == 0
 
 
+def test_service_rejects_cash_insufficient_fills_without_ledger() -> None:
+    """Verify cash guard rejects fills that would overdraw the account."""
+
+    service = SimulationService(
+        Settings(
+            default_initial_equity=100,
+            sim_broker_taker_fee_bps=Decimal("1000000"),
+        )
+    )
+    run = service.create_run(
+        name="cash-insufficient",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    result = service.step_run(run.run_id, confidence=0.7)
+
+    assert result.risk_review.status == "approved"
+    assert result.order is not None
+    assert result.order.status == "rejected"
+    assert result.fill is None
+    assert result.ledger_entry is None
+    assert result.run.account.cash_balance == Decimal("100")
+    assert result.run.account.total_equity == Decimal("100")
+    assert service.list_orders() == [result.order]
+    assert service.list_fills() == []
+    assert service.list_ledger_entries(run.run_id) == []
+
+
 def test_service_routes_limit_order_when_market_orders_are_disabled() -> None:
     """Verify limit-only broker settings route through simulated limit matching."""
 

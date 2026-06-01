@@ -52,6 +52,7 @@ from tiko.simulation.clock import advance_simulated_time
 from tiko.simulation.event_bus import EventBus
 from tiko.simulation.ledger import (
     FundingUpdate,
+    InsufficientCashError,
     LedgerUpdate,
     apply_fill_to_ledger,
     apply_funding_to_ledger,
@@ -742,15 +743,25 @@ class SimulationService:
                     candle.close,
                     available_quantity=available_quantity,
                 )
-            state.orders.append(order)
             if fill is not None:
-                ledger_update = apply_fill_to_ledger(
-                    account,
-                    fill,
-                    prior_fills=state.fills,
-                )
-                account = ledger_update.account
-                state.fills.append(fill)
+                try:
+                    ledger_update = apply_fill_to_ledger(
+                        account,
+                        fill,
+                        prior_fills=state.fills,
+                    )
+                except InsufficientCashError:
+                    order = order.model_copy(
+                        update={
+                            "status": "rejected",
+                            "updated_at_sim_time": fill.filled_at_sim_time,
+                        }
+                    )
+                    fill = None
+                else:
+                    account = ledger_update.account
+                    state.fills.append(fill)
+            state.orders.append(order)
         ledger_run = decision_run.model_copy(update={"account": account})
         state.run = ledger_run
         agent_run = self._build_agent_run(intent)

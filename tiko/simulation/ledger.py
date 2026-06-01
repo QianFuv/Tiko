@@ -10,6 +10,14 @@ from tiko.domain.account import Position, SimAccount
 from tiko.domain.order import Fill
 
 
+class LedgerError(ValueError):
+    """Base error for invalid simulated ledger updates."""
+
+
+class InsufficientCashError(LedgerError):
+    """Raised when a simulated buy fill would overdraw cash."""
+
+
 @dataclass(frozen=True)
 class LedgerUpdate:
     """Describe the account impact of one simulated fill."""
@@ -159,14 +167,16 @@ def apply_fill_to_ledger(
     notional = fill.quantity * fill.price
     signed_cash_delta = -notional if fill.side == "buy" else notional
     cash_delta = signed_cash_delta - fill.fee
-    cash_balance = max(Decimal("0"), account.cash_balance + cash_delta)
+    cash_balance = account.cash_balance + cash_delta
+    if fill.side == "buy" and cash_balance < Decimal("0"):
+        raise InsufficientCashError("Insufficient cash for simulated buy fill.")
     previous_accounting = calculate_fill_accounting(prior_fills)
     current_accounting = calculate_fill_accounting((*prior_fills, fill))
     realized_trade_pnl_delta = (
         current_accounting.realized_pnl - previous_accounting.realized_pnl
     )
     realized_pnl_delta = realized_trade_pnl_delta - fill.fee
-    total_equity = max(Decimal("0"), account.total_equity + realized_pnl_delta)
+    total_equity = account.total_equity + realized_pnl_delta
     updated_account = account.model_copy(
         update={
             "cash_balance": cash_balance,
@@ -210,9 +220,9 @@ def apply_funding_to_ledger(
     cash_delta = -funding_payment
     updated_account = account.model_copy(
         update={
-            "cash_balance": max(Decimal("0"), account.cash_balance + cash_delta),
+            "cash_balance": account.cash_balance + cash_delta,
             "realized_pnl": account.realized_pnl + cash_delta,
-            "total_equity": max(Decimal("0"), account.total_equity + cash_delta),
+            "total_equity": account.total_equity + cash_delta,
         }
     )
     return FundingUpdate(
