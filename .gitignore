@@ -4,6 +4,7 @@ __pycache__/
 .ruff_cache/
 docs/plan/
 docs/report/
+docs/review/
 .env
 .env.*
 AGENTS.md
