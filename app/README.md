@@ -16,6 +16,11 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+The frontend reads the backend from `NEXT_PUBLIC_API_BASE_URL`, defaulting to
+`http://127.0.0.1:8000`. Deterministic demo fallback data is disabled by
+default; set `NEXT_PUBLIC_ENABLE_DEMO_FALLBACK=true` only when intentionally
+developing UI without a backend.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.

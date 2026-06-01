@@ -63,6 +63,7 @@ const DEMO_REPORT_ID = "00000000-0000-4000-8000-000000001201";
 const DEMO_PLUGIN_ID = "00000000-0000-4000-8000-000000001301";
 const DEMO_EVENT_ID = "00000000-0000-4000-8000-000000001401";
 const DEMO_TIME = "2026-05-31T00:00:00Z";
+const ENABLE_DEMO_FALLBACK = "true";
 
 /**
  * Resolve the configured backend API base URL.
@@ -74,6 +75,15 @@ export function getApiBaseUrl(): string {
     /\/$/,
     "",
   );
+}
+
+/**
+ * Return whether failed backend fetches may use deterministic demo data.
+ *
+ * @returns `true` when demo fallback is explicitly enabled.
+ */
+export function isDemoFallbackEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_ENABLE_DEMO_FALLBACK === ENABLE_DEMO_FALLBACK;
 }
 
 /**
@@ -964,10 +974,15 @@ async function fetchApiData<T>(
       error: null,
     };
   } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Backend unavailable";
+    if (!isDemoFallbackEnabled()) {
+      throw new Error(`Backend data fetch failed for ${path}: ${errorMessage}`);
+    }
     return {
       data: fallback(),
       source: "demo",
-      error: error instanceof Error ? error.message : "Backend unavailable",
+      error: errorMessage,
     };
   }
 }

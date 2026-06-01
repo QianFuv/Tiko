@@ -73,6 +73,9 @@ pnpm dev
 
 The frontend defaults to `http://127.0.0.1:3000` and reads the backend from
 `NEXT_PUBLIC_API_BASE_URL`, defaulting to `http://127.0.0.1:8000`.
+Demo fallback data is disabled by default. Set
+`NEXT_PUBLIC_ENABLE_DEMO_FALLBACK=true` only for local UI development without a
+backend.
 
 ## Configuration
 
