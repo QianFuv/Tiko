@@ -9,6 +9,9 @@ import pytest
 
 from tiko.domain.account import Position, SimAccount
 from tiko.domain.decision import TradeIntent
+from tiko.domain.market import OrderBookSnapshot
+from tiko.domain.order import SimOrder
+from tiko.domain.risk import RiskContext
 from tiko.services.portfolio import PortfolioService
 from tiko.services.risk import RiskService
 
@@ -110,6 +113,56 @@ def create_position(
     )
 
 
+def create_open_order(notional: Decimal) -> SimOrder:
+    """Create an open limit order for risk context tests.
+
+    Args:
+        notional: Order notional at the limit price.
+
+    Returns:
+        Simulated open order.
+    """
+
+    limit_price = Decimal("100")
+    return SimOrder(
+        order_id=uuid4(),
+        run_id=uuid4(),
+        account_id=uuid4(),
+        decision_id=uuid4(),
+        symbol="BTCUSDT",
+        side="buy",
+        order_type="limit",
+        quantity=notional / limit_price,
+        limit_price=limit_price,
+        status="open",
+        submitted_at_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+
+def create_orderbook(spread_bps: Decimal, depth_1pct_usd: Decimal) -> OrderBookSnapshot:
+    """Create an orderbook snapshot for risk context tests.
+
+    Args:
+        spread_bps: Snapshot spread in basis points.
+        depth_1pct_usd: Snapshot one-percent depth.
+
+    Returns:
+        Orderbook snapshot.
+    """
+
+    return OrderBookSnapshot(
+        symbol="BTCUSDT",
+        as_of=datetime(2026, 1, 1, tzinfo=UTC),
+        bids=[(Decimal("99"), Decimal("1"))],
+        asks=[(Decimal("101"), Decimal("1"))],
+        mid_price=Decimal("100"),
+        spread_bps=spread_bps,
+        depth_1pct_usd=depth_1pct_usd,
+        source="test",
+    )
+
+
 def test_risk_rejects_low_confidence_and_low_data_quality() -> None:
     """Verify rejection reasons are explicit and non-executable."""
 
@@ -171,6 +224,70 @@ def test_risk_rejects_leverage_when_disabled() -> None:
     assert review.max_order_notional == Decimal("0")
     assert review.reasons == ["leverage_not_allowed"]
     assert review.triggered_rules == ["allow_leverage"]
+
+
+def test_risk_rejects_context_exposure_breaches() -> None:
+    """Verify risk context can block gross and net exposure breaches."""
+
+    review = RiskService(
+        minimum_confidence=0.6,
+        max_gross_exposure=Decimal("1.0"),
+        max_net_exposure=Decimal("1.0"),
+    ).review(
+        create_intent(target_weight=Decimal("0.30")),
+        account=create_account(),
+        context=RiskContext(
+            positions=[create_position("long", Decimal("90000"), symbol="ETHUSDT")]
+        ),
+    )
+
+    assert review.status == "rejected"
+    assert review.approved_target_weight == Decimal("0")
+    assert review.reasons == [
+        "gross_exposure_exceeds_limit",
+        "net_exposure_exceeds_limit",
+    ]
+    assert review.triggered_rules == ["max_gross_exposure", "max_net_exposure"]
+
+
+def test_risk_rejects_open_order_exposure_breaches() -> None:
+    """Verify active open orders count against configured exposure limits."""
+
+    review = RiskService(
+        minimum_confidence=0.6,
+        max_open_order_exposure=Decimal("0.50"),
+    ).review(
+        create_intent(target_weight=Decimal("0.10")),
+        account=create_account(),
+        context=RiskContext(open_orders=[create_open_order(Decimal("60000"))]),
+    )
+
+    assert review.status == "rejected"
+    assert review.reasons == ["open_order_exposure_exceeds_limit"]
+    assert review.triggered_rules == ["max_open_order_exposure"]
+
+
+def test_risk_rejects_liquidity_context_breaches() -> None:
+    """Verify spread and depth context can block risky intents."""
+
+    review = RiskService(
+        minimum_confidence=0.6,
+        max_spread_bps=Decimal("20"),
+        min_depth_1pct_usd=Decimal("500000"),
+    ).review(
+        create_intent(target_weight=Decimal("0.10")),
+        account=create_account(),
+        context=RiskContext(
+            latest_orderbook=create_orderbook(
+                spread_bps=Decimal("25"),
+                depth_1pct_usd=Decimal("100000"),
+            )
+        ),
+    )
+
+    assert review.status == "rejected"
+    assert review.reasons == ["spread_exceeds_limit", "depth_below_minimum"]
+    assert review.triggered_rules == ["max_spread_bps", "min_depth_1pct_usd"]
 
 
 def test_risk_resizes_oversized_long_and_short_intents() -> None:

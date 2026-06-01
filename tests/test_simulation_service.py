@@ -529,8 +529,8 @@ def test_synthetic_steps_rotate_configured_symbols() -> None:
     assert second_result.feature_snapshot.features["one_step_return"] == "0"
 
 
-def test_service_records_exchange_rejected_market_order_without_fill() -> None:
-    """Verify exchange-rejected market orders do not create fills or ledger entries."""
+def test_service_rejects_wide_spread_before_broker_submission() -> None:
+    """Verify liquidity risk blocks wide-spread orders before broker submission."""
 
     service = SimulationService(Settings(sim_broker_max_market_spread_bps=Decimal("1")))
     run = service.create_run(
@@ -541,15 +541,17 @@ def test_service_records_exchange_rejected_market_order_without_fill() -> None:
 
     result = service.step_run(run.run_id, confidence=0.7)
 
-    assert result.risk_review.status == "approved"
-    assert result.order is not None
-    assert result.order.status == "rejected"
+    assert result.risk_review.status == "rejected"
+    assert result.risk_review.reasons == ["spread_exceeds_limit"]
+    assert result.risk_review.triggered_rules == ["max_spread_bps"]
+    assert result.decision.status == "rejected"
+    assert result.order is None
     assert result.fill is None
     assert result.ledger_entry is None
-    assert service.list_orders() == [result.order]
+    assert service.list_orders() == []
     assert service.list_fills() == []
     assert service.list_ledger_entries(run.run_id) == []
-    assert result.metric_snapshot.metrics["order_count"] == 1
+    assert result.metric_snapshot.metrics["order_count"] == 0
     assert result.metric_snapshot.metrics["fill_count"] == 0
 
 

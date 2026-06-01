@@ -7,7 +7,10 @@ from uuid import UUID
 
 from pydantic import Field
 
+from tiko.domain.account import Position
 from tiko.domain.base import DomainModel
+from tiko.domain.market import OrderBookSnapshot
+from tiko.domain.order import SimOrder
 
 
 class RiskLimits(DomainModel):
@@ -23,6 +26,14 @@ class RiskLimits(DomainModel):
     max_drawdown: Decimal = Field(default=Decimal("1"), ge=Decimal("0"))
     max_daily_loss: Decimal = Field(default=Decimal("1"), ge=Decimal("0"))
     live_trading_allowed: bool = False
+
+
+class RiskContext(DomainModel):
+    """Represent point-in-time context for risk review."""
+
+    positions: list[Position] = Field(default_factory=list)
+    open_orders: list[SimOrder] = Field(default_factory=list)
+    latest_orderbook: OrderBookSnapshot | None = None
 
 
 class RiskReview(DomainModel):

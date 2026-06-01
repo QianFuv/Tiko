@@ -34,7 +34,7 @@ from tiko.domain.reporting import (
     AlertStatus,
     ReportArtifact,
 )
-from tiko.domain.risk import RiskLimits, RiskReview
+from tiko.domain.risk import RiskContext, RiskLimits, RiskReview
 from tiko.domain.runtime import BackgroundJob
 from tiko.domain.simulation import SimulationRun
 from tiko.observation import ObservationBuilder
@@ -394,6 +394,36 @@ class SimulationService:
             max_daily_loss=limits.max_daily_loss,
             allow_short=self._settings.sim_broker_allow_short,
             allow_leverage=self._settings.sim_broker_allow_leverage,
+            max_spread_bps=self._settings.sim_broker_max_market_spread_bps,
+            min_depth_1pct_usd=(
+                self._settings.sim_broker_min_market_depth_1pct_usd
+                if self._settings.sim_broker_min_market_depth_1pct_usd > Decimal("0")
+                else None
+            ),
+        )
+
+    def _build_risk_context(
+        self,
+        state: SimulationState,
+        orderbook_snapshot: OrderBookSnapshot,
+    ) -> RiskContext:
+        """Build point-in-time risk context for one step.
+
+        Args:
+            state: Simulation state being reviewed.
+            orderbook_snapshot: Latest orderbook snapshot.
+
+        Returns:
+            Risk context for independent review.
+        """
+
+        active_order_statuses = {"submitted", "accepted", "open", "partially_filled"}
+        return RiskContext(
+            positions=list(state.positions),
+            open_orders=[
+                order for order in state.orders if order.status in active_order_statuses
+            ],
+            latest_orderbook=orderbook_snapshot,
         )
 
     def _apply_step_decision_status(
@@ -718,7 +748,9 @@ class SimulationService:
         agent_run = self._build_agent_run(intent)
         intent = self._enrich_agent_trace_decision(observation, intent, agent_run)
         risk_review = self._build_risk_service(state.risk_limits).review(
-            intent, account=decision_run.account
+            intent,
+            account=decision_run.account,
+            context=self._build_risk_context(state, orderbook_snapshot),
         )
         order = None
         fill = None
