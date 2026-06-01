@@ -21,7 +21,7 @@ from tiko.domain.account import Position
 from tiko.domain.market import Candle, FeatureSnapshot, MarketEvent, OrderBookSnapshot
 from tiko.domain.memory import MemoryEntry
 from tiko.domain.observation import Observation, ObservationDataQuality
-from tiko.domain.order import Fill
+from tiko.domain.order import Fill, OrderRequest
 from tiko.domain.reporting import ReportArtifact
 from tiko.domain.risk import RiskLimits
 from tiko.domain.runtime import BackgroundJob
@@ -188,6 +188,39 @@ def create_service_fill(
         fee=Decimal("0"),
         slippage_bps=Decimal("0"),
         filled_at_sim_time=datetime(2026, 1, 1, hour, tzinfo=UTC),
+    )
+
+
+def create_service_limit_order_request(
+    run: SimulationRun,
+    side: Literal["buy", "sell"],
+    quantity: Decimal,
+    limit_price: Decimal,
+    simulated_time: datetime,
+) -> OrderRequest:
+    """Create a limit order request for service lifecycle tests.
+
+    Args:
+        run: Simulation run that owns the order.
+        side: Order side.
+        quantity: Order quantity.
+        limit_price: Limit price.
+        simulated_time: Simulated submission time.
+
+    Returns:
+        Limit order request domain model.
+    """
+
+    return OrderRequest(
+        run_id=run.run_id,
+        account_id=run.account.account_id,
+        decision_id=None,
+        symbol="BTCUSDT",
+        side=side,
+        order_type="limit",
+        quantity=quantity,
+        limit_price=limit_price,
+        submitted_at_sim_time=simulated_time,
     )
 
 
@@ -584,6 +617,58 @@ def test_service_routes_limit_order_when_market_orders_are_disabled() -> None:
     )
     assert service.list_orders() == [result.order]
     assert service.list_fills() == [result.fill]
+
+
+def test_service_reevaluates_open_limit_orders_before_decision() -> None:
+    """Verify retained GTC limit orders fill on later simulation steps."""
+
+    repository = create_test_repository()
+    service = SimulationService(Settings(), repository=repository)
+    run = service.create_run(
+        name="open-order-reevaluation",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    first_result = service.step_run(run.run_id, confidence=0.7)
+    order_request = create_service_limit_order_request(
+        run=first_result.run,
+        side="sell",
+        quantity=Decimal("0.01"),
+        limit_price=Decimal("50060"),
+        simulated_time=first_result.run.current_sim_time,
+    )
+    open_order, open_fill = service._broker.submit_limit_order(
+        order_request,
+        reference_price=first_result.candle.close,
+    )
+    state = service._get_state(run.run_id)
+    state.orders.append(open_order)
+
+    second_result = service.step_run(run.run_id, confidence=0.7)
+
+    updated_open_order = service.get_order(open_order.order_id)
+    assert open_fill is None
+    assert open_order.status == "open"
+    assert second_result.open_order_updates == (updated_open_order,)
+    assert len(second_result.open_order_fills) == 1
+    assert len(second_result.open_order_ledger_entries) == 1
+    assert updated_open_order.status == "filled"
+    assert second_result.open_order_fills[0].order_id == open_order.order_id
+    assert second_result.open_order_fills[0].price == Decimal("50060")
+    assert second_result.open_order_ledger_entries[0].fill_id == (
+        second_result.open_order_fills[0].fill_id
+    )
+    assert second_result.observation.account.cash_balance > (
+        first_result.run.account.cash_balance
+    )
+    assert second_result.metric_snapshot.metrics["fill_count"] == len(
+        service.list_fills()
+    )
+    assert updated_open_order in repository.list_orders(run.run_id)
+    assert second_result.open_order_fills[0] in repository.list_fills(run.run_id)
+    assert second_result.open_order_ledger_entries[0] in (
+        repository.list_ledger_entries(run.run_id)
+    )
 
 
 def test_service_skips_order_below_configured_min_notional() -> None:

@@ -199,11 +199,17 @@ class SimulationRepository:
             for message in result.agent_messages:
                 self._merge_agent_message(session, message)
             self._merge_risk_review(session, result.run.run_id, result.risk_review)
+            for order in result.open_order_updates:
+                self._merge_order(session, order)
             if result.order is not None:
                 self._merge_order(session, result.order)
+            for fill in result.open_order_fills:
+                self._merge_fill(session, fill)
             if result.fill is not None:
                 self._merge_fill(session, result.fill)
             self._replace_positions(session, result.run.run_id, result.positions)
+            for entry in result.open_order_ledger_entries:
+                self._merge_ledger_entry(session, entry)
             if result.ledger_entry is not None:
                 self._merge_ledger_entry(session, result.ledger_entry)
             if result.funding_ledger_entry is not None:

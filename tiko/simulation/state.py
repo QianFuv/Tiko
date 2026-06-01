@@ -73,3 +73,6 @@ class SimulationStepResult:
     funding_ledger_entry: LedgerEntry | None
     portfolio_snapshot: PortfolioSnapshot
     metric_snapshot: MetricSnapshot
+    open_order_updates: tuple[SimOrder, ...] = ()
+    open_order_fills: tuple[Fill, ...] = ()
+    open_order_ledger_entries: tuple[LedgerEntry, ...] = ()

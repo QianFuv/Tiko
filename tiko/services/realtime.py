@@ -428,6 +428,24 @@ def build_step_result_envelopes(
             payload=result.risk_review.model_dump(mode="json"),
         ),
     ]
+    for order in result.open_order_updates:
+        envelopes.append(
+            build_stream_event(
+                topic="order.updated",
+                run_id=run_id,
+                simulated_time=order.updated_at_sim_time,
+                payload=order.model_dump(mode="json"),
+            )
+        )
+    for fill in result.open_order_fills:
+        envelopes.append(
+            build_stream_event(
+                topic="fill.created",
+                run_id=run_id,
+                simulated_time=fill.filled_at_sim_time,
+                payload=fill.model_dump(mode="json"),
+            )
+        )
     if result.order is not None:
         envelopes.append(
             build_stream_event(

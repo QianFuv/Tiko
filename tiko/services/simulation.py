@@ -680,6 +680,27 @@ class SimulationService:
         state.orderbook_snapshots.append(orderbook_snapshot)
         state.feature_snapshots.append(feature_snapshot)
         state.events.append(event)
+        (
+            open_order_updates,
+            open_order_fills,
+            open_order_ledger_entries,
+            account,
+        ) = self._reevaluate_open_orders_for_step(
+            state=state,
+            account=decision_run.account,
+            reference_price=candle.close,
+            as_of=next_time,
+        )
+        decision_run = decision_run.model_copy(update={"account": account})
+        state.run = decision_run
+        if open_order_fills:
+            state.positions = list(
+                self._derive_positions(
+                    state,
+                    mark_prices=state.latest_mark_price_by_symbol,
+                    as_of=next_time,
+                )
+            )
         observation = self._observation_builder.build(
             run=decision_run,
             symbol=symbol,
@@ -711,7 +732,6 @@ class SimulationService:
         )
         order_request = portfolio_order_plan.order_request
         intent = self._apply_step_decision_status(intent, risk_review, order_request)
-        account = decision_run.account
         ledger_update: LedgerUpdate | None = None
         if order_request is not None:
             if order_request.order_type == "market":
@@ -829,6 +849,9 @@ class SimulationService:
             funding_ledger_entry=funding_ledger_entry,
             portfolio_snapshot=portfolio_snapshot,
             metric_snapshot=metric_snapshot,
+            open_order_updates=open_order_updates,
+            open_order_fills=open_order_fills,
+            open_order_ledger_entries=open_order_ledger_entries,
         )
         realtime_envelopes = build_step_result_envelopes(result)
         state.realtime_events.extend(realtime_envelopes)
@@ -992,6 +1015,109 @@ class SimulationService:
         if not levels:
             return Decimal("0")
         return levels[0][1]
+
+    def _reevaluate_open_orders_for_step(
+        self,
+        state: SimulationState,
+        account: SimAccount,
+        reference_price: Decimal,
+        as_of: datetime,
+    ) -> tuple[
+        tuple[SimOrder, ...], tuple[Fill, ...], tuple[LedgerEntry, ...], SimAccount
+    ]:
+        """Apply retained broker open orders for one market step.
+
+        Args:
+            state: Simulation state being advanced.
+            account: Account before open-order fills.
+            reference_price: Current market reference price.
+            as_of: Simulated update time.
+
+        Returns:
+            Order updates, fills, ledger entries, and updated account.
+        """
+
+        order_updates: list[SimOrder] = []
+        fills: list[Fill] = []
+        ledger_entries: list[LedgerEntry] = []
+        updated_account = account
+        results = self._broker.reevaluate_open_orders(
+            reference_price=reference_price,
+            as_of=as_of,
+        )
+        for order_update, fill in results:
+            existing_order = self._find_state_order(state, order_update.order_id)
+            if fill is None:
+                if existing_order != order_update:
+                    self._upsert_state_order(state, order_update)
+                    order_updates.append(order_update)
+                continue
+            try:
+                ledger_update = apply_fill_to_ledger(
+                    updated_account,
+                    fill,
+                    prior_fills=state.fills,
+                )
+            except InsufficientCashError:
+                rejected_order = order_update.model_copy(
+                    update={
+                        "status": "rejected",
+                        "updated_at_sim_time": fill.filled_at_sim_time,
+                    }
+                )
+                self._upsert_state_order(state, rejected_order)
+                order_updates.append(rejected_order)
+                continue
+            updated_account = ledger_update.account
+            self._upsert_state_order(state, order_update)
+            state.fills.append(fill)
+            ledger_entry = self._build_ledger_entry(
+                state.run.model_copy(update={"account": updated_account}),
+                fill,
+                ledger_update,
+            )
+            state.ledger_entries.append(ledger_entry)
+            order_updates.append(order_update)
+            fills.append(fill)
+            ledger_entries.append(ledger_entry)
+        return (
+            tuple(order_updates),
+            tuple(fills),
+            tuple(ledger_entries),
+            updated_account,
+        )
+
+    def _find_state_order(
+        self, state: SimulationState, order_id: UUID
+    ) -> SimOrder | None:
+        """Find an order in simulation state.
+
+        Args:
+            state: Simulation state to inspect.
+            order_id: Order identifier.
+
+        Returns:
+            Matching order or `None`.
+        """
+
+        return next(
+            (order for order in state.orders if order.order_id == order_id),
+            None,
+        )
+
+    def _upsert_state_order(self, state: SimulationState, order: SimOrder) -> None:
+        """Insert or replace one order in simulation state.
+
+        Args:
+            state: Simulation state to update.
+            order: Order to insert or replace.
+        """
+
+        for index, existing_order in enumerate(state.orders):
+            if existing_order.order_id == order.order_id:
+                state.orders[index] = order
+                return
+        state.orders.append(order)
 
     def _extract_feature_volatility_bps(
         self, feature_snapshot: FeatureSnapshot
