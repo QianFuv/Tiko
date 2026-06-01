@@ -487,13 +487,21 @@ export async function fetchRunMarketData(
 ): Promise<RunMarketData> {
   const runResult = await fetchSimulation(runId);
   const primarySymbol = runResult.data.symbols[0] ?? "BTCUSDT";
-  const [symbolsResult, candlesResult, orderBookResult, eventsResult] =
-    await Promise.all([
-      fetchMarketSymbols(),
-      fetchMarketCandles(runId),
-      fetchMarketOrderBook(primarySymbol, runId),
-      fetchMarketEvents(runId),
-    ]);
+  const [
+    symbolsResult,
+    candlesResult,
+    orderBookResult,
+    eventsResult,
+    ordersResult,
+    fillsResult,
+  ] = await Promise.all([
+    fetchMarketSymbols(),
+    fetchMarketCandles(runId),
+    fetchMarketOrderBook(primarySymbol, runId),
+    fetchMarketEvents(runId),
+    fetchOrders(runId),
+    fetchFills(runId),
+  ]);
   return {
     source: combineDataSources([
       runResult.source,
@@ -501,12 +509,16 @@ export async function fetchRunMarketData(
       candlesResult.source,
       orderBookResult.source,
       eventsResult.source,
+      ordersResult.source,
+      fillsResult.source,
     ]),
     run: runResult.data,
     symbols: symbolsResult.data,
     candles: candlesResult.data,
     orderBook: orderBookResult.data,
     events: eventsResult.data,
+    orders: ordersResult.data,
+    fills: fillsResult.data,
   };
 }
 

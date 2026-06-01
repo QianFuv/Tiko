@@ -430,6 +430,8 @@ export type RunMarketData = {
   candles: Candle[];
   orderBook: MarketOrderBook;
   events: MarketEvent[];
+  orders: SimOrder[];
+  fills: Fill[];
 };
 
 export type RunTraceData = {
