@@ -693,16 +693,9 @@ class SimulationService:
             memory_entries=state.memory_entries,
             observation_id=uuid5(NAMESPACE_URL, f"observation:{event.event_id}"),
         )
-        intent = self._create_trade_intent(
-            run_id=run_id,
-            symbol=symbol,
-            observation_id=observation.observation_id,
-            confidence=confidence,
-            data_quality_score=observation.data_quality.score,
-            events=observation.events,
-            input_data_as_of=observation.as_of,
-            simulated_time=next_time,
-        )
+        intent = self._evaluate_step_agent(observation, confidence)
+        agent_run = self._build_agent_run(intent)
+        intent = self._enrich_agent_trace_decision(observation, intent, agent_run)
         risk_review = self._build_risk_service(state.risk_limits).review(
             intent, account=decision_run.account
         )
@@ -764,7 +757,6 @@ class SimulationService:
             state.orders.append(order)
         ledger_run = decision_run.model_copy(update={"account": account})
         state.run = ledger_run
-        agent_run = self._build_agent_run(intent)
         agent_messages = tuple(self._build_agent_messages(agent_run, intent))
         state.observations.append(observation)
         state.agent_runs.append(agent_run)
@@ -3157,6 +3149,22 @@ class SimulationService:
         if any(message.agent_run_id != agent_run.agent_run_id for message in messages):
             raise ValueError("Agent message agent_run_id does not match agent run.")
 
+    def _evaluate_step_agent(
+        self, observation: Observation, confidence: float
+    ) -> TradeIntent:
+        """Evaluate the configured deterministic step agent.
+
+        Args:
+            observation: Point-in-time observation for the step.
+            confidence: Confidence assigned to directional rule signals.
+
+        Returns:
+            Structured trade intent produced by the agent runtime.
+        """
+
+        agent = RuleBasedTraderAgent(confidence=confidence)
+        return AgentRuntime(agent).evaluate(observation)
+
     def _enrich_agent_trace_decision(
         self,
         observation: Observation,
@@ -3182,83 +3190,6 @@ class SimulationService:
                 "status": "schema_validated",
             }
         )
-
-    def _create_trade_intent(
-        self,
-        run_id: UUID,
-        symbol: str,
-        observation_id: UUID,
-        confidence: float,
-        data_quality_score: float,
-        events: Sequence[MarketEvent],
-        input_data_as_of: datetime,
-        simulated_time: datetime,
-    ) -> TradeIntent:
-        """Create deterministic synthetic trade intent for a step.
-
-        Args:
-            run_id: Simulation run identifier.
-            symbol: Symbol for the intent.
-            observation_id: Observation snapshot that produced the intent.
-            confidence: Synthetic confidence score.
-            data_quality_score: Observation data-quality score.
-            events: Point-in-time market events included in the observation.
-            input_data_as_of: Point-in-time data availability timestamp.
-            simulated_time: Simulated decision time.
-
-        Returns:
-            Structured trade intent.
-        """
-
-        decision_id = uuid4()
-        return TradeIntent(
-            decision_id=decision_id,
-            run_id=run_id,
-            observation_id=observation_id,
-            agent_run_id=self._build_agent_run_id(decision_id),
-            input_data_as_of=input_data_as_of,
-            agent_id="synthetic_trader",
-            symbol=symbol,
-            market_type="synthetic",
-            action="open_long",
-            target_weight=Decimal("0.10"),
-            max_leverage=Decimal("1"),
-            confidence=confidence,
-            expected_holding_period="1h",
-            thesis="Synthetic trend-following seed decision.",
-            evidence=self._build_decision_evidence(events),
-            invalidation_conditions=["confidence_below_threshold"],
-            data_quality_score=data_quality_score,
-            created_at_sim_time=simulated_time,
-        )
-
-    def _build_decision_evidence(
-        self, events: Sequence[MarketEvent]
-    ) -> list[dict[str, object]]:
-        """Build synthetic decision evidence from point-in-time events.
-
-        Args:
-            events: Point-in-time market events included in the observation.
-
-        Returns:
-            Decision evidence entries.
-        """
-
-        evidence: list[dict[str, object]] = [{"type": "synthetic_candle"}]
-        for event in events:
-            if event.type == "candle_closed":
-                continue
-            evidence.append(
-                {
-                    "type": "market_event",
-                    "event_type": event.type,
-                    "source": event.source,
-                    "confidence": event.confidence,
-                    "simulated_time": event.simulated_time.isoformat(),
-                    "payload": dict(event.payload),
-                }
-            )
-        return evidence
 
     def _build_agent_run_id(self, decision_id: UUID) -> UUID:
         """Build the deterministic agent-run identifier for a decision.

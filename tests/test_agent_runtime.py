@@ -17,7 +17,7 @@ from tiko.agents import (
 )
 from tiko.domain.account import Position, SimAccount
 from tiko.domain.decision import TradeIntent
-from tiko.domain.market import Candle, OrderBookSnapshot
+from tiko.domain.market import Candle, MarketEvent, OrderBookSnapshot
 from tiko.domain.memory import MemoryEntry
 from tiko.domain.observation import (
     Observation,
@@ -72,6 +72,24 @@ def create_candle(close: Decimal, hour: int) -> Candle:
         source="test",
         as_of=datetime(2026, 1, 1, hour, tzinfo=UTC),
         created_at=datetime(2026, 1, 1, hour, tzinfo=UTC),
+    )
+
+
+def create_market_event() -> MarketEvent:
+    """Create a market event for agent evidence tests.
+
+    Returns:
+        Market event domain model.
+    """
+
+    return MarketEvent(
+        event_id=uuid4(),
+        type="liquidity_shock",
+        symbol="BTCUSDT",
+        simulated_time=datetime(2026, 1, 1, 1, 30, tzinfo=UTC),
+        payload={"severity": "high"},
+        source="manual",
+        confidence=0.8,
     )
 
 
@@ -153,6 +171,49 @@ def test_rule_agent_returns_long_for_rising_candles() -> None:
     assert intent.target_weight == Decimal("0.10")
     assert intent.symbol == observation.symbol
     assert intent.run_id == observation.run_id
+
+
+def test_rule_agent_uses_single_candle_and_observation_metadata() -> None:
+    """Verify a single candle, data quality, and events drive rule output."""
+
+    candle = create_candle(Decimal("110"), 2).model_copy(
+        update={
+            "open": Decimal("100"),
+            "low": Decimal("99"),
+        }
+    )
+    event = create_market_event()
+    observation = create_observation([candle]).model_copy(
+        update={
+            "events": [event],
+            "data_quality": ObservationDataQuality(
+                score=0.42,
+                warnings=["missing_orderbook"],
+            ),
+        }
+    )
+
+    intent = AgentRuntime(RuleBasedTraderAgent(confidence=0.81)).evaluate(observation)
+
+    event_evidence = [
+        evidence
+        for evidence in intent.evidence
+        if evidence.get("type") == "market_event"
+    ]
+    assert intent.action == "open_long"
+    assert intent.target_weight == Decimal("0.10")
+    assert intent.confidence == 0.81
+    assert intent.data_quality_score == 0.42
+    assert event_evidence == [
+        {
+            "type": "market_event",
+            "event_type": "liquidity_shock",
+            "source": "manual",
+            "confidence": 0.8,
+            "simulated_time": "2026-01-01T01:30:00+00:00",
+            "payload": {"severity": "high"},
+        }
+    ]
 
 
 def test_rule_agent_returns_short_for_falling_candles() -> None:

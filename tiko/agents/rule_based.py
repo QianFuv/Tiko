@@ -5,6 +5,7 @@ from typing import Literal
 from uuid import uuid4
 
 from tiko.domain.decision import TradeIntent
+from tiko.domain.market import Candle, MarketEvent
 from tiko.domain.observation import Observation
 
 DecisionAction = Literal["open_long", "open_short", "hold"]
@@ -58,7 +59,9 @@ class RuleBasedTraderAgent:
             thesis=self._create_thesis(action),
             evidence=self._create_evidence(observation),
             invalidation_conditions=["price_direction_reverses"],
-            data_quality_score=1.0 if observation.candles else 0.0,
+            data_quality_score=(
+                observation.data_quality.score if observation.candles else 0.0
+            ),
             created_at_sim_time=observation.as_of,
         )
 
@@ -76,13 +79,29 @@ class RuleBasedTraderAgent:
 
         if not observation.candles:
             return "hold", Decimal("0"), 0.5
-        first_close = observation.candles[0].close
-        latest_close = observation.candles[-1].close
-        if latest_close > first_close:
+        first_price, latest_price = self._select_reference_prices(observation.candles)
+        if latest_price > first_price:
             return "open_long", self._target_weight, self._confidence
-        if latest_close < first_close:
+        if latest_price < first_price:
             return "open_short", -self._target_weight, self._confidence
         return "hold", Decimal("0"), 0.5
+
+    def _select_reference_prices(
+        self, candles: list[Candle]
+    ) -> tuple[Decimal, Decimal]:
+        """Select comparison prices for a directional rule.
+
+        Args:
+            candles: Point-in-time candles in the observation.
+
+        Returns:
+            First and latest prices to compare.
+        """
+
+        if len(candles) == 1:
+            candle = candles[0]
+            return candle.open, candle.close
+        return candles[0].close, candles[-1].close
 
     def _create_thesis(self, action: DecisionAction) -> str:
         """Create a short thesis string for the selected action.
@@ -112,8 +131,35 @@ class RuleBasedTraderAgent:
 
         if not observation.candles:
             return [{"type": "candle_count", "value": 0}]
-        return [
+        evidence: list[dict[str, object]] = [
             {"type": "candle_count", "value": len(observation.candles)},
             {"type": "first_close", "value": str(observation.candles[0].close)},
             {"type": "latest_close", "value": str(observation.candles[-1].close)},
+        ]
+        evidence.extend(self._create_event_evidence(observation.events))
+        return evidence
+
+    def _create_event_evidence(
+        self, events: list[MarketEvent]
+    ) -> list[dict[str, object]]:
+        """Create point-in-time market event evidence.
+
+        Args:
+            events: Market events included in the observation.
+
+        Returns:
+            Evidence records for non-candle events.
+        """
+
+        return [
+            {
+                "type": "market_event",
+                "event_type": event.type,
+                "source": event.source,
+                "confidence": event.confidence,
+                "simulated_time": event.simulated_time.isoformat(),
+                "payload": dict(event.payload),
+            }
+            for event in events
+            if event.type != "candle_closed"
         ]

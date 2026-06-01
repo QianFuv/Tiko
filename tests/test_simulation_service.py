@@ -287,9 +287,13 @@ def test_simulation_step_creates_internal_order_and_fill() -> None:
     assert result.observation.positions == []
     assert result.observation.risk_limits == service.get_risk_limits(run.run_id)
     assert result.agent_run.decision_id == result.decision.decision_id
+    assert result.decision.agent_id == "rule_based_trader"
     assert result.decision.observation_id == result.observation.observation_id
     assert result.decision.agent_run_id == result.agent_run.agent_run_id
     assert result.decision.input_data_as_of == result.observation.as_of
+    assert result.decision.thesis == (
+        "Recent point-in-time candles show upward direction."
+    )
     assert result.decision.status == "converted_to_order"
     assert result.portfolio_order_plan.status == "order_created"
     assert result.portfolio_order_plan.order_request is not None
@@ -317,7 +321,7 @@ def test_simulation_step_creates_internal_order_and_fill() -> None:
         result.decision.decision_id
     )
     assert result.agent_messages[-1].content["invalidation_conditions"] == [
-        "confidence_below_threshold"
+        "price_direction_reverses"
     ]
     assert result.order is not None
     assert result.fill is not None

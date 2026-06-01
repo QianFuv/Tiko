@@ -1036,7 +1036,7 @@ def test_agent_routes_evaluate_rule_based_agent() -> None:
         headers=RESEARCHER_HEADERS,
     )
     assert replay_response.status_code == 200
-    assert replay_response.json()["agent_id"] == "synthetic_trader"
+    assert replay_response.json()["agent_id"] == "rule_based_trader"
     assert (
         client.get("/api/agents/runs/00000000-0000-0000-0000-000000000000").status_code
         == 404
@@ -1045,7 +1045,7 @@ def test_agent_routes_evaluate_rule_based_agent() -> None:
     intent_payload = intent_response.json()
     assert intent_payload["run_id"] == run_id
     assert intent_payload["symbol"] == "BTCUSDT"
-    assert intent_payload["action"] == "hold"
+    assert intent_payload["action"] == "open_long"
 
 
 def test_openrouter_agent_route_requires_key_and_research_permission(
