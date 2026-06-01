@@ -1,5 +1,6 @@
 """Dataset registry service for imported research candles."""
 
+import hashlib
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -23,6 +24,8 @@ from tiko.domain.dataset import (
     RawMarketDataRecord,
 )
 from tiko.domain.market import Candle
+
+DATASET_UPLOAD_URI_PREFIX = "artifact://datasets/uploads"
 
 
 class DatasetServiceError(ValueError):
@@ -58,6 +61,7 @@ class DatasetService:
         name: str,
         source_path: str,
         source: DatasetSource | None = None,
+        source_uri: str | None = None,
     ) -> DatasetRecord:
         """Import a server-local candle dataset file.
 
@@ -65,6 +69,7 @@ class DatasetService:
             name: Dataset display name.
             source_path: Server-local CSV or Parquet path.
             source: Optional explicit source type.
+            source_uri: Optional lineage URI to store instead of the local path.
 
         Returns:
             Imported dataset record.
@@ -91,18 +96,19 @@ class DatasetService:
         quality_report = self._build_quality_report(
             dataset_id, result.validation_report
         )
+        record_source_uri = source_uri or str(result.source_path)
         record = self._build_dataset_record(
             dataset_id=dataset_id,
             name=name,
             source=resolved_source,
-            source_uri=str(result.source_path),
+            source_uri=record_source_uri,
             candles=result.candles,
             status="invalid" if quality_report.has_errors else "validated",
         )
         raw_records = self._build_raw_records(
             dataset_id=dataset_id,
             source=resolved_source,
-            source_uri=str(result.source_path),
+            source_uri=record_source_uri,
             ingestion_run_id=result.ingestion_run_id,
             raw_records=result.raw_records,
             candles=result.candles,
@@ -116,6 +122,57 @@ class DatasetService:
                 record, result.candles, quality_report, raw_records=raw_records
             )
         return record
+
+    def upload_dataset_file(
+        self,
+        name: str,
+        filename: str,
+        content: bytes,
+        artifact_root: str | Path,
+        source: DatasetSource | None = None,
+    ) -> DatasetRecord:
+        """Store and import an uploaded candle dataset file.
+
+        Args:
+            name: Dataset display name.
+            filename: Original client-provided upload filename.
+            content: Uploaded file bytes.
+            artifact_root: Root directory for controlled local artifacts.
+            source: Optional explicit source type.
+
+        Returns:
+            Imported dataset record.
+
+        Raises:
+            DatasetServiceError: If the upload cannot be stored or imported.
+        """
+
+        if not content:
+            raise DatasetServiceError("Uploaded dataset file is empty.")
+
+        safe_filename = self._safe_upload_filename(filename)
+        inferred_source = self._source_from_path(Path(safe_filename))
+        if source is not None and source != inferred_source:
+            raise DatasetServiceError(
+                "Uploaded dataset file extension does not match source."
+            )
+
+        upload_root = Path(artifact_root).resolve() / "datasets" / "uploads"
+        stored_path = upload_root / f"{uuid4()}-{safe_filename}"
+        digest = hashlib.sha256(content).hexdigest()
+        try:
+            upload_root.mkdir(parents=True, exist_ok=True)
+            stored_path.write_bytes(content)
+        except OSError as error:
+            raise DatasetServiceError(str(error)) from error
+
+        source_uri = f"{DATASET_UPLOAD_URI_PREFIX}/{stored_path.name}?sha256={digest}"
+        return self.upload_dataset(
+            name=name,
+            source_path=str(stored_path),
+            source=source or inferred_source,
+            source_uri=source_uri,
+        )
 
     def list_datasets(self) -> list[DatasetRecord]:
         """List imported datasets.
@@ -268,6 +325,30 @@ class DatasetService:
         raise DatasetServiceError(
             "Dataset source_path must end with .csv, .parquet, or .pq."
         )
+
+    def _safe_upload_filename(self, filename: str) -> str:
+        """Validate a dataset upload filename for controlled storage.
+
+        Args:
+            filename: Original client-provided upload filename.
+
+        Returns:
+            Safe filename that can be combined with a generated prefix.
+
+        Raises:
+            DatasetServiceError: If the filename is empty or includes path segments.
+        """
+
+        safe_filename = filename.strip()
+        if not safe_filename:
+            raise DatasetServiceError("Uploaded dataset file name is required.")
+        if "/" in safe_filename or "\\" in safe_filename:
+            raise DatasetServiceError(
+                "Uploaded dataset file name must not include path separators."
+            )
+        if safe_filename in {".", ".."}:
+            raise DatasetServiceError("Uploaded dataset file name is invalid.")
+        return safe_filename
 
     def _build_dataset_record(
         self,

@@ -3,7 +3,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from tiko.api.dependencies import (
@@ -11,6 +11,7 @@ from tiko.api.dependencies import (
     get_dataset_service,
     require_permission,
 )
+from tiko.core.config import get_settings
 from tiko.domain.dataset import DatasetQualityReport, DatasetRecord, DatasetSource
 from tiko.domain.market import Candle
 from tiko.domain.security import Principal
@@ -70,6 +71,58 @@ def upload_dataset(
         metadata={
             "name": dataset.name,
             "source": dataset.source,
+            "candle_count": dataset.candle_count,
+        },
+    )
+    return dataset
+
+
+@router.post("/upload-file", response_model=DatasetRecord)
+async def upload_dataset_file(
+    name: Annotated[str, Form(min_length=1)],
+    file: Annotated[UploadFile, File()],
+    service: DatasetServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManageDatasetPrincipalDep,
+    source: Annotated[DatasetSource | None, Form()] = None,
+) -> DatasetRecord:
+    """Import a multipart CSV or Parquet candle dataset upload.
+
+    Args:
+        name: Dataset display name.
+        file: Uploaded dataset file.
+        service: Dataset service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
+        source: Optional explicit source type.
+
+    Returns:
+        Imported dataset record.
+
+    Raises:
+        HTTPException: If the dataset cannot be imported.
+    """
+
+    content = await file.read()
+    try:
+        dataset = service.upload_dataset_file(
+            name=name,
+            filename=file.filename or "",
+            content=content,
+            artifact_root=get_settings().artifact_root,
+            source=source,
+        )
+    except DatasetServiceError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    audit_service.record(
+        principal=principal,
+        action="dataset.upload",
+        resource_type="dataset",
+        resource_id=str(dataset.dataset_id),
+        metadata={
+            "name": dataset.name,
+            "source": dataset.source,
+            "source_uri": dataset.source_uri,
             "candle_count": dataset.candle_count,
         },
     )

@@ -1,5 +1,6 @@
 """Smoke tests for the FastAPI simulation control plane."""
 
+import hashlib
 import json
 from collections.abc import Sequence
 from decimal import Decimal
@@ -531,6 +532,70 @@ def test_simulation_create_uses_dataset_for_historical_replay(
     assert unknown_dataset_response.status_code == 404
     assert invalid_dataset_create_response.status_code == 422
     assert "validated dataset" in invalid_dataset_create_response.json()["detail"]
+
+
+def test_dataset_routes_upload_file_stores_artifact_with_hash_lineage(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Verify multipart dataset uploads store artifacts with hash lineage."""
+
+    artifact_root = tmp_path / "artifacts"
+    monkeypatch.setenv("TIKO_ARTIFACT_ROOT", str(artifact_root))
+    client = create_test_client()
+    content = (
+        b"symbol,timeframe,open_time,close_time,open,high,low,close,"
+        b"volume,quote_volume,source,as_of,created_at\n"
+        b"BTCUSDT,1h,2026-01-01T00:00:00Z,2026-01-01T01:00:00Z,"
+        b"100,110,95,105,2.5,262.5,csv,2026-01-01T01:00:00Z,"
+        b"2026-01-01T01:00:00Z\n"
+    )
+
+    response = client.post(
+        "/api/datasets/upload-file",
+        data={"name": "multipart replay"},
+        files={"file": ("candles.csv", content, "text/csv")},
+        headers=ADMIN_HEADERS,
+    )
+
+    assert response.status_code == 200
+    dataset = response.json()
+    digest = hashlib.sha256(content).hexdigest()
+    assert dataset["source"] == "csv"
+    assert dataset["status"] == "validated"
+    assert dataset["candle_count"] == 1
+    assert dataset["source_uri"].startswith("artifact://datasets/uploads/")
+    assert dataset["source_uri"].endswith(f"?sha256={digest}")
+
+    stored_name = (
+        dataset["source_uri"]
+        .removeprefix("artifact://datasets/uploads/")
+        .split("?", maxsplit=1)[0]
+    )
+    stored_path = artifact_root / "datasets" / "uploads" / stored_name
+    assert stored_path.is_file()
+    assert stored_path.read_bytes() == content
+
+
+def test_dataset_routes_reject_unsafe_upload_file_names(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Verify multipart uploads reject path traversal filenames."""
+
+    artifact_root = tmp_path / "artifacts"
+    monkeypatch.setenv("TIKO_ARTIFACT_ROOT", str(artifact_root))
+    client = create_test_client()
+
+    response = client.post(
+        "/api/datasets/upload-file",
+        data={"name": "unsafe replay"},
+        files={"file": ("../evil.csv", b"symbol,timeframe\n", "text/csv")},
+        headers=ADMIN_HEADERS,
+    )
+
+    assert response.status_code == 422
+    assert not (artifact_root / "datasets" / "uploads").exists()
 
 
 def test_risk_limit_update_requires_operator_and_affects_reviews() -> None:
