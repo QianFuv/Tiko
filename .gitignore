@@ -7,4 +7,6 @@ docs/report/
 docs/review/
 .env
 .env.*
+!.env.example
 AGENTS.md
+*.zip

@@ -76,7 +76,8 @@ The frontend defaults to `http://127.0.0.1:3000` and reads the backend from
 
 ## Configuration
 
-Create a local `.env` file for secrets. The file is ignored by Git.
+Copy `.env.example` to a local `.env` file for secrets. The local `.env` file
+is ignored by Git.
 
 OpenRouter-backed simulated agent evaluation can use one of:
 
@@ -95,6 +96,13 @@ TIKO_OPENROUTER_MAX_TOKENS=4096
 ```
 
 Do not store real trading credentials in this project.
+
+Before sharing a zip artifact, scan it for local environment files, generated
+caches, and secret-like assignments:
+
+```powershell
+uv run python scripts/check_artifact_hygiene.py .\Tiko.zip
+```
 
 ## Quality Checks
 
