@@ -655,7 +655,7 @@ class SimulationService:
             source="synthetic",
             confidence=1.0,
         )
-        previous_candle = state.candles[-1] if state.candles else None
+        previous_candle = state.last_candle_by_symbol.get(symbol)
         orderbook_snapshot = self._build_orderbook_snapshot(candle)
         feature_snapshot = self._build_feature_snapshot(
             run_id, candle, previous_candle, event.event_id
@@ -674,6 +674,8 @@ class SimulationService:
             }
         )
         state.candles.append(candle)
+        state.last_candle_by_symbol[symbol] = candle
+        state.latest_mark_price_by_symbol[symbol] = candle.close
         state.orderbook_snapshots.append(orderbook_snapshot)
         state.feature_snapshots.append(feature_snapshot)
         state.events.append(event)
@@ -761,7 +763,7 @@ class SimulationService:
         positions = tuple(
             self._derive_positions(
                 state,
-                mark_prices={symbol: candle.close},
+                mark_prices=state.latest_mark_price_by_symbol,
                 as_of=next_time,
             )
         )
@@ -864,9 +866,13 @@ class SimulationService:
         if state.market_replay is not None:
             return state.market_replay.next_candle()
         next_time = advance_simulated_time(state.run.current_sim_time, 3600)
+        symbol = state.run.symbols[state.step_index % len(state.run.symbols)]
+        symbol_step_index = sum(
+            1 for candle in state.candles if candle.symbol == symbol
+        )
         return generate_synthetic_candle(
-            state.run.symbols[0],
-            state.step_index,
+            symbol,
+            symbol_step_index,
             next_time,
             seed=self._settings.synthetic_seed,
         )

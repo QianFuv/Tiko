@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 
 from tiko.domain.account import LedgerEntry, MetricSnapshot, PortfolioSnapshot, Position
 from tiko.domain.agent import AgentMessage, AgentRun
@@ -46,6 +47,8 @@ class SimulationState:
     metric_snapshots: list[MetricSnapshot] = field(default_factory=list)
     realtime_events: list[dict[str, object]] = field(default_factory=list)
     runtime_wall_time: datetime | None = None
+    last_candle_by_symbol: dict[str, Candle] = field(default_factory=dict)
+    latest_mark_price_by_symbol: dict[str, Decimal] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -426,6 +426,72 @@ def test_service_uses_feature_return_in_slippage_context() -> None:
     assert second_result.fill.slippage_bps == expected_slippage_bps
 
 
+def test_replay_features_use_same_symbol_previous_candles() -> None:
+    """Verify multi-symbol features do not use another symbol's prior candle."""
+
+    service = SimulationService(Settings())
+    first_btc = create_replay_candle(
+        symbol="BTCUSDT",
+        close_hour=1,
+        as_of_hour=1,
+    ).model_copy(update={"close": Decimal("100")})
+    first_eth = create_replay_candle(
+        symbol="ETHUSDT",
+        close_hour=2,
+        as_of_hour=2,
+    ).model_copy(
+        update={
+            "open": Decimal("2000"),
+            "high": Decimal("2010"),
+            "low": Decimal("1990"),
+            "close": Decimal("2000"),
+        }
+    )
+    second_btc = create_replay_candle(
+        symbol="BTCUSDT",
+        close_hour=3,
+        as_of_hour=3,
+    ).model_copy(update={"close": Decimal("110")})
+    run = service.create_run(
+        name="multi-symbol-replay",
+        symbols=["BTCUSDT", "ETHUSDT"],
+        replay_candles=[first_btc, first_eth, second_btc],
+    )
+
+    first_result = service.step_run(run.run_id)
+    second_result = service.step_run(run.run_id)
+    third_result = service.step_run(run.run_id)
+
+    assert first_result.candle.symbol == "BTCUSDT"
+    assert first_result.feature_snapshot.features["one_step_return"] == "0"
+    assert second_result.candle.symbol == "ETHUSDT"
+    assert second_result.feature_snapshot.features["one_step_return"] == "0"
+    assert third_result.candle.symbol == "BTCUSDT"
+    assert third_result.feature_snapshot.features["one_step_return"] == "0.1"
+
+
+def test_synthetic_steps_rotate_configured_symbols() -> None:
+    """Verify synthetic multi-symbol runs do not only advance the first symbol."""
+
+    service = SimulationService(Settings())
+    run = service.create_run(
+        name="multi-symbol-synthetic",
+        symbols=["BTCUSDT", "ETHUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    first_result = service.step_run(run.run_id)
+    second_result = service.step_run(run.run_id)
+    third_result = service.step_run(run.run_id)
+
+    assert [first_result.candle.symbol, second_result.candle.symbol] == [
+        "BTCUSDT",
+        "ETHUSDT",
+    ]
+    assert third_result.candle.symbol == "BTCUSDT"
+    assert second_result.feature_snapshot.features["one_step_return"] == "0"
+
+
 def test_service_records_exchange_rejected_market_order_without_fill() -> None:
     """Verify exchange-rejected market orders do not create fills or ledger entries."""
 
