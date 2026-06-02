@@ -109,12 +109,20 @@ uv run python scripts/check_artifact_hygiene.py .\Tiko.zip
 
 ## Quality Checks
 
+Run the full local quality gate from the repository root:
+
+```powershell
+uv run python scripts/check_quality.py
+```
+
+Use `--backend-only` or `--frontend-only` to run one side of the gate.
+
 Backend:
 
 ```powershell
-uv run ruff format --check tiko tests
-uv run ruff check tiko tests
-uv run mypy tiko tests
+uv run ruff format --check tiko tests scripts
+uv run ruff check tiko tests scripts
+uv run mypy tiko tests scripts
 uv run pytest tests -W error
 ```
 
@@ -122,7 +130,7 @@ Frontend:
 
 ```powershell
 cd app
-pnpm exec prettier --write src
+pnpm exec prettier --check src
 pnpm exec eslint src
 pnpm exec tsc --noEmit
 ```

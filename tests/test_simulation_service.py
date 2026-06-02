@@ -1518,6 +1518,8 @@ def test_decision_report_includes_trace_and_posterior_sections() -> None:
         start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
     )
     result = service.step_run(run.run_id, confidence=0.7)
+    assert result.order is not None
+    assert result.fill is not None
     review = service.create_decision_review(
         decision_id=result.decision.decision_id,
         horizon="1h",
