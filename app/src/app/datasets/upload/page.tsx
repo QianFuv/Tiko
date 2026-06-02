@@ -6,11 +6,7 @@ import type { ReactElement } from "react";
 import { getApiBaseUrl } from "@/lib/api-client";
 import type { DatasetRecord } from "@/lib/types";
 
-type DatasetUploadPayload = {
-  name: string;
-  source_path: string;
-  source?: "csv" | "parquet";
-};
+type DatasetUploadSource = "csv" | "parquet";
 
 /**
  * Render the dataset upload route.
@@ -47,11 +43,12 @@ export default function DatasetUploadPage(): ReactElement {
             />
           </label>
           <label className="grid gap-2 text-sm font-medium text-[#17201b]">
-            Server path
+            File
             <input
-              name="source_path"
+              name="file"
+              type="file"
               required
-              minLength={1}
+              accept=".csv,.parquet,.pq,text/csv,application/vnd.apache.parquet,application/octet-stream"
               className="rounded-md border border-[#cbd4dc] px-3 py-2 text-sm font-normal text-[#17201b] outline-none focus:border-[#1f6f8b]"
             />
           </label>
@@ -89,15 +86,14 @@ export default function DatasetUploadPage(): ReactElement {
 async function uploadDataset(formData: FormData): Promise<void> {
   "use server";
 
-  const payload = buildDatasetUploadPayload(formData);
-  const response = await fetch(`${getApiBaseUrl()}/api/datasets/upload`, {
+  const payload = buildDatasetUploadFormData(formData);
+  const response = await fetch(`${getApiBaseUrl()}/api/datasets/upload-file`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
       "X-Tiko-Role": "admin",
       "X-Tiko-User": "frontend@app.local",
     },
-    body: JSON.stringify(payload),
+    body: payload,
   });
   if (!response.ok) {
     throw new Error(
@@ -110,23 +106,53 @@ async function uploadDataset(formData: FormData): Promise<void> {
 }
 
 /**
- * Build a backend dataset upload payload from form data.
+ * Build a backend multipart dataset upload payload from form data.
  *
  * @param formData - Submitted form data.
- * @returns Dataset upload payload.
+ * @returns Dataset upload form data.
  */
-function buildDatasetUploadPayload(formData: FormData): DatasetUploadPayload {
+function buildDatasetUploadFormData(formData: FormData): FormData {
   const name = readRequiredFormValue(formData, "name");
-  const sourcePath = readRequiredFormValue(formData, "source_path");
-  const source = String(formData.get("source") ?? "");
-  const payload: DatasetUploadPayload = {
-    name,
-    source_path: sourcePath,
-  };
-  if (source === "csv" || source === "parquet") {
-    payload.source = source;
+  const file = readRequiredFile(formData, "file");
+  const source = readOptionalDatasetSource(formData);
+  const payload = new FormData();
+  payload.set("name", name);
+  payload.set("file", file, file.name);
+  if (source !== null) {
+    payload.set("source", source);
   }
   return payload;
+}
+
+/**
+ * Read a required uploaded file from form data.
+ *
+ * @param formData - Submitted form data.
+ * @param key - Field key.
+ * @returns Uploaded file.
+ */
+function readRequiredFile(formData: FormData, key: string): File {
+  const value = formData.get(key);
+  if (!(value instanceof File) || value.size === 0) {
+    throw new Error(`${key} is required.`);
+  }
+  return value;
+}
+
+/**
+ * Read an optional dataset source from submitted form data.
+ *
+ * @param formData - Submitted form data.
+ * @returns Dataset source or null when auto-detecting.
+ */
+function readOptionalDatasetSource(
+  formData: FormData,
+): DatasetUploadSource | null {
+  const value = String(formData.get("source") ?? "");
+  if (value === "csv" || value === "parquet") {
+    return value;
+  }
+  return null;
 }
 
 /**

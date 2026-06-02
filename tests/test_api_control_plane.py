@@ -588,6 +588,12 @@ def test_dataset_routes_reject_unsafe_upload_file_names(
     monkeypatch.setenv("TIKO_ARTIFACT_ROOT", str(artifact_root))
     client = create_test_client()
 
+    viewer_response = client.post(
+        "/api/datasets/upload-file",
+        data={"name": "blocked replay"},
+        files={"file": ("candles.csv", b"symbol,timeframe\n", "text/csv")},
+        headers=VIEWER_HEADERS,
+    )
     response = client.post(
         "/api/datasets/upload-file",
         data={"name": "unsafe replay"},
@@ -595,6 +601,7 @@ def test_dataset_routes_reject_unsafe_upload_file_names(
         headers=ADMIN_HEADERS,
     )
 
+    assert viewer_response.status_code == 403
     assert response.status_code == 422
     assert not (artifact_root / "datasets" / "uploads").exists()
 
