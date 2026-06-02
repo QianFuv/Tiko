@@ -2074,7 +2074,7 @@ class SimulationService:
             (position.unrealized_pnl for position in positions), Decimal("0")
         )
         raw_total_equity = account.cash_balance + signed_position_value
-        total_equity = max(Decimal("0"), raw_total_equity)
+        total_equity = raw_total_equity
         account_status = (
             "liquidated" if raw_total_equity <= Decimal("0") else account.status
         )

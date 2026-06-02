@@ -19,8 +19,8 @@ class SimAccount(DomainModel):
     name: str = Field(min_length=1)
     base_currency: str = "USDT"
     initial_equity: Decimal = Field(gt=Decimal("0"))
-    cash_balance: Decimal = Field(ge=Decimal("0"))
-    total_equity: Decimal = Field(ge=Decimal("0"))
+    cash_balance: Decimal
+    total_equity: Decimal
     realized_pnl: Decimal
     unrealized_pnl: Decimal
     max_drawdown: Decimal

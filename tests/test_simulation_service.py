@@ -1958,8 +1958,8 @@ def test_mark_account_to_market_sets_liquidated_status() -> None:
     marked_account = service._mark_account_to_market(small_account, positions)
 
     assert marked_account.status == "liquidated"
-    assert marked_account.total_equity == Decimal("0")
-    assert marked_account.max_drawdown == Decimal("-1")
+    assert marked_account.total_equity == Decimal("-150")
+    assert marked_account.max_drawdown == Decimal("-2.5")
 
 
 def test_step_applies_configured_funding_to_open_positions() -> None:

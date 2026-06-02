@@ -397,6 +397,25 @@ def test_risk_review_and_simulation_run_are_validated() -> None:
         )
 
 
+def test_sim_account_allows_simulated_deficits() -> None:
+    """Verify simulated account schema preserves negative accounting values."""
+
+    account = SimAccount(
+        account_id=uuid4(),
+        name="deficit",
+        initial_equity=Decimal("100"),
+        cash_balance=Decimal("-5"),
+        total_equity=Decimal("-15"),
+        realized_pnl=Decimal("-105"),
+        unrealized_pnl=Decimal("-10"),
+        max_drawdown=Decimal("-1.15"),
+        status="liquidated",
+    )
+
+    assert account.cash_balance == Decimal("-5")
+    assert account.total_equity == Decimal("-15")
+
+
 def test_risk_limits_include_minimum_order_notional() -> None:
     """Verify risk limits expose minimum executable order notional."""
 
