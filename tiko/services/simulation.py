@@ -66,6 +66,11 @@ from tiko.simulation.synthetic import generate_synthetic_candle
 
 MEMORY_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 SIMULATION_STEP_SECONDS = Decimal("3600")
+CONFIDENCE_CALIBRATION_BUCKETS: tuple[tuple[str, float, float], ...] = (
+    ("low", 0.0, 0.5),
+    ("medium", 0.5, 0.75),
+    ("high", 0.75, 1.0),
+)
 
 
 class SimulationService:
@@ -2578,6 +2583,10 @@ class SimulationService:
             "trades": self._build_report_trade_list(state),
             "key_metrics": self._build_report_key_metrics(state),
             "risk_events": self._build_report_risk_events(state),
+            "confidence_calibration": self._build_report_confidence_calibration(state),
+            "failure_memory_clusters": self._build_report_failure_memory_clusters(
+                state
+            ),
             "agent_performance": self._build_report_agent_performance(state),
             "error_attribution": self._build_report_error_attribution(state),
         }
@@ -2824,6 +2833,199 @@ class SimulationService:
             "agent_run_statuses": statuses,
             "average_confidence": average_confidence,
         }
+
+    def _build_report_confidence_calibration(
+        self, state: SimulationState
+    ) -> dict[str, object]:
+        """Build confidence calibration from posterior decision reviews.
+
+        Args:
+            state: Simulation state used for report generation.
+
+        Returns:
+            Confidence calibration report section.
+        """
+
+        decisions_by_id = {
+            decision.decision_id: decision for decision in state.decisions
+        }
+        latest_reviews_by_decision_id: dict[UUID, DecisionReview] = {}
+        for review in state.decision_reviews:
+            if review.decision_id in decisions_by_id:
+                latest_reviews_by_decision_id[review.decision_id] = review
+        reviewed_pairs = [
+            (decisions_by_id[decision_id], review)
+            for decision_id, review in latest_reviews_by_decision_id.items()
+        ]
+        overall = self._summarize_confidence_calibration(reviewed_pairs)
+        buckets: list[dict[str, object]] = []
+        for (
+            label,
+            minimum_confidence,
+            maximum_confidence,
+        ) in CONFIDENCE_CALIBRATION_BUCKETS:
+            bucket_pairs = [
+                pair
+                for pair in reviewed_pairs
+                if self._confidence_belongs_to_bucket(
+                    pair[0].confidence,
+                    minimum_confidence,
+                    maximum_confidence,
+                )
+            ]
+            bucket_summary = self._summarize_confidence_calibration(bucket_pairs)
+            buckets.append(
+                {
+                    "label": label,
+                    "min_confidence": minimum_confidence,
+                    "max_confidence": maximum_confidence,
+                    "decision_count": bucket_summary["decision_count"],
+                    "correct_direction_count": bucket_summary[
+                        "correct_direction_count"
+                    ],
+                    "average_confidence": bucket_summary["average_confidence"],
+                    "directional_accuracy": bucket_summary["directional_accuracy"],
+                    "calibration_error": bucket_summary["calibration_error"],
+                }
+            )
+        return {
+            "reviewed_decision_count": overall["decision_count"],
+            "correct_direction_count": overall["correct_direction_count"],
+            "average_confidence": overall["average_confidence"],
+            "directional_accuracy": overall["directional_accuracy"],
+            "calibration_error": overall["calibration_error"],
+            "buckets": buckets,
+        }
+
+    def _summarize_confidence_calibration(
+        self, reviewed_pairs: Sequence[tuple[TradeIntent, DecisionReview]]
+    ) -> dict[str, object]:
+        """Summarize confidence and posterior correctness pairs.
+
+        Args:
+            reviewed_pairs: Decisions paired with their latest posterior review.
+
+        Returns:
+            Calibration summary.
+        """
+
+        decision_count = len(reviewed_pairs)
+        correct_direction_count = sum(
+            1
+            for _decision, review in reviewed_pairs
+            if review.was_correct_directionally
+        )
+        if decision_count == 0:
+            return {
+                "decision_count": 0,
+                "correct_direction_count": 0,
+                "average_confidence": 0.0,
+                "directional_accuracy": 0.0,
+                "calibration_error": 0.0,
+            }
+        average_confidence = (
+            sum(decision.confidence for decision, _review in reviewed_pairs)
+            / decision_count
+        )
+        directional_accuracy = correct_direction_count / decision_count
+        return {
+            "decision_count": decision_count,
+            "correct_direction_count": correct_direction_count,
+            "average_confidence": average_confidence,
+            "directional_accuracy": directional_accuracy,
+            "calibration_error": abs(average_confidence - directional_accuracy),
+        }
+
+    def _confidence_belongs_to_bucket(
+        self, confidence: float, minimum_confidence: float, maximum_confidence: float
+    ) -> bool:
+        """Return whether a confidence value belongs to a report bucket.
+
+        Args:
+            confidence: Decision confidence value.
+            minimum_confidence: Inclusive bucket lower bound.
+            maximum_confidence: Bucket upper bound.
+
+        Returns:
+            Whether the confidence belongs to the bucket.
+        """
+
+        if maximum_confidence >= 1.0:
+            return minimum_confidence <= confidence <= maximum_confidence
+        return minimum_confidence <= confidence < maximum_confidence
+
+    def _build_report_failure_memory_clusters(
+        self, state: SimulationState
+    ) -> dict[str, object]:
+        """Build failure memory clusters for a simulation report.
+
+        Args:
+            state: Simulation state used for report generation.
+
+        Returns:
+            Failure memory cluster report section.
+        """
+
+        failure_entries = [
+            entry for entry in state.memory_entries if entry.memory_type == "failure"
+        ]
+        cluster_counts: dict[str, int] = {}
+        cluster_memory_ids: dict[str, list[str]] = {}
+        cluster_summaries: dict[str, list[str]] = {}
+        cluster_latest_times: dict[str, datetime] = {}
+        for entry in failure_entries:
+            for tag in self._extract_failure_memory_cluster_tags(entry):
+                cluster_counts[tag] = cluster_counts.get(tag, 0) + 1
+                cluster_memory_ids.setdefault(tag, []).append(str(entry.memory_id))
+                cluster_summaries.setdefault(tag, []).append(entry.summary)
+                latest_time = cluster_latest_times.get(tag)
+                if latest_time is None or entry.available_at_sim_time > latest_time:
+                    cluster_latest_times[tag] = entry.available_at_sim_time
+        sorted_tags = sorted(
+            cluster_counts, key=lambda tag: (-cluster_counts[tag], tag)
+        )
+        return {
+            "failure_memory_count": len(failure_entries),
+            "cluster_count": len(sorted_tags),
+            "clusters": [
+                {
+                    "tag": tag,
+                    "memory_count": cluster_counts[tag],
+                    "memory_ids": cluster_memory_ids[tag],
+                    "summaries": cluster_summaries[tag],
+                    "latest_available_at_sim_time": cluster_latest_times[
+                        tag
+                    ].isoformat(),
+                }
+                for tag in sorted_tags
+            ],
+        }
+
+    def _extract_failure_memory_cluster_tags(self, entry: MemoryEntry) -> list[str]:
+        """Extract normalized cluster tags from one failure memory entry.
+
+        Args:
+            entry: Failure memory entry.
+
+        Returns:
+            Normalized unique cluster tags.
+        """
+
+        raw_tags = list(entry.tags)
+        error_tags = entry.content.get("error_tags")
+        if isinstance(error_tags, str):
+            raw_tags.append(error_tags)
+        elif isinstance(error_tags, Sequence):
+            raw_tags.extend(tag for tag in error_tags if isinstance(tag, str))
+        normalized_tags: list[str] = []
+        seen_tags: set[str] = set()
+        for tag in raw_tags:
+            normalized_tag = "_".join(MEMORY_TOKEN_PATTERN.findall(tag.lower()))
+            if not normalized_tag or normalized_tag in seen_tags:
+                continue
+            normalized_tags.append(normalized_tag)
+            seen_tags.add(normalized_tag)
+        return normalized_tags or ["uncategorized"]
 
     def _build_report_error_attribution(
         self, state: SimulationState

@@ -2093,6 +2093,95 @@ def test_service_creates_reports_and_updates_alerts() -> None:
     assert alert_event_payload["status"] == "open"
 
 
+def test_simulation_report_includes_confidence_calibration_and_failure_clusters() -> (
+    None
+):
+    """Verify simulation reports summarize confidence and failure memories."""
+
+    service = SimulationService(Settings())
+    run = service.create_run(
+        name="calibration-clusters",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    first_result = service.step_run(run.run_id, confidence=0.8)
+    second_result = service.step_run(run.run_id, confidence=0.2)
+    service.create_decision_review(
+        decision_id=first_result.decision.decision_id,
+        horizon="1h",
+        realized_return=Decimal("0.01"),
+        max_adverse_excursion=Decimal("-0.001"),
+        max_favorable_excursion=Decimal("0.012"),
+        was_correct_directionally=True,
+        error_tags=[],
+        reviewer_summary="High-confidence decision was directionally correct.",
+    )
+    second_review = service.create_decision_review(
+        decision_id=second_result.decision.decision_id,
+        horizon="1h",
+        realized_return=Decimal("-0.02"),
+        max_adverse_excursion=Decimal("-0.025"),
+        max_favorable_excursion=Decimal("0.001"),
+        was_correct_directionally=False,
+        error_tags=["late_entry"],
+        reviewer_summary="Low-confidence decision missed the move.",
+    )
+    tagged_memory = service.create_memory_entry(
+        run_id=run.run_id,
+        decision_id=second_result.decision.decision_id,
+        memory_type="failure",
+        summary="Late entry after momentum faded.",
+        content={
+            "error_tags": ["late_entry"],
+            "review_id": str(second_review.review_id),
+        },
+        tags=["late_entry"],
+    )
+    uncategorized_memory = service.create_memory_entry(
+        run_id=run.run_id,
+        decision_id=second_result.decision.decision_id,
+        memory_type="failure",
+        summary="Failure memory without explicit taxonomy.",
+        content={},
+        tags=[],
+    )
+
+    report = service.create_simulation_report(run.run_id)
+
+    calibration = report.sections["confidence_calibration"]
+    failure_clusters = report.sections["failure_memory_clusters"]
+    assert isinstance(calibration, dict)
+    assert calibration["reviewed_decision_count"] == 2
+    assert calibration["correct_direction_count"] == 1
+    assert calibration["average_confidence"] == pytest.approx(0.5)
+    assert calibration["directional_accuracy"] == pytest.approx(0.5)
+    assert calibration["calibration_error"] == pytest.approx(0.0)
+    buckets = calibration["buckets"]
+    assert isinstance(buckets, list)
+    buckets_by_label = {bucket["label"]: bucket for bucket in buckets}
+    assert buckets_by_label["low"]["decision_count"] == 1
+    assert buckets_by_label["low"]["average_confidence"] == pytest.approx(0.2)
+    assert buckets_by_label["low"]["directional_accuracy"] == pytest.approx(0.0)
+    assert buckets_by_label["high"]["decision_count"] == 1
+    assert buckets_by_label["high"]["average_confidence"] == pytest.approx(0.8)
+    assert buckets_by_label["high"]["directional_accuracy"] == pytest.approx(1.0)
+    assert isinstance(failure_clusters, dict)
+    assert failure_clusters["failure_memory_count"] == 2
+    assert failure_clusters["cluster_count"] == 2
+    clusters = failure_clusters["clusters"]
+    assert isinstance(clusters, list)
+    clusters_by_tag = {cluster["tag"]: cluster for cluster in clusters}
+    assert clusters_by_tag["late_entry"]["memory_count"] == 1
+    assert clusters_by_tag["late_entry"]["memory_ids"] == [str(tagged_memory.memory_id)]
+    assert clusters_by_tag["late_entry"]["summaries"] == [
+        "Late entry after momentum faded."
+    ]
+    assert clusters_by_tag["uncategorized"]["memory_count"] == 1
+    assert clusters_by_tag["uncategorized"]["memory_ids"] == [
+        str(uncategorized_memory.memory_id)
+    ]
+
+
 def test_report_renderer_creates_markdown_documents() -> None:
     """Verify structured reports render to deterministic Markdown."""
 
