@@ -1,10 +1,12 @@
 """Model registry service for research artifacts."""
 
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from uuid import UUID, uuid4
 
 from tiko.db.repositories import SimulationRepository
 from tiko.domain.model import ModelRegistryEntry, ModelStatus, ModelType
+from tiko.domain.rl import RlPolicySignal
 
 
 class ModelRegistryService:
@@ -147,3 +149,86 @@ class ModelRegistryService:
         """
 
         return self.update_status(model_id, "archived")
+
+    def serve_policy_signal(self, model_id: UUID) -> RlPolicySignal:
+        """Serve an advisory policy signal from a paper-enabled RL model.
+
+        Args:
+            model_id: Model identifier.
+
+        Returns:
+            Advisory RL policy signal.
+
+        Raises:
+            KeyError: If no model exists for the ID.
+            ValueError: If the model is not eligible for serving.
+        """
+
+        entry = self.get_model(model_id)
+        if entry.status != "paper_enabled":
+            raise ValueError("Only paper-enabled models can serve policy signals.")
+        if entry.model_type != "rl":
+            raise ValueError("Only RL models can serve policy signals.")
+        action_id = self._required_int_metric(entry.metrics, "best_action_id")
+        target_weight = self._required_decimal_metric(
+            entry.metrics,
+            "best_target_weight",
+        )
+        return RlPolicySignal(
+            model_id=entry.model_id,
+            algorithm=entry.algorithm,
+            action_id=action_id,
+            target_weight=target_weight,
+            status="served",
+            source="model_registry",
+            rationale=(
+                "Served best static advisory action from a paper-enabled "
+                "model registry entry."
+            ),
+        )
+
+    def _required_int_metric(self, metrics: dict[str, object], key: str) -> int:
+        """Read a required integer metric.
+
+        Args:
+            metrics: Model registry metric payload.
+            key: Required metric key.
+
+        Returns:
+            Parsed integer value.
+
+        Raises:
+            ValueError: If the metric is missing or invalid.
+        """
+
+        value = metrics.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError as error:
+                raise ValueError(f"Metric {key} must be an integer.") from error
+        raise ValueError(f"Metric {key} must be an integer.")
+
+    def _required_decimal_metric(self, metrics: dict[str, object], key: str) -> Decimal:
+        """Read a required decimal metric.
+
+        Args:
+            metrics: Model registry metric payload.
+            key: Required metric key.
+
+        Returns:
+            Parsed decimal value.
+
+        Raises:
+            ValueError: If the metric is missing or invalid.
+        """
+
+        value = metrics.get(key)
+        if isinstance(value, bool) or value is None:
+            raise ValueError(f"Metric {key} must be a decimal.")
+        try:
+            return Decimal(str(value))
+        except (InvalidOperation, ValueError) as error:
+            raise ValueError(f"Metric {key} must be a decimal.") from error

@@ -1251,7 +1251,11 @@ def test_model_registry_routes_manage_research_models() -> None:
             "algorithm": "discrete_policy",
             "training_dataset_id": training_dataset_id,
             "validation_dataset_id": validation_dataset_id,
-            "metrics": {"reward": "0.12"},
+            "metrics": {
+                "reward": "0.12",
+                "best_action_id": 3,
+                "best_target_weight": "0.50",
+            },
             "artifact_uri": "memory://baseline-rl",
             "status": "draft",
         },
@@ -1268,6 +1272,14 @@ def test_model_registry_routes_manage_research_models() -> None:
         json={"status": "validated"},
         headers=RESEARCHER_HEADERS,
     )
+    viewer_policy_response = client.post(
+        f"/api/models/{model_id}/policy-signal",
+        headers=VIEWER_HEADERS,
+    )
+    premature_policy_response = client.post(
+        f"/api/models/{model_id}/policy-signal",
+        headers=RESEARCHER_HEADERS,
+    )
     viewer_promote_response = client.post(
         f"/api/models/{model_id}/promote",
         headers=VIEWER_HEADERS,
@@ -1276,18 +1288,40 @@ def test_model_registry_routes_manage_research_models() -> None:
         f"/api/models/{model_id}/promote",
         headers=RESEARCHER_HEADERS,
     )
+    policy_response = client.post(
+        f"/api/models/{model_id}/policy-signal",
+        headers=RESEARCHER_HEADERS,
+    )
     archive_response = client.post(
         f"/api/models/{model_id}/archive",
+        headers=RESEARCHER_HEADERS,
+    )
+    archived_policy_response = client.post(
+        f"/api/models/{model_id}/policy-signal",
         headers=RESEARCHER_HEADERS,
     )
 
     assert status_response.status_code == 200
     assert status_response.json()["status"] == "validated"
+    assert viewer_policy_response.status_code == 403
+    assert premature_policy_response.status_code == 422
+    assert "paper-enabled" in premature_policy_response.json()["detail"]
     assert viewer_promote_response.status_code == 403
     assert promote_response.status_code == 200
     assert promote_response.json()["status"] == "paper_enabled"
+    assert policy_response.status_code == 200
+    policy_signal = policy_response.json()
+    assert policy_signal["model_id"] == model_id
+    assert policy_signal["action_id"] == 3
+    assert Decimal(str(policy_signal["target_weight"])) == Decimal("0.50")
+    assert policy_signal["source"] == "model_registry"
     assert archive_response.status_code == 200
     assert archive_response.json()["status"] == "archived"
+    assert archived_policy_response.status_code == 422
+    assert "model.policy_signal.serve" in {
+        entry["action"]
+        for entry in client.get("/api/audit/logs", headers=ADMIN_HEADERS).json()
+    }
     assert (
         client.get("/api/models/00000000-0000-0000-0000-000000000000").status_code
         == 404

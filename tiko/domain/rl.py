@@ -2,6 +2,7 @@
 
 from decimal import Decimal
 from typing import Literal
+from uuid import UUID
 
 from pydantic import Field
 
@@ -71,3 +72,15 @@ class RlModelCard(DomainModel):
     limitations: list[str] = Field(min_length=1)
     metrics: dict[str, object]
     eligibility_status: Literal["pending_review", "research_only"]
+
+
+class RlPolicySignal(DomainModel):
+    """Represent a served advisory RL policy signal."""
+
+    model_id: UUID
+    algorithm: str = Field(min_length=1)
+    action_id: int
+    target_weight: Decimal = Field(ge=Decimal("-1"), le=Decimal("1"))
+    status: Literal["served"]
+    source: Literal["model_registry"]
+    rationale: str = Field(min_length=1)

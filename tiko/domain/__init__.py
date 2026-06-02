@@ -79,6 +79,7 @@ from tiko.domain.rl import (
     RewardComponents,
     RlAction,
     RlModelCard,
+    RlPolicySignal,
     RlTrainingSummary,
 )
 from tiko.domain.runtime import (
@@ -160,6 +161,7 @@ __all__ = [
     "RewardComponents",
     "RlAction",
     "RlModelCard",
+    "RlPolicySignal",
     "RlTrainingSummary",
     "Role",
     "RunBenchmark",

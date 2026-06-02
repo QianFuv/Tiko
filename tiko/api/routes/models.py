@@ -12,6 +12,7 @@ from tiko.api.dependencies import (
     require_permission,
 )
 from tiko.domain.model import ModelRegistryEntry, ModelStatus, ModelType
+from tiko.domain.rl import RlPolicySignal
 from tiko.domain.security import Principal
 from tiko.services import AuditService, ModelRegistryService
 
@@ -195,6 +196,47 @@ def promote_model(
         return entry
     except KeyError as error:
         raise HTTPException(status_code=404, detail="Model not found.") from error
+
+
+@router.post("/{model_id}/policy-signal", response_model=RlPolicySignal)
+def serve_model_policy_signal(
+    model_id: UUID,
+    service: ModelRegistryServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManageResearchPrincipalDep,
+) -> RlPolicySignal:
+    """Serve an advisory policy signal from one model.
+
+    Args:
+        model_id: Model identifier.
+        service: Model registry service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
+
+    Returns:
+        Advisory RL policy signal.
+
+    Raises:
+        HTTPException: If no model exists or serving is not allowed.
+    """
+
+    try:
+        signal = service.serve_policy_signal(model_id)
+        audit_service.record(
+            principal=principal,
+            action="model.policy_signal.serve",
+            resource_type="model",
+            resource_id=str(model_id),
+            metadata={
+                "action_id": signal.action_id,
+                "target_weight": str(signal.target_weight),
+            },
+        )
+        return signal
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Model not found.") from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.post("/{model_id}/archive", response_model=ModelRegistryEntry)

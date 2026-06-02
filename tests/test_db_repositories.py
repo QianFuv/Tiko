@@ -893,7 +893,11 @@ def test_model_registry_service_reads_through_repository(
         algorithm="discrete_policy",
         training_dataset_id=uuid4(),
         validation_dataset_id=uuid4(),
-        metrics={"reward": "0.12"},
+        metrics={
+            "reward": "0.12",
+            "best_action_id": 3,
+            "best_target_weight": "0.50",
+        },
         artifact_uri="memory://baseline-rl",
         status="draft",
     )
@@ -902,8 +906,26 @@ def test_model_registry_service_reads_through_repository(
     assert persisted_service.list_models() == [entry]
     assert persisted_service.get_model(entry.model_id) == entry
     promoted = persisted_service.promote_model(entry.model_id)
+    signal = persisted_service.serve_policy_signal(entry.model_id)
+    incomplete_entry = persisted_service.register_model(
+        name="incomplete-rl",
+        version="0.1.0",
+        model_type="rl",
+        algorithm="discrete_policy",
+        training_dataset_id=uuid4(),
+        validation_dataset_id=uuid4(),
+        metrics={"reward": "0.12"},
+        artifact_uri="memory://incomplete-rl",
+        status="paper_enabled",
+    )
+
     assert promoted.status == "paper_enabled"
+    assert signal.model_id == entry.model_id
+    assert signal.action_id == 3
+    assert signal.target_weight == Decimal("0.50")
     assert ModelRegistryService(repository).get_model(entry.model_id) == promoted
+    with pytest.raises(ValueError, match="best_action_id"):
+        persisted_service.serve_policy_signal(incomplete_entry.model_id)
 
 
 def test_repository_persists_plugin_registry_entries(
