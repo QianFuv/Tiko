@@ -632,6 +632,7 @@ def test_service_reevaluates_open_limit_orders_before_decision() -> None:
         start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
     )
     first_result = service.step_run(run.run_id, confidence=0.7)
+    assert first_result.order is not None
     order_request = create_service_limit_order_request(
         run=first_result.run,
         side="sell",
@@ -671,6 +672,93 @@ def test_service_reevaluates_open_limit_orders_before_decision() -> None:
     assert second_result.open_order_ledger_entries[0] in (
         repository.list_ledger_entries(run.run_id)
     )
+
+
+def test_service_cancels_open_limit_order_and_persists_update() -> None:
+    """Verify service cancellation updates broker, state, and persistence."""
+
+    repository = create_test_repository()
+    service = SimulationService(Settings(), repository=repository)
+    run = service.create_run(
+        name="cancel-open-order",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    first_result = service.step_run(run.run_id, confidence=0.7)
+    order_request = create_service_limit_order_request(
+        run=first_result.run,
+        side="sell",
+        quantity=Decimal("0.01"),
+        limit_price=Decimal("50060"),
+        simulated_time=first_result.run.current_sim_time,
+    )
+    open_order, open_fill = service._broker.submit_limit_order(
+        order_request,
+        reference_price=first_result.candle.close,
+    )
+    state = service._get_state(run.run_id)
+    state.orders.append(open_order)
+    repository.save_order(open_order)
+    cancel_time = first_result.run.current_sim_time
+
+    canceled_order = service.cancel_order(open_order.order_id, cancel_time)
+
+    assert open_fill is None
+    assert canceled_order.status == "canceled"
+    assert canceled_order.updated_at_sim_time == cancel_time
+    assert service.get_order(open_order.order_id) == canceled_order
+    assert repository.list_orders(run.run_id) == [first_result.order, canceled_order]
+    assert service._broker.list_open_orders() == ()
+    with pytest.raises(ValueError, match="Only open"):
+        service.cancel_order(open_order.order_id, cancel_time)
+
+
+def test_service_cancels_all_open_orders_with_symbol_filter() -> None:
+    """Verify bulk cancellation filters active orders by run and symbol."""
+
+    service = SimulationService(Settings())
+    run = service.create_run(
+        name="cancel-all-open-orders",
+        symbols=["BTCUSDT", "ETHUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    first_result = service.step_run(run.run_id, confidence=0.7)
+    btc_request = create_service_limit_order_request(
+        run=first_result.run,
+        side="sell",
+        quantity=Decimal("0.01"),
+        limit_price=Decimal("50060"),
+        simulated_time=first_result.run.current_sim_time,
+    )
+    eth_request = btc_request.model_copy(update={"symbol": "ETHUSDT"})
+    btc_order, _ = service._broker.submit_limit_order(
+        btc_request,
+        reference_price=first_result.candle.close,
+    )
+    eth_order, _ = service._broker.submit_limit_order(
+        eth_request,
+        reference_price=first_result.candle.close,
+    )
+    state = service._get_state(run.run_id)
+    state.orders.extend([btc_order, eth_order])
+
+    canceled_btc_orders = service.cancel_all_orders(
+        run.run_id,
+        symbol="BTCUSDT",
+        canceled_at_sim_time=first_result.run.current_sim_time,
+    )
+    canceled_remaining_orders = service.cancel_all_orders(
+        run.run_id,
+        canceled_at_sim_time=first_result.run.current_sim_time,
+    )
+
+    assert [order.order_id for order in canceled_btc_orders] == [btc_order.order_id]
+    assert canceled_btc_orders[0].status == "canceled"
+    assert [order.order_id for order in canceled_remaining_orders] == [
+        eth_order.order_id
+    ]
+    assert canceled_remaining_orders[0].status == "canceled"
+    assert service._broker.list_open_orders() == ()
 
 
 def test_service_skips_order_below_configured_min_notional() -> None:

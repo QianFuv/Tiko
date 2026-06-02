@@ -220,6 +220,17 @@ class SimulationRepository:
                 self._merge_realtime_event(session, envelope)
             session.commit()
 
+    def save_order(self, order: SimOrder) -> None:
+        """Persist one simulated order lifecycle update.
+
+        Args:
+            order: Simulated order to persist.
+        """
+
+        with self._session_factory() as session:
+            self._merge_order(session, order)
+            session.commit()
+
     def save_agent_trace(
         self,
         observation: Observation,

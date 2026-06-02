@@ -1203,6 +1203,75 @@ class SimulationService:
                 return order
         raise KeyError(order_id)
 
+    def cancel_order(
+        self,
+        order_id: UUID,
+        canceled_at_sim_time: datetime | None = None,
+    ) -> SimOrder:
+        """Cancel one active simulated order.
+
+        Args:
+            order_id: Simulated order identifier.
+            canceled_at_sim_time: Optional simulated cancellation time.
+
+        Returns:
+            Canceled order.
+
+        Raises:
+            KeyError: If the order does not exist.
+            ValueError: If the order is no longer active.
+        """
+
+        order = self.get_order(order_id)
+        if order.status not in {"open", "partially_filled"}:
+            raise ValueError("Only open or partially filled orders can be canceled.")
+        state = self._get_state(order.run_id)
+        canceled_at = canceled_at_sim_time or state.run.current_sim_time
+        try:
+            canceled_order = self._broker.cancel_order(order_id, canceled_at)
+        except KeyError:
+            canceled_order = order.model_copy(
+                update={
+                    "status": "canceled",
+                    "updated_at_sim_time": canceled_at,
+                }
+            )
+        self._upsert_state_order(state, canceled_order)
+        if self._repository is not None:
+            self._repository.save_order(canceled_order)
+        return canceled_order
+
+    def cancel_all_orders(
+        self,
+        run_id: UUID,
+        symbol: str | None = None,
+        canceled_at_sim_time: datetime | None = None,
+    ) -> tuple[SimOrder, ...]:
+        """Cancel active simulated orders for one run.
+
+        Args:
+            run_id: Simulation run identifier.
+            symbol: Optional symbol filter.
+            canceled_at_sim_time: Optional simulated cancellation time.
+
+        Returns:
+            Canceled orders in state order.
+
+        Raises:
+            KeyError: If the run does not exist.
+        """
+
+        state = self._get_state(run_id)
+        canceled_at = canceled_at_sim_time or state.run.current_sim_time
+        canceled_orders: list[SimOrder] = []
+        for order in tuple(state.orders):
+            if order.status not in {"open", "partially_filled"}:
+                continue
+            if symbol is not None and order.symbol != symbol:
+                continue
+            canceled_orders.append(self.cancel_order(order.order_id, canceled_at))
+        return tuple(canceled_orders)
+
     def list_fills(self) -> list[Fill]:
         """List simulated fills across all runs.
 

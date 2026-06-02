@@ -13,6 +13,7 @@ import tiko.services.realtime as realtime_services
 from tiko.api.dependencies import get_simulation_service, reset_simulation_service
 from tiko.api.main import create_app
 from tiko.api.routes import websocket as websocket_routes
+from tiko.domain.order import OrderRequest
 
 ADMIN_HEADERS = {"X-Tiko-Role": "admin", "X-Tiko-User": "admin@example.test"}
 OPERATOR_HEADERS = {"X-Tiko-Role": "operator", "X-Tiko-User": "operator@example.test"}
@@ -942,6 +943,79 @@ def test_query_routes_expose_simulated_state() -> None:
         client.get(f"/api/simulations/{run_id}/memory").json()[0]["memory_type"]
         == "decision"
     )
+
+
+def test_order_routes_cancel_open_orders() -> None:
+    """Verify order cancellation routes update active simulated orders."""
+
+    client = create_test_client()
+    create_response = client.post(
+        "/api/simulations",
+        json={"name": "cancel-orders", "symbols": ["BTCUSDT", "ETHUSDT"]},
+        headers=OPERATOR_HEADERS,
+    )
+    assert create_response.status_code == 200
+    run_id = UUID(create_response.json()["run_id"])
+    service = get_simulation_service()
+    run = service.get_run(run_id)
+    order_request = OrderRequest(
+        run_id=run.run_id,
+        account_id=run.account.account_id,
+        decision_id=None,
+        symbol="BTCUSDT",
+        side="sell",
+        order_type="limit",
+        quantity=Decimal("0.01"),
+        limit_price=Decimal("50060"),
+        submitted_at_sim_time=run.current_sim_time,
+    )
+    open_order, open_fill = service._broker.submit_limit_order(
+        order_request,
+        reference_price=Decimal("50000"),
+    )
+    bulk_order, bulk_fill = service._broker.submit_limit_order(
+        order_request.model_copy(update={"symbol": "ETHUSDT"}),
+        reference_price=Decimal("50000"),
+    )
+    state = service._get_state(run_id)
+    state.orders.extend([open_order, bulk_order])
+
+    viewer_response = client.post(
+        f"/api/orders/{open_order.order_id}/cancel",
+        headers=VIEWER_HEADERS,
+    )
+    cancel_response = client.post(
+        f"/api/orders/{open_order.order_id}/cancel",
+        headers=OPERATOR_HEADERS,
+    )
+    repeated_cancel_response = client.post(
+        f"/api/orders/{open_order.order_id}/cancel",
+        headers=OPERATOR_HEADERS,
+    )
+    cancel_all_response = client.post(
+        "/api/orders/cancel-all",
+        json={"run_id": str(run_id)},
+        headers=OPERATOR_HEADERS,
+    )
+    unknown_run_response = client.post(
+        "/api/orders/cancel-all",
+        json={"run_id": "00000000-0000-0000-0000-000000000000"},
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert open_fill is None
+    assert bulk_fill is None
+    assert viewer_response.status_code == 403
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["status"] == "canceled"
+    assert repeated_cancel_response.status_code == 422
+    assert cancel_all_response.status_code == 200
+    canceled_bulk_orders = cancel_all_response.json()
+    assert [order["order_id"] for order in canceled_bulk_orders] == [
+        str(bulk_order.order_id)
+    ]
+    assert canceled_bulk_orders[0]["status"] == "canceled"
+    assert unknown_run_response.status_code == 404
 
 
 def test_report_artifact_route_stores_rendered_report(

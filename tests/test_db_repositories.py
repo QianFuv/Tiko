@@ -735,6 +735,32 @@ def test_repository_persists_successful_step_artifacts(
     assert repository.list_metric_snapshots(run.run_id) == [result.metric_snapshot]
 
 
+def test_repository_saves_order_lifecycle_updates(
+    repository: SimulationRepository,
+) -> None:
+    """Verify order lifecycle updates merge into persisted orders."""
+
+    service = SimulationService(Settings())
+    run = service.create_run(
+        name="order-update",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    result = service.step_run(run.run_id, confidence=0.7)
+    assert result.order is not None
+    updated_order = result.order.model_copy(
+        update={
+            "status": "canceled",
+            "updated_at_sim_time": result.run.current_sim_time,
+        }
+    )
+
+    repository.save_order(result.order)
+    repository.save_order(updated_order)
+
+    assert repository.list_orders(run.run_id) == [updated_order]
+
+
 def test_repository_persists_orderbook_feed_integrity_metadata(
     repository: SimulationRepository,
 ) -> None:
