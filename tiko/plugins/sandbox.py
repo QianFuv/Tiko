@@ -14,6 +14,7 @@ SUPPORTED_SANDBOX_TESTS = {
     "test_no_future_events",
     "test_deterministic_seed",
     "test_network_policy",
+    "test_credential_scope",
     "test_approved_directories",
     "test_resource_limits",
 }
@@ -76,6 +77,7 @@ def validate_plugin_manifest(manifest: PluginManifest) -> SandboxResult:
             violations.append(
                 "Network plugins require a positive rate_limit_per_minute."
             )
+    violations.extend(_credential_scope_violations(manifest))
     violations.extend(_directory_policy_violations(manifest))
     violations.extend(_resource_limit_violations(manifest))
     if manifest.plugin_type == "market_data_connector" and permissions.write_features:
@@ -177,6 +179,17 @@ def _run_sandbox_test(
                 "Network policy is compatible with sandbox rules."
                 if passed
                 else "Network access violates sandbox rules."
+            ),
+        )
+    if test_name == "test_credential_scope":
+        passed = _credential_scope_passes(manifest)
+        return SandboxTestResult(
+            name=test_name,
+            passed=passed,
+            message=(
+                "Credential scope is compatible with sandbox rules."
+                if passed
+                else "Credential scope violates sandbox rules."
             ),
         )
     if test_name == "test_approved_directories":
@@ -312,6 +325,31 @@ def _resource_limit_violations(manifest: PluginManifest) -> list[str]:
     ]
 
 
+def _credential_scope_violations(manifest: PluginManifest) -> list[str]:
+    """Validate plugin credential scope policy.
+
+    Args:
+        manifest: Plugin manifest under validation.
+
+    Returns:
+        Credential scope policy violation messages.
+    """
+
+    permissions = manifest.permissions
+    if permissions.credential_scope == "none":
+        return []
+    if (
+        manifest.plugin_type == "market_data_connector"
+        and permissions.network_access
+        and permissions.read_market_data
+    ):
+        return []
+    return [
+        "Plugin credential_scope is restricted to read-only network market data "
+        "connectors."
+    ]
+
+
 def _directory_policy_passes(manifest: PluginManifest) -> bool:
     """Return whether approved-directory policy passes.
 
@@ -336,6 +374,19 @@ def _resource_limits_pass(manifest: PluginManifest) -> bool:
     """
 
     return not _resource_limit_violations(manifest)
+
+
+def _credential_scope_passes(manifest: PluginManifest) -> bool:
+    """Return whether credential scope policy passes.
+
+    Args:
+        manifest: Plugin manifest under validation.
+
+    Returns:
+        Whether credential scope policy passes.
+    """
+
+    return not _credential_scope_violations(manifest)
 
 
 def _is_safe_sandbox_directory(directory: str) -> bool:

@@ -149,6 +149,44 @@ def test_sandbox_rejects_network_private_methods_and_missing_rate_limit() -> Non
     )
 
 
+def test_sandbox_restricts_credentials_to_market_data_connectors() -> None:
+    """Verify credential scopes are limited to read-only market data connectors."""
+
+    unsafe_manifest = create_safe_manifest().model_copy(
+        update={
+            "permissions": create_safe_permissions(
+                credential_scope="market_data",
+            )
+        }
+    )
+    safe_manifest = create_safe_manifest().model_copy(
+        update={
+            "plugin_type": "market_data_connector",
+            "permissions": create_safe_permissions(
+                write_market_events=False,
+                read_market_data=True,
+                network_access=True,
+                provider_allowlist=["binance"],
+                methods_allowlist=["fetchTicker"],
+                rate_limit_per_minute=60,
+                credential_scope="market_data",
+            ),
+            "tests": ["test_schema_valid", "test_credential_scope"],
+        }
+    )
+
+    unsafe_result = validate_plugin_manifest(unsafe_manifest)
+    safe_report = run_plugin_sandbox_tests(safe_manifest)
+
+    assert unsafe_result.passed is False
+    assert any(
+        "credential_scope" in violation for violation in unsafe_result.violations
+    )
+    assert safe_report.passed is True
+    assert safe_report.results[1].name == "test_credential_scope"
+    assert safe_report.results[1].passed is True
+
+
 def test_sandbox_requires_approved_directories_for_file_access() -> None:
     """Verify file-system access requires explicit safe directory allowlists."""
 
@@ -319,6 +357,7 @@ def test_sandbox_executes_supported_manifest_tests() -> None:
                 "test_no_future_events",
                 "test_deterministic_seed",
                 "test_network_policy",
+                "test_credential_scope",
                 "test_approved_directories",
                 "test_resource_limits",
             ]
@@ -335,6 +374,7 @@ def test_sandbox_executes_supported_manifest_tests() -> None:
         "test_no_future_events",
         "test_deterministic_seed",
         "test_network_policy",
+        "test_credential_scope",
         "test_approved_directories",
         "test_resource_limits",
     ]
