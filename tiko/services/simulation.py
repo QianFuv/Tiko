@@ -2888,6 +2888,59 @@ class SimulationService:
         latest_review = reviews[-1] if reviews else None
         return latest_review.reviewer_summary if latest_review is not None else None
 
+    def _build_decision_report_outcome_attribution(
+        self,
+        trace: DecisionTrace,
+        reviews: list[DecisionReview],
+    ) -> dict[str, object]:
+        """Build execution and posterior outcome attribution for a decision.
+
+        Args:
+            trace: Joined decision trace artifacts.
+            reviews: Posterior decision reviews.
+
+        Returns:
+            Outcome attribution report section.
+        """
+
+        latest_review = reviews[-1] if reviews else None
+        return {
+            "decision_id": str(trace.decision.decision_id),
+            "risk_status": (
+                trace.risk_review.status if trace.risk_review is not None else None
+            ),
+            "approved_target_weight": (
+                str(trace.risk_review.approved_target_weight)
+                if trace.risk_review is not None
+                else None
+            ),
+            "order_id": str(trace.order.order_id) if trace.order is not None else None,
+            "order_status": trace.order.status if trace.order is not None else None,
+            "fill_status": "filled" if trace.fill is not None else "not_filled",
+            "fill_price": str(trace.fill.price) if trace.fill is not None else None,
+            "filled_quantity": (
+                str(trace.fill.quantity) if trace.fill is not None else None
+            ),
+            "fill_fee": str(trace.fill.fee) if trace.fill is not None else None,
+            "slippage_bps": (
+                str(trace.fill.slippage_bps) if trace.fill is not None else None
+            ),
+            "posterior_review_count": len(reviews),
+            "latest_realized_return": (
+                str(latest_review.realized_return)
+                if latest_review is not None
+                else None
+            ),
+            "was_correct_directionally": (
+                latest_review.was_correct_directionally
+                if latest_review is not None
+                else None
+            ),
+            "latest_error_tags": latest_review.error_tags
+            if latest_review is not None
+            else [],
+        }
+
     def create_decision_report(self, decision_id: UUID) -> ReportArtifact:
         """Create a structured decision trace report.
 
@@ -2952,6 +3005,9 @@ class SimulationService:
                 ],
                 "posterior_performance": (
                     self._build_decision_report_posterior_performance(reviews)
+                ),
+                "outcome_attribution": (
+                    self._build_decision_report_outcome_attribution(trace, reviews)
                 ),
                 "review_conclusion": (
                     self._build_decision_report_review_conclusion(reviews)

@@ -1538,12 +1538,14 @@ def test_decision_report_includes_trace_and_posterior_sections() -> None:
     critic_objections = report.sections["critic_objections"]
     posterior_reviews = report.sections["posterior_reviews"]
     posterior_performance = report.sections["posterior_performance"]
+    outcome_attribution = report.sections["outcome_attribution"]
     assert isinstance(observation, dict)
     assert isinstance(final_trade_intent, dict)
     assert isinstance(agent_subreports, list)
     assert isinstance(critic_objections, list)
     assert isinstance(posterior_reviews, list)
     assert isinstance(posterior_performance, dict)
+    assert isinstance(outcome_attribution, dict)
     assert observation["observation_id"] == str(result.observation.observation_id)
     assert final_trade_intent["decision_id"] == str(result.decision.decision_id)
     assert final_trade_intent["status"] == "reviewed"
@@ -1576,6 +1578,18 @@ def test_decision_report_includes_trace_and_posterior_sections() -> None:
     assert posterior_performance["error_tags"] == ["late_entry"]
     assert latest_posterior["review_id"] == str(review.review_id)
     assert latest_posterior["realized_return"] == "0.01"
+    assert outcome_attribution["decision_id"] == str(result.decision.decision_id)
+    assert outcome_attribution["risk_status"] == result.risk_review.status
+    assert outcome_attribution["order_status"] == result.order.status
+    assert outcome_attribution["fill_status"] == "filled"
+    assert outcome_attribution["fill_price"] == str(result.fill.price)
+    assert outcome_attribution["filled_quantity"] == str(result.fill.quantity)
+    assert outcome_attribution["fill_fee"] == str(result.fill.fee)
+    assert outcome_attribution["slippage_bps"] == str(result.fill.slippage_bps)
+    assert outcome_attribution["posterior_review_count"] == 1
+    assert outcome_attribution["latest_realized_return"] == "0.01"
+    assert outcome_attribution["was_correct_directionally"] is True
+    assert outcome_attribution["latest_error_tags"] == ["late_entry"]
     assert report.sections["review_conclusion"] == review.reviewer_summary
     assert report.sections["decision"] == reviewed_decision.model_dump(mode="json")
     assert repository.list_reports(run.run_id) == [report]
