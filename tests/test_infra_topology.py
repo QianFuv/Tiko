@@ -148,9 +148,29 @@ def test_frontend_topology_uses_next_standalone_server() -> None:
         "context": "../app",
         "dockerfile": "Dockerfile",
     }
-    assert require_mapping(web["environment"])["NEXT_PUBLIC_API_BASE_URL"] == (
-        "http://localhost:8000"
-    )
+    environment = require_mapping(web["environment"])
+    assert environment["TIKO_SERVER_API_BASE_URL"] == "http://api:8000"
+    assert environment["NEXT_PUBLIC_API_BASE_URL"] == "http://localhost:8000"
+
+
+def test_frontend_health_route_is_independent_of_backend_data() -> None:
+    """Verify Docker smoke can check the frontend server without API data."""
+
+    route = Path("app/src/app/healthz/route.tsx").read_text(encoding="utf-8")
+
+    assert "export function GET(): Response" in route
+    assert 'new Response("ok"' in route
+
+
+def test_frontend_workspace_allows_required_docker_build_dependencies() -> None:
+    """Verify Docker installs can run required frontend native build scripts."""
+
+    with Path("app/pnpm-workspace.yaml").open(encoding="utf-8") as file:
+        workspace = yaml.safe_load(file)
+    assert isinstance(workspace, dict)
+    allow_builds = require_mapping(workspace["allowBuilds"])
+
+    assert allow_builds == {"sharp": True, "unrs-resolver": True}
 
 
 def test_postgresql_driver_dependency_matches_compose_url() -> None:

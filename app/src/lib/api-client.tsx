@@ -68,9 +68,22 @@ const ENABLE_DEMO_FALLBACK = "true";
 /**
  * Resolve the configured backend API base URL.
  *
- * @returns Backend API base URL without a trailing slash.
+ * @returns Server-side backend API base URL without a trailing slash.
  */
 export function getApiBaseUrl(): string {
+  return (
+    process.env.TIKO_SERVER_API_BASE_URL ??
+    process.env.NEXT_PUBLIC_API_BASE_URL ??
+    DEFAULT_API_BASE_URL
+  ).replace(/\/$/, "");
+}
+
+/**
+ * Resolve the browser-facing backend API base URL.
+ *
+ * @returns Browser-facing backend API base URL without a trailing slash.
+ */
+export function getBrowserApiBaseUrl(): string {
   return (process.env.NEXT_PUBLIC_API_BASE_URL ?? DEFAULT_API_BASE_URL).replace(
     /\/$/,
     "",
@@ -936,7 +949,7 @@ export async function fetchRunDashboardData(
     fetchRiskAlerts(runId),
   ]);
   return {
-    apiBaseUrl: getApiBaseUrl(),
+    apiBaseUrl: getBrowserApiBaseUrl(),
     source: combineDataSources([
       runResult.source,
       eventsResult.source,

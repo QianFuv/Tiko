@@ -124,6 +124,7 @@ uv run ruff format --check tiko tests scripts
 uv run ruff check tiko tests scripts
 uv run mypy tiko tests scripts
 uv run pytest tests -W error
+uv run python scripts/check_compose_smoke.py
 ```
 
 Frontend:
@@ -134,6 +135,12 @@ pnpm exec prettier --check src
 pnpm exec eslint src
 pnpm exec tsc --noEmit
 pnpm build
+```
+
+Run a Docker Compose startup smoke test only when Docker daemon is available:
+
+```powershell
+uv run python scripts/check_compose_smoke.py --start
 ```
 
 ## Common Workflows

@@ -39,6 +39,7 @@ def test_default_quality_gate_selects_backend_and_frontend_checks() -> None:
         "backend lint",
         "backend typecheck",
         "backend tests",
+        "compose config",
         "frontend format",
         "frontend lint",
         "frontend typecheck",
@@ -71,6 +72,7 @@ def test_backend_only_quality_gate_filters_frontend_checks() -> None:
         "backend lint",
         "backend typecheck",
         "backend tests",
+        "compose config",
     ]
 
 

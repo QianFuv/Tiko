@@ -89,6 +89,11 @@ def build_quality_checks(
                     root,
                     ("uv", "run", "pytest", "tests", "-W", "error"),
                 ),
+                QualityCheck(
+                    "compose config",
+                    root,
+                    ("uv", "run", "python", "scripts/check_compose_smoke.py"),
+                ),
             ]
         )
     if include_frontend:
