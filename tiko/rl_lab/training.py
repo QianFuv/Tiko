@@ -4,7 +4,12 @@ from collections.abc import Sequence
 from decimal import Decimal
 
 from tiko.domain.market import Candle, MarketEvent
-from tiko.domain.rl import RlAction, RlModelCard, RlTrainingSummary
+from tiko.domain.rl import (
+    RlAction,
+    RlModelCard,
+    RlTrainingSummary,
+    RlWalkForwardEvaluation,
+)
 from tiko.domain.simulation import SimulationRun
 from tiko.rl_lab.environment import ACTION_TARGET_WEIGHTS, TradingEnvironment
 
@@ -107,6 +112,76 @@ def build_static_policy_model_card(summary: RlTrainingSummary) -> RlModelCard:
             "best_total_reward": str(summary.best_total_reward),
         },
         eligibility_status="pending_review",
+    )
+
+
+def evaluate_static_policy_walk_forward(
+    run: SimulationRun,
+    training_candles: Sequence[Candle],
+    validation_candles: Sequence[Candle],
+    test_candles: Sequence[Candle],
+    events: Sequence[MarketEvent] | None = None,
+    candidate_action_ids: Sequence[int] | None = None,
+) -> RlWalkForwardEvaluation:
+    """Evaluate a static policy across train, validation, and test windows.
+
+    Args:
+        run: Simulation run used as immutable account context.
+        training_candles: Training window candles used for action selection.
+        validation_candles: Validation window candles for out-of-sample scoring.
+        test_candles: Test window candles for final out-of-sample scoring.
+        events: Optional market events available to observations.
+        candidate_action_ids: Optional candidate discrete actions.
+
+    Returns:
+        Walk-forward evaluation summary.
+
+    Raises:
+        ValueError: If validation or test windows are empty.
+    """
+
+    if len(validation_candles) == 0:
+        raise ValueError("Walk-forward evaluation requires validation candles.")
+    if len(test_candles) == 0:
+        raise ValueError("Walk-forward evaluation requires test candles.")
+    training_summary = train_static_policy(
+        run=run,
+        candles=training_candles,
+        events=events,
+        candidate_action_ids=candidate_action_ids,
+    )
+    selected_action_id = training_summary.best_action_id
+    selected_target_weight = ACTION_TARGET_WEIGHTS.get(
+        selected_action_id,
+        Decimal("0"),
+    )
+    validation_total_reward = _evaluate_static_action(
+        run,
+        validation_candles,
+        events,
+        selected_action_id,
+    )
+    test_total_reward = _evaluate_static_action(
+        run,
+        test_candles,
+        events,
+        selected_action_id,
+    )
+    return RlWalkForwardEvaluation(
+        algorithm="static_discrete_policy_walk_forward",
+        selected_action_id=selected_action_id,
+        selected_target_weight=selected_target_weight,
+        training_summary=training_summary,
+        validation_total_reward=validation_total_reward,
+        test_total_reward=test_total_reward,
+        metrics={
+            "training_candle_count": len(training_candles),
+            "validation_candle_count": len(validation_candles),
+            "test_candle_count": len(test_candles),
+            "training_best_total_reward": str(training_summary.best_total_reward),
+            "validation_total_reward": str(validation_total_reward),
+            "test_total_reward": str(test_total_reward),
+        },
     )
 
 

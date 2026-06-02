@@ -58,6 +58,18 @@ class RlTrainingSummary(DomainModel):
     metrics: dict[str, object]
 
 
+class RlWalkForwardEvaluation(DomainModel):
+    """Represent out-of-sample advisory RL evaluation."""
+
+    algorithm: str = Field(min_length=1)
+    selected_action_id: int
+    selected_target_weight: Decimal = Field(ge=Decimal("-1"), le=Decimal("1"))
+    training_summary: RlTrainingSummary
+    validation_total_reward: Decimal
+    test_total_reward: Decimal
+    metrics: dict[str, object]
+
+
 class RlModelCard(DomainModel):
     """Represent review metadata for an advisory RL policy artifact."""
 

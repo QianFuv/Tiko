@@ -81,6 +81,7 @@ from tiko.domain.rl import (
     RlModelCard,
     RlPolicySignal,
     RlTrainingSummary,
+    RlWalkForwardEvaluation,
 )
 from tiko.domain.runtime import (
     BackgroundJob,
@@ -163,6 +164,7 @@ __all__ = [
     "RlModelCard",
     "RlPolicySignal",
     "RlTrainingSummary",
+    "RlWalkForwardEvaluation",
     "Role",
     "RunBenchmark",
     "RunComparison",

@@ -13,6 +13,7 @@ from tiko.rl_lab import (
     build_reward_components,
     build_static_policy_model_card,
     calculate_reward,
+    evaluate_static_policy_walk_forward,
     train_static_policy,
 )
 
@@ -88,6 +89,41 @@ def create_candles() -> list[Candle]:
             created_at=second_time,
         ),
     ]
+
+
+def create_candles_from_closes(closes: list[str], start_hour: int) -> list[Candle]:
+    """Create ordered candles from close values.
+
+    Args:
+        closes: Decimal close values encoded as strings.
+        start_hour: First close hour on 2026-01-01 UTC.
+
+    Returns:
+        Ordered candle fixtures.
+    """
+
+    candles: list[Candle] = []
+    for index, close in enumerate(closes):
+        close_time = datetime(2026, 1, 1, start_hour + index, tzinfo=UTC)
+        close_value = Decimal(close)
+        open_value = Decimal(closes[index - 1]) if index > 0 else close_value
+        candles.append(
+            Candle(
+                symbol="BTCUSDT",
+                timeframe="1h",
+                open_time=close_time - timedelta(hours=1),
+                close_time=close_time,
+                open=open_value,
+                high=max(open_value, close_value),
+                low=min(open_value, close_value),
+                close=close_value,
+                volume=Decimal("10"),
+                source="rl-test",
+                as_of=close_time,
+                created_at=close_time,
+            )
+        )
+    return candles
 
 
 def test_trading_environment_reset_and_step_are_advisory() -> None:
@@ -208,6 +244,47 @@ def test_static_policy_training_builds_model_card() -> None:
     ]
     assert model_card.metrics["best_total_reward"] == str(summary.best_total_reward)
     assert model_card.eligibility_status == "pending_review"
+
+
+def test_static_policy_walk_forward_reports_out_of_sample_rewards() -> None:
+    """Verify static policy walk-forward separates train, validation, and test."""
+
+    evaluation = evaluate_static_policy_walk_forward(
+        run=create_run(),
+        training_candles=create_candles_from_closes(["100", "110"], 1),
+        validation_candles=create_candles_from_closes(["110", "121"], 3),
+        test_candles=create_candles_from_closes(["121", "133.10"], 5),
+        candidate_action_ids=[0, 3],
+    )
+
+    assert evaluation.algorithm == "static_discrete_policy_walk_forward"
+    assert evaluation.training_summary.algorithm == "static_discrete_policy_search"
+    assert evaluation.selected_action_id == 3
+    assert evaluation.selected_target_weight == Decimal("0.50")
+    assert evaluation.validation_total_reward > Decimal("0")
+    assert evaluation.test_total_reward > Decimal("0")
+    assert evaluation.metrics["training_candle_count"] == 2
+    assert evaluation.metrics["validation_candle_count"] == 2
+    assert evaluation.metrics["test_candle_count"] == 2
+
+
+def test_static_policy_walk_forward_requires_out_of_sample_windows() -> None:
+    """Verify walk-forward evaluation rejects empty validation and test windows."""
+
+    with pytest.raises(ValueError, match="validation candles"):
+        evaluate_static_policy_walk_forward(
+            run=create_run(),
+            training_candles=create_candles(),
+            validation_candles=[],
+            test_candles=create_candles(),
+        )
+    with pytest.raises(ValueError, match="test candles"):
+        evaluate_static_policy_walk_forward(
+            run=create_run(),
+            training_candles=create_candles(),
+            validation_candles=create_candles(),
+            test_candles=[],
+        )
 
 
 def test_static_policy_training_penalizes_invalid_action_candidates() -> None:
