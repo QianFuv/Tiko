@@ -133,6 +133,7 @@ cd app
 pnpm exec prettier --check src
 pnpm exec eslint src
 pnpm exec tsc --noEmit
+pnpm build
 ```
 
 ## Common Workflows

@@ -110,6 +110,11 @@ def build_quality_checks(
                     frontend_root,
                     ("pnpm", "exec", "tsc", "--noEmit"),
                 ),
+                QualityCheck(
+                    "frontend build",
+                    frontend_root,
+                    ("pnpm", "build"),
+                ),
             ]
         )
     return checks

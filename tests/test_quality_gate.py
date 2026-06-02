@@ -42,6 +42,7 @@ def test_default_quality_gate_selects_backend_and_frontend_checks() -> None:
         "frontend format",
         "frontend lint",
         "frontend typecheck",
+        "frontend build",
     ]
     assert checks[0].cwd == root
     assert checks[0].command == (
@@ -55,7 +56,7 @@ def test_default_quality_gate_selects_backend_and_frontend_checks() -> None:
         "scripts",
     )
     assert checks[-1].cwd == root / "app"
-    assert checks[-1].command == ("pnpm", "exec", "tsc", "--noEmit")
+    assert checks[-1].command == ("pnpm", "build")
 
 
 def test_backend_only_quality_gate_filters_frontend_checks() -> None:
@@ -84,6 +85,7 @@ def test_frontend_only_quality_gate_filters_backend_checks() -> None:
         "frontend format",
         "frontend lint",
         "frontend typecheck",
+        "frontend build",
     ]
 
 

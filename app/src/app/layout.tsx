@@ -17,6 +17,8 @@ export const metadata: Metadata = {
   description: "Crypto agent simulation control plane.",
 };
 
+export const dynamic = "force-dynamic";
+
 /**
  * Render the root document shell for the Tiko frontend.
  *
