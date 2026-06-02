@@ -1356,6 +1356,7 @@ def test_plugin_registry_routes_validate_sandbox_policy() -> None:
         "tests": [
             "test_schema_valid",
             "test_no_write_orders",
+            "test_no_secret_inputs",
             "test_no_future_events",
             "test_deterministic_seed",
             "test_network_policy",
@@ -1387,6 +1388,7 @@ def test_plugin_registry_routes_validate_sandbox_policy() -> None:
     assert [result["name"] for result in sandbox_report["results"]] == [
         "test_schema_valid",
         "test_no_write_orders",
+        "test_no_secret_inputs",
         "test_no_future_events",
         "test_deterministic_seed",
         "test_network_policy",

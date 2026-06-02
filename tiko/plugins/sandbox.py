@@ -11,6 +11,7 @@ from tiko.domain.plugin import (
 SUPPORTED_SANDBOX_TESTS = {
     "test_schema_valid",
     "test_no_write_orders",
+    "test_no_secret_inputs",
     "test_no_future_events",
     "test_deterministic_seed",
     "test_network_policy",
@@ -33,6 +34,17 @@ SUPPORTED_OUTPUT_SCHEMAS = {
 TIME_BOUND_INPUTS = {"as_of", "current_sim_time", "simulated_time"}
 DETERMINISTIC_SEED_INPUTS = {"deterministic_seed", "random_seed", "seed"}
 STOCHASTIC_PLUGIN_TYPES = {"event_generation", "experiment", "synthetic_market"}
+FORBIDDEN_SECRET_INPUT_PATTERNS = {
+    "apikey",
+    "api_key",
+    "credential",
+    "password",
+    "privatekey",
+    "private_key",
+    "secret",
+    "token",
+}
+FORBIDDEN_ENV_INPUT_SEGMENTS = {"env", "environment"}
 
 
 def validate_plugin_manifest(manifest: PluginManifest) -> SandboxResult:
@@ -50,6 +62,7 @@ def validate_plugin_manifest(manifest: PluginManifest) -> SandboxResult:
     permissions = manifest.permissions
     if permissions.write_orders:
         violations.append("Plugins cannot request write_orders permission.")
+    violations.extend(_secret_input_violations(manifest))
     if permissions.network_access:
         if manifest.plugin_type != "market_data_connector":
             violations.append(
@@ -146,6 +159,17 @@ def _run_sandbox_test(
                 "Plugin does not request order-writing permission."
                 if passed
                 else "Plugin requested forbidden order-writing permission."
+            ),
+        )
+    if test_name == "test_no_secret_inputs":
+        passed = _secret_input_policy_passes(manifest)
+        return SandboxTestResult(
+            name=test_name,
+            passed=passed,
+            message=(
+                "Plugin inputs do not request environment or secret values."
+                if passed
+                else "Plugin inputs request forbidden environment or secret values."
             ),
         )
     if test_name == "test_no_future_events":
@@ -265,6 +289,31 @@ def _deterministic_seed_policy_passes(manifest: PluginManifest) -> bool:
     if manifest.plugin_type not in STOCHASTIC_PLUGIN_TYPES:
         return True
     return bool(set(manifest.inputs).intersection(DETERMINISTIC_SEED_INPUTS))
+
+
+def _secret_input_violations(manifest: PluginManifest) -> list[str]:
+    """Validate plugin inputs for forbidden secret-like values.
+
+    Args:
+        manifest: Plugin manifest under validation.
+
+    Returns:
+        Secret input policy violation messages.
+    """
+
+    forbidden_inputs = sorted(
+        {
+            input_name
+            for input_name in manifest.inputs
+            if _is_forbidden_secret_input(input_name)
+        }
+    )
+    if not forbidden_inputs:
+        return []
+    return [
+        "Plugin manifest inputs cannot request environment or secret values: "
+        f"{', '.join(forbidden_inputs)}."
+    ]
 
 
 def _directory_policy_violations(manifest: PluginManifest) -> list[str]:
@@ -387,6 +436,52 @@ def _credential_scope_passes(manifest: PluginManifest) -> bool:
     """
 
     return not _credential_scope_violations(manifest)
+
+
+def _secret_input_policy_passes(manifest: PluginManifest) -> bool:
+    """Return whether plugin input policy passes.
+
+    Args:
+        manifest: Plugin manifest under validation.
+
+    Returns:
+        Whether secret input policy passes.
+    """
+
+    return not _secret_input_violations(manifest)
+
+
+def _is_forbidden_secret_input(input_name: str) -> bool:
+    """Return whether a manifest input appears to request secrets.
+
+    Args:
+        input_name: Manifest input name.
+
+    Returns:
+        Whether the input name is forbidden by secret-input policy.
+    """
+
+    normalized = _normalize_manifest_input(input_name)
+    segments = {segment for segment in normalized.split("_") if segment}
+    if segments.intersection(FORBIDDEN_ENV_INPUT_SEGMENTS):
+        return True
+    return any(pattern in normalized for pattern in FORBIDDEN_SECRET_INPUT_PATTERNS)
+
+
+def _normalize_manifest_input(input_name: str) -> str:
+    """Normalize a manifest input name for policy matching.
+
+    Args:
+        input_name: Manifest input name.
+
+    Returns:
+        Lowercase input name with punctuation represented as underscores.
+    """
+
+    return "".join(
+        character.lower() if character.isalnum() else "_"
+        for character in input_name.strip()
+    )
 
 
 def _is_safe_sandbox_directory(directory: str) -> bool:

@@ -240,6 +240,50 @@ def test_sandbox_restricts_credentials_to_market_data_connectors() -> None:
     assert safe_report.results[1].passed is True
 
 
+def test_sandbox_rejects_secret_manifest_inputs() -> None:
+    """Verify plugins cannot request secret or environment inputs."""
+
+    secret_manifest = create_safe_manifest().model_copy(
+        update={"inputs": ["run_id", "symbols", "current_sim_time", "api_token"]}
+    )
+    environment_manifest = create_safe_manifest().model_copy(
+        update={"inputs": ["run_id", "symbols", "current_sim_time", "env"]}
+    )
+
+    secret_result = validate_plugin_manifest(secret_manifest)
+    environment_result = validate_plugin_manifest(environment_manifest)
+
+    assert secret_result.passed is False
+    assert any("api_token" in violation for violation in secret_result.violations)
+    assert environment_result.passed is False
+    assert any("env" in violation for violation in environment_result.violations)
+
+
+def test_sandbox_reports_secret_input_policy() -> None:
+    """Verify declared secret-input sandbox tests report pass and fail states."""
+
+    safe_manifest = create_safe_manifest().model_copy(
+        update={"tests": ["test_schema_valid", "test_no_secret_inputs"]}
+    )
+    unsafe_manifest = create_safe_manifest().model_copy(
+        update={
+            "inputs": ["run_id", "symbols", "current_sim_time", "password"],
+            "tests": ["test_schema_valid", "test_no_secret_inputs"],
+        }
+    )
+
+    safe_report = run_plugin_sandbox_tests(safe_manifest)
+    unsafe_report = run_plugin_sandbox_tests(unsafe_manifest)
+
+    assert safe_report.passed is True
+    assert safe_report.results[1].name == "test_no_secret_inputs"
+    assert safe_report.results[1].passed is True
+    assert unsafe_report.passed is False
+    assert unsafe_report.results[1].name == "test_no_secret_inputs"
+    assert unsafe_report.results[1].passed is False
+    assert "secret" in unsafe_report.results[1].message
+
+
 def test_sandbox_requires_approved_directories_for_file_access() -> None:
     """Verify file-system access requires explicit safe directory allowlists."""
 
@@ -407,6 +451,7 @@ def test_sandbox_executes_supported_manifest_tests() -> None:
             "tests": [
                 "test_schema_valid",
                 "test_no_write_orders",
+                "test_no_secret_inputs",
                 "test_no_future_events",
                 "test_deterministic_seed",
                 "test_network_policy",
@@ -424,6 +469,7 @@ def test_sandbox_executes_supported_manifest_tests() -> None:
     assert [result.name for result in report.results] == [
         "test_schema_valid",
         "test_no_write_orders",
+        "test_no_secret_inputs",
         "test_no_future_events",
         "test_deterministic_seed",
         "test_network_policy",

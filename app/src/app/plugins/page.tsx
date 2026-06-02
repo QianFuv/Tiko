@@ -53,6 +53,7 @@ const OUTPUT_SCHEMAS: PluginOutputSchema[] = [
 const SANDBOX_TESTS = [
   "test_schema_valid",
   "test_no_write_orders",
+  "test_no_secret_inputs",
   "test_no_future_events",
   "test_deterministic_seed",
   "test_network_policy",
