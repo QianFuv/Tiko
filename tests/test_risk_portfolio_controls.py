@@ -550,3 +550,29 @@ def test_risk_circuit_breakers_block_loss_and_drawdown_breaches() -> None:
     assert drawdown_review.reasons == ["drawdown_limit_exceeded"]
     assert drawdown_review.triggered_rules == ["max_drawdown"]
     assert order_request is None
+
+
+def test_daily_loss_uses_context_bucket_when_available() -> None:
+    """Verify daily loss checks prefer the point-in-time context bucket."""
+
+    risk_service = RiskService(
+        minimum_confidence=0.5,
+        max_daily_loss=Decimal("0.01"),
+    )
+
+    cumulative_loss_review = risk_service.review(
+        create_intent(),
+        account=create_account(realized_pnl=Decimal("-1500")),
+        context=RiskContext(daily_realized_pnl=Decimal("0")),
+    )
+    daily_loss_review = risk_service.review(
+        create_intent(),
+        account=create_account(realized_pnl=Decimal("0")),
+        context=RiskContext(daily_realized_pnl=Decimal("-1500")),
+    )
+
+    assert cumulative_loss_review.status == "approved"
+    assert cumulative_loss_review.reasons == []
+    assert daily_loss_review.status == "circuit_blocked"
+    assert daily_loss_review.reasons == ["daily_loss_limit_exceeded"]
+    assert daily_loss_review.triggered_rules == ["max_daily_loss"]

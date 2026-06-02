@@ -424,6 +424,27 @@ class SimulationService:
                 order for order in state.orders if order.status in active_order_statuses
             ],
             latest_orderbook=orderbook_snapshot,
+            daily_realized_pnl=self._calculate_daily_realized_pnl(state),
+        )
+
+    def _calculate_daily_realized_pnl(self, state: SimulationState) -> Decimal:
+        """Calculate realized PnL posted on the current simulated date.
+
+        Args:
+            state: Simulation state containing ledger entries.
+
+        Returns:
+            Same-day realized PnL delta sum.
+        """
+
+        current_date = state.run.current_sim_time.date()
+        return sum(
+            (
+                entry.realized_pnl_delta
+                for entry in state.ledger_entries
+                if entry.created_at_sim_time.date() == current_date
+            ),
+            Decimal("0"),
         )
 
     def _apply_step_decision_status(

@@ -98,7 +98,10 @@ class RiskService:
             Risk review decision.
         """
 
-        circuit_reasons, circuit_rules = self._circuit_breaker_reasons(account)
+        circuit_reasons, circuit_rules = self._circuit_breaker_reasons(
+            account,
+            context,
+        )
         if circuit_reasons:
             return RiskReview(
                 review_id=uuid4(),
@@ -344,12 +347,13 @@ class RiskService:
         return intent.target_weight < Decimal("0") or intent.action in short_actions
 
     def _circuit_breaker_reasons(
-        self, account: SimAccount | None
+        self, account: SimAccount | None, context: RiskContext | None
     ) -> tuple[list[str], list[str]]:
         """Build account-state circuit breaker reasons.
 
         Args:
             account: Optional pre-trade simulated account state.
+            context: Optional point-in-time risk context.
 
         Returns:
             Reason codes and triggered rule names.
@@ -359,7 +363,10 @@ class RiskService:
             return [], []
         reasons: list[str] = []
         rules: list[str] = []
-        daily_loss_ratio = self._loss_ratio(account.realized_pnl, account)
+        daily_realized_pnl = (
+            context.daily_realized_pnl if context is not None else account.realized_pnl
+        )
+        daily_loss_ratio = self._loss_ratio(daily_realized_pnl, account)
         if daily_loss_ratio >= self.max_daily_loss:
             reasons.append("daily_loss_limit_exceeded")
             rules.append("max_daily_loss")

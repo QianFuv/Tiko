@@ -34,6 +34,7 @@ class RiskContext(DomainModel):
     positions: list[Position] = Field(default_factory=list)
     open_orders: list[SimOrder] = Field(default_factory=list)
     latest_orderbook: OrderBookSnapshot | None = None
+    daily_realized_pnl: Decimal = Decimal("0")
 
 
 class RiskReview(DomainModel):

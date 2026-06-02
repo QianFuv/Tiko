@@ -1186,6 +1186,31 @@ def test_daily_loss_circuit_blocks_after_prior_simulated_loss() -> None:
     assert len(service.list_fills()) == 1
 
 
+def test_daily_loss_bucket_resets_across_simulated_dates() -> None:
+    """Verify previous-day realized losses do not block a new simulated date."""
+
+    service = SimulationService(Settings(max_daily_loss=Decimal("0.00001")))
+    run = service.create_run(
+        name="daily-loss-reset",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    first_result = service.step_run(run.run_id, confidence=0.7)
+    state = service._get_state(run.run_id)
+    state.run = first_result.run.model_copy(
+        update={"current_sim_time": datetime(2026, 1, 2, tzinfo=UTC)}
+    )
+
+    second_result = service.step_run(run.run_id, confidence=0.7)
+
+    assert first_result.ledger_entry is not None
+    assert first_result.ledger_entry.realized_pnl_delta < Decimal("0")
+    assert first_result.run.account.realized_pnl < Decimal("0")
+    assert second_result.risk_review.status == "approved"
+    assert second_result.risk_review.reasons == []
+    assert second_result.decision.status != "circuit_blocked"
+
+
 def test_repository_backed_service_persists_created_run_and_step() -> None:
     """Verify optional persistence hooks write service-generated artifacts."""
 
