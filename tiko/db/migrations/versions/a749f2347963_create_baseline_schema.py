@@ -88,8 +88,11 @@ def upgrade() -> None:
         "plugin_registry",
         sa.Column("plugin_id", sa.String(length=36), nullable=False),
         sa.Column("manifest", sa.JSON(), nullable=False),
+        sa.Column("manifest_digest", sa.String(length=64), nullable=False),
         sa.Column("sandbox_result", sa.JSON(), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False),
+        sa.Column("approved_by", sa.String(length=255), nullable=True),
+        sa.Column("approved_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("plugin_id"),
     )

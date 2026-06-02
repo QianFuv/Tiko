@@ -275,8 +275,11 @@ export type SandboxResult = {
 export type PluginRegistryEntry = {
   plugin_id: string;
   manifest: PluginManifest;
+  manifest_digest: string;
   sandbox_result: SandboxResult;
   status: "draft" | "validated" | "enabled" | "archived" | "rejected";
+  approved_by: string | null;
+  approved_at: string | null;
   created_at: string;
 };
 

@@ -43,6 +43,7 @@ from tiko.services import (
     PluginRegistryService,
     SimulationService,
 )
+from tiko.services.plugins import build_plugin_manifest_digest
 
 
 @pytest.fixture
@@ -929,8 +930,11 @@ def test_repository_persists_plugin_registry_entries(
     entry = PluginRegistryEntry(
         plugin_id=uuid4(),
         manifest=manifest,
+        manifest_digest=build_plugin_manifest_digest(manifest),
         sandbox_result=validate_plugin_manifest(manifest),
         status="validated",
+        approved_by=None,
+        approved_at=None,
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
 
@@ -971,8 +975,14 @@ def test_plugin_registry_service_reads_through_repository(
         persisted_service.register_plugin(
             manifest.model_copy(update={"tests": ["test_unknown_policy"]})
         )
-    enabled = persisted_service.update_status(entry.plugin_id, "enabled")
+    enabled = persisted_service.approve_plugin(
+        entry.plugin_id,
+        entry.manifest_digest,
+        "researcher@example.test",
+    )
     assert enabled.status == "enabled"
+    assert enabled.approved_by == "researcher@example.test"
+    assert enabled.approved_at is not None
     assert PluginRegistryService(repository).get_plugin(entry.plugin_id) == enabled
 
 

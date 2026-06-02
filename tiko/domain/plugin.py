@@ -85,6 +85,9 @@ class PluginRegistryEntry(DomainModel):
 
     plugin_id: UUID
     manifest: PluginManifest
+    manifest_digest: str = Field(min_length=64, max_length=64)
     sandbox_result: SandboxResult
     status: PluginStatus
+    approved_by: str | None = Field(default=None, min_length=1)
+    approved_at: datetime | None = None
     created_at: datetime

@@ -26,7 +26,7 @@ type PluginOutputSchema =
   | "OrderBookSnapshot[]"
   | "ReportArtifact";
 
-type PluginStatusAction = "enabled" | "archived";
+type PluginStatusAction = "archived";
 
 const PLUGIN_TYPES: PluginType[] = [
   "market_data_connector",
@@ -64,7 +64,7 @@ const STOCHASTIC_PLUGIN_TYPES: PluginType[] = [
   "experiment",
   "synthetic_market",
 ];
-const STATUS_ACTIONS: PluginStatusAction[] = ["enabled", "archived"];
+const STATUS_ACTIONS: PluginStatusAction[] = ["archived"];
 
 /**
  * Render plugin registry and sandbox status.
@@ -167,8 +167,24 @@ function PluginCard({ entry }: { entry: PluginRegistryEntry }): ReactElement {
             <PluginRow label="Version" value={entry.manifest.version} />
             <PluginRow label="Status" value={entry.status} />
             <PluginRow
+              label="Digest"
+              value={formatManifestDigest(entry.manifest_digest)}
+            />
+            <PluginRow
               label="Sandbox"
               value={entry.sandbox_result.passed ? "Passed" : "Failed"}
+            />
+            <PluginRow
+              label="Approved by"
+              value={entry.approved_by ?? "Pending"}
+            />
+            <PluginRow
+              label="Approved"
+              value={
+                entry.approved_at === null
+                  ? "Pending"
+                  : formatDateTime(entry.approved_at)
+              }
             />
             <PluginRow
               label="Created"
@@ -176,10 +192,10 @@ function PluginCard({ entry }: { entry: PluginRegistryEntry }): ReactElement {
             />
           </dl>
           <div className="flex flex-wrap justify-end gap-2">
-            <PluginStatusForm
+            <PluginApprovalForm
               pluginId={entry.plugin_id}
-              status="enabled"
-              disabled={entry.status === "enabled"}
+              manifestDigest={entry.manifest_digest}
+              disabled={entry.status !== "validated"}
             />
             <PluginStatusForm
               pluginId={entry.plugin_id}
@@ -354,6 +370,36 @@ function RegisterPluginPanel(): ReactElement {
 }
 
 /**
+ * Render a plugin approval form.
+ *
+ * @param props - Plugin approval action props.
+ * @returns Plugin approval action form.
+ */
+function PluginApprovalForm({
+  pluginId,
+  manifestDigest,
+  disabled,
+}: {
+  pluginId: string;
+  manifestDigest: string;
+  disabled: boolean;
+}): ReactElement {
+  return (
+    <form action={approvePlugin}>
+      <input name="plugin_id" type="hidden" value={pluginId} />
+      <input name="manifest_digest" type="hidden" value={manifestDigest} />
+      <button
+        type="submit"
+        disabled={disabled}
+        className="rounded-md bg-[#1f6f8b] px-3 py-2 text-sm font-semibold text-white hover:bg-[#174f63] disabled:cursor-not-allowed disabled:bg-[#b7c2c8]"
+      >
+        Approve
+      </button>
+    </form>
+  );
+}
+
+/**
  * Render a plugin status update form.
  *
  * @param props - Plugin status action props.
@@ -377,7 +423,7 @@ function PluginStatusForm({
         disabled={disabled}
         className="rounded-md border border-[#1f6f8b] px-3 py-2 text-sm font-semibold text-[#1f6f8b] hover:bg-[#eef8fb] disabled:cursor-not-allowed disabled:border-[#b7c2c8] disabled:text-[#7b8580]"
       >
-        {status === "enabled" ? "Enable" : "Archive"}
+        Archive
       </button>
     </form>
   );
@@ -402,6 +448,16 @@ function PluginRow({
       <dd className="font-medium text-[#17201b]">{value}</dd>
     </div>
   );
+}
+
+/**
+ * Format a manifest digest for compact display.
+ *
+ * @param digest - Plugin manifest digest.
+ * @returns Compact digest label.
+ */
+function formatManifestDigest(digest: string): string {
+  return `${digest.slice(0, 12)}...${digest.slice(-8)}`;
 }
 
 /**
@@ -479,6 +535,22 @@ async function updatePluginStatus(formData: FormData): Promise<void> {
   const pluginId = readRequiredFormValue(formData, "plugin_id");
   const status = readPluginStatusAction(formData);
   await sendPluginJson(`/api/plugins/${pluginId}/status`, { status });
+  refreshPluginsPage();
+}
+
+/**
+ * Approve a validated plugin registry entry.
+ *
+ * @param formData - Submitted plugin approval fields.
+ */
+async function approvePlugin(formData: FormData): Promise<void> {
+  "use server";
+
+  const pluginId = readRequiredFormValue(formData, "plugin_id");
+  const manifestDigest = readManifestDigest(formData);
+  await sendPluginJson(`/api/plugins/${pluginId}/approve`, {
+    manifest_digest: manifestDigest,
+  });
   refreshPluginsPage();
 }
 
@@ -650,6 +722,20 @@ function readPluginStatusAction(formData: FormData): PluginStatusAction {
     return status as PluginStatusAction;
   }
   throw new Error("status is invalid.");
+}
+
+/**
+ * Read a plugin manifest digest from form data.
+ *
+ * @param formData - Submitted form data.
+ * @returns Valid manifest digest.
+ */
+function readManifestDigest(formData: FormData): string {
+  const manifestDigest = readRequiredFormValue(formData, "manifest_digest");
+  if (/^[a-f0-9]{64}$/.test(manifestDigest)) {
+    return manifestDigest;
+  }
+  throw new Error("manifest_digest is invalid.");
 }
 
 /**

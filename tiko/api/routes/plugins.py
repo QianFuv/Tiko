@@ -4,7 +4,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from tiko.api.dependencies import (
     get_audit_service,
@@ -35,6 +35,12 @@ class PluginStatusUpdateRequest(BaseModel):
     """Represent a plugin registry status update request."""
 
     status: PluginStatus
+
+
+class PluginApprovalRequest(BaseModel):
+    """Represent a plugin approval request."""
+
+    manifest_digest: str = Field(min_length=64, max_length=64)
 
 
 @router.get("", response_model=list[PluginRegistryEntry])
@@ -143,6 +149,53 @@ def get_plugin(
         raise HTTPException(status_code=404, detail="Plugin not found.") from error
 
 
+@router.post("/{plugin_id}/approve", response_model=PluginRegistryEntry)
+def approve_plugin(
+    plugin_id: UUID,
+    request: PluginApprovalRequest,
+    service: PluginRegistryServiceDep,
+    audit_service: AuditServiceDep,
+    principal: ManagePluginsPrincipalDep,
+) -> PluginRegistryEntry:
+    """Approve and enable one plugin registry entry.
+
+    Args:
+        plugin_id: Plugin identifier.
+        request: Plugin approval request payload.
+        service: Plugin registry service dependency.
+        audit_service: Audit service dependency.
+        principal: Authorized caller principal.
+
+    Returns:
+        Enabled plugin registry entry.
+
+    Raises:
+        HTTPException: If no plugin exists or approval validation fails.
+    """
+
+    try:
+        entry = service.approve_plugin(
+            plugin_id,
+            request.manifest_digest,
+            principal.user_id,
+        )
+        audit_service.record(
+            principal=principal,
+            action="plugin.approve",
+            resource_type="plugin",
+            resource_id=str(plugin_id),
+            metadata={
+                "status": entry.status,
+                "manifest_digest": entry.manifest_digest,
+            },
+        )
+        return entry
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Plugin not found.") from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
 @router.post("/{plugin_id}/status", response_model=PluginRegistryEntry)
 def update_plugin_status(
     plugin_id: UUID,
@@ -164,7 +217,7 @@ def update_plugin_status(
         Updated plugin registry entry.
 
     Raises:
-        HTTPException: If no plugin exists for the ID.
+        HTTPException: If no plugin exists or status validation fails.
     """
 
     try:
@@ -179,3 +232,5 @@ def update_plugin_status(
         return entry
     except KeyError as error:
         raise HTTPException(status_code=404, detail="Plugin not found.") from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error

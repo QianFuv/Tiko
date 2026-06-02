@@ -1,11 +1,31 @@
 """Plugin registry service with sandbox validation."""
 
+import hashlib
+import json
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from tiko.db.repositories import SimulationRepository
 from tiko.domain.plugin import PluginManifest, PluginRegistryEntry, PluginStatus
 from tiko.plugins import run_plugin_sandbox_tests
+
+
+def build_plugin_manifest_digest(manifest: PluginManifest) -> str:
+    """Build a deterministic digest for a plugin manifest.
+
+    Args:
+        manifest: Plugin manifest to fingerprint.
+
+    Returns:
+        SHA-256 digest of the canonical JSON manifest payload.
+    """
+
+    payload = json.dumps(
+        manifest.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 class PluginRegistryService:
@@ -48,8 +68,11 @@ class PluginRegistryService:
         entry = PluginRegistryEntry(
             plugin_id=uuid4(),
             manifest=manifest,
+            manifest_digest=build_plugin_manifest_digest(manifest),
             sandbox_result=sandbox_report.validation,
             status="validated",
+            approved_by=None,
+            approved_at=None,
             created_at=datetime.now(UTC),
         )
         self._entries[entry.plugin_id] = entry
@@ -102,10 +125,50 @@ class PluginRegistryService:
 
         Raises:
             KeyError: If no plugin exists for the ID.
+            ValueError: If status update would bypass approval.
         """
 
+        if status == "enabled":
+            raise ValueError("Use plugin approval to enable plugins.")
+        if status not in {"archived", "rejected"}:
+            raise ValueError("Plugin status updates only support archived or rejected.")
         entry = self.get_plugin(plugin_id).model_copy(update={"status": status})
         self._entries[plugin_id] = entry
         if self._repository is not None:
             self._repository.save_plugin_registry_entry(entry)
         return entry
+
+    def approve_plugin(
+        self, plugin_id: UUID, manifest_digest: str, approved_by: str
+    ) -> PluginRegistryEntry:
+        """Approve and enable a validated plugin by matching its manifest digest.
+
+        Args:
+            plugin_id: Plugin identifier.
+            manifest_digest: Expected manifest digest from the approval request.
+            approved_by: User identifier approving the plugin.
+
+        Returns:
+            Enabled plugin registry entry.
+
+        Raises:
+            KeyError: If no plugin exists for the ID.
+            ValueError: If the plugin cannot be approved.
+        """
+
+        entry = self.get_plugin(plugin_id)
+        if entry.status != "validated":
+            raise ValueError("Only validated plugins can be approved.")
+        if entry.manifest_digest != manifest_digest:
+            raise ValueError("manifest_digest does not match registered plugin.")
+        approved_entry = entry.model_copy(
+            update={
+                "status": "enabled",
+                "approved_by": approved_by,
+                "approved_at": datetime.now(UTC),
+            }
+        )
+        self._entries[plugin_id] = approved_entry
+        if self._repository is not None:
+            self._repository.save_plugin_registry_entry(approved_entry)
+        return approved_entry

@@ -1,7 +1,13 @@
 """Tests for plugin sandbox policy validation."""
 
+import pytest
+
 from tiko.domain.plugin import PluginManifest, PluginPermissions
 from tiko.plugins import run_plugin_sandbox_tests, validate_plugin_manifest
+from tiko.services.plugins import (
+    PluginRegistryService,
+    build_plugin_manifest_digest,
+)
 
 
 def create_safe_permissions(**overrides: object) -> PluginPermissions:
@@ -50,6 +56,53 @@ def test_sandbox_accepts_safe_simulation_plugin() -> None:
 
     assert result.passed is True
     assert result.violations == []
+
+
+def test_plugin_manifest_digest_is_deterministic() -> None:
+    """Verify plugin manifest digests are stable across equivalent payloads."""
+
+    manifest = create_safe_manifest()
+    equivalent_manifest = PluginManifest.model_validate(
+        manifest.model_dump(mode="json")
+    )
+
+    first_digest = build_plugin_manifest_digest(manifest)
+    second_digest = build_plugin_manifest_digest(equivalent_manifest)
+
+    assert first_digest == second_digest
+    assert len(first_digest) == 64
+
+
+def test_plugin_service_requires_matching_digest_for_approval() -> None:
+    """Verify plugin approval must match the validated manifest digest."""
+
+    service = PluginRegistryService()
+    entry = service.register_plugin(create_safe_manifest())
+
+    with pytest.raises(ValueError, match="approval"):
+        service.update_status(entry.plugin_id, "enabled")
+    with pytest.raises(ValueError, match="manifest_digest"):
+        service.approve_plugin(
+            entry.plugin_id,
+            "0" * 64,
+            "researcher@example.test",
+        )
+
+    approved_entry = service.approve_plugin(
+        entry.plugin_id,
+        entry.manifest_digest,
+        "researcher@example.test",
+    )
+
+    assert approved_entry.status == "enabled"
+    assert approved_entry.approved_by == "researcher@example.test"
+    assert approved_entry.approved_at is not None
+    with pytest.raises(ValueError, match="Only validated"):
+        service.approve_plugin(
+            entry.plugin_id,
+            entry.manifest_digest,
+            "researcher@example.test",
+        )
 
 
 def test_sandbox_rejects_order_writing_plugin() -> None:

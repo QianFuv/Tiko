@@ -1360,17 +1360,42 @@ def test_plugin_registry_routes_validate_sandbox_policy() -> None:
         "test_resource_limits",
     ]
     assert create_response.status_code == 200
-    plugin_id = create_response.json()["plugin_id"]
-    assert client.get("/api/plugins").json()[0]["plugin_id"] == plugin_id
-    assert client.get(f"/api/plugins/{plugin_id}").json()["status"] == "validated"
-    assert (
-        client.post(
-            f"/api/plugins/{plugin_id}/status",
-            json={"status": "enabled"},
-            headers=RESEARCHER_HEADERS,
-        ).json()["status"]
-        == "enabled"
+    plugin_payload = create_response.json()
+    plugin_id = plugin_payload["plugin_id"]
+    manifest_digest = plugin_payload["manifest_digest"]
+    bypass_enable_response = client.post(
+        f"/api/plugins/{plugin_id}/status",
+        json={"status": "enabled"},
+        headers=RESEARCHER_HEADERS,
     )
+    mismatched_approval_response = client.post(
+        f"/api/plugins/{plugin_id}/approve",
+        json={"manifest_digest": "0" * 64},
+        headers=RESEARCHER_HEADERS,
+    )
+    approval_response = client.post(
+        f"/api/plugins/{plugin_id}/approve",
+        json={"manifest_digest": manifest_digest},
+        headers=RESEARCHER_HEADERS,
+    )
+    archive_response = client.post(
+        f"/api/plugins/{plugin_id}/status",
+        json={"status": "archived"},
+        headers=RESEARCHER_HEADERS,
+    )
+    assert client.get("/api/plugins").json()[0]["plugin_id"] == plugin_id
+    assert len(manifest_digest) == 64
+    assert bypass_enable_response.status_code == 422
+    assert "approval" in bypass_enable_response.json()["detail"]
+    assert mismatched_approval_response.status_code == 422
+    assert "manifest_digest" in mismatched_approval_response.json()["detail"]
+    assert approval_response.status_code == 200
+    approved_plugin = approval_response.json()
+    assert approved_plugin["status"] == "enabled"
+    assert approved_plugin["approved_by"] == "researcher@example.test"
+    assert approved_plugin["approved_at"] is not None
+    assert archive_response.status_code == 200
+    assert archive_response.json()["status"] == "archived"
 
     unsafe_manifest = safe_manifest | {
         "permissions": {

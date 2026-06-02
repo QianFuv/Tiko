@@ -1471,12 +1471,16 @@ function buildDemoPlugins(): PluginRegistryEntry[] {
           "test_resource_limits",
         ],
       },
+      manifest_digest:
+        "7741bf3584a31cf35cbab2e4d723dd1b5dedfbe9e4458c0f59b8ec62b5613d4e",
       sandbox_result: {
         passed: true,
         violations: [],
         warnings: [],
       },
       status: "validated",
+      approved_by: null,
+      approved_at: null,
       created_at: DEMO_TIME,
     },
   ];

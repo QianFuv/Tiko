@@ -593,8 +593,11 @@ class PluginRegistryRecord(Base):
 
     plugin_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     manifest: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    manifest_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     sandbox_result: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
+    approved_by: Mapped[str | None] = mapped_column(String(255))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

@@ -1809,8 +1809,11 @@ class SimulationRepository:
             PluginRegistryRecord(
                 plugin_id=str(entry.plugin_id),
                 manifest=entry.manifest.model_dump(mode="json"),
+                manifest_digest=entry.manifest_digest,
                 sandbox_result=entry.sandbox_result.model_dump(mode="json"),
                 status=entry.status,
+                approved_by=entry.approved_by,
+                approved_at=entry.approved_at,
                 created_at=entry.created_at,
             )
         )
@@ -2613,8 +2616,15 @@ class SimulationRepository:
         return PluginRegistryEntry(
             plugin_id=UUID(record.plugin_id),
             manifest=PluginManifest.model_validate(record.manifest),
+            manifest_digest=record.manifest_digest,
             sandbox_result=SandboxResult.model_validate(record.sandbox_result),
             status=cast(PluginStatus, record.status),
+            approved_by=record.approved_by,
+            approved_at=(
+                self._aware_datetime(record.approved_at)
+                if record.approved_at is not None
+                else None
+            ),
             created_at=self._aware_datetime(record.created_at),
         )
 
