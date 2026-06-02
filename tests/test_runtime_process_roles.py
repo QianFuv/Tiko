@@ -877,11 +877,18 @@ def test_rl_worker_processes_static_training_jobs(tmp_path: Path) -> None:
     assert completed_job.result["algorithm"] == "static_discrete_policy_search"
     assert completed_job.result["best_action_id"] == 3
     summary = completed_job.result["summary"]
+    model_card = completed_job.result["model_card"]
     assert isinstance(summary, dict)
+    assert isinstance(model_card, dict)
     metrics = summary["metrics"]
     assert isinstance(metrics, dict)
     assert summary["episode_count"] == 2
     assert metrics["best_target_weight"] == "0.50"
+    assert model_card["algorithm"] == "static_discrete_policy_search"
+    assert model_card["policy_type"] == "static_discrete_action_policy"
+    assert model_card["best_action_id"] == 3
+    assert model_card["best_target_weight"] == "0.50"
+    assert model_card["eligibility_status"] == "pending_review"
     assert artifact["artifact_id"] == str(job.job_id)
     assert artifact["model_type"] == "rl"
     assert artifact["algorithm"] == "static_discrete_policy_search"
@@ -889,6 +896,7 @@ def test_rl_worker_processes_static_training_jobs(tmp_path: Path) -> None:
     stored_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
     assert stored_payload["job_id"] == str(job.job_id)
     assert stored_payload["summary"]["best_action_id"] == 3
+    assert stored_payload["model_card"]["best_action_id"] == 3
 
 
 def test_report_worker_renders_and_stores_report_artifacts(

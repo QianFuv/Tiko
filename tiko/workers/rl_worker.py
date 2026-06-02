@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from tiko.domain.market import Candle, MarketEvent
 from tiko.domain.runtime import BackgroundJob
 from tiko.domain.simulation import SimulationRun
-from tiko.rl_lab import train_static_policy
+from tiko.rl_lab import build_static_policy_model_card, train_static_policy
 from tiko.services.artifacts import ModelArtifactStore
 from tiko.workers.definitions import WorkerDefinition
 
@@ -55,11 +55,13 @@ def handle_training_job(job: BackgroundJob) -> dict[str, object]:
         events=events,
         candidate_action_ids=candidate_action_ids,
     )
+    model_card = build_static_policy_model_card(summary)
     artifact_payload: dict[str, object] = {
         "job_id": str(job.job_id),
         "resource_type": job.resource_type,
         "resource_id": job.resource_id,
         "summary": summary.model_dump(mode="json"),
+        "model_card": model_card.model_dump(mode="json"),
     }
     artifact = ModelArtifactStore(
         _optional_artifact_root(job.payload)
@@ -78,6 +80,7 @@ def handle_training_job(job: BackgroundJob) -> dict[str, object]:
         "best_action_id": summary.best_action_id,
         "best_total_reward": str(summary.best_total_reward),
         "summary": summary.model_dump(mode="json"),
+        "model_card": model_card.model_dump(mode="json"),
         "artifact": artifact.model_dump(mode="json"),
     }
 

@@ -11,6 +11,7 @@ from tiko.domain.market import Candle
 from tiko.rl_lab import (
     TradingEnvironment,
     build_reward_components,
+    build_static_policy_model_card,
     calculate_reward,
     train_static_policy,
 )
@@ -176,6 +177,37 @@ def test_static_policy_training_selects_best_reward_action() -> None:
     assert summary.best_total_reward == summary.action_rewards[3]
     assert summary.action_rewards[3] > summary.action_rewards[0]
     assert summary.metrics["best_target_weight"] == "0.50"
+
+
+def test_static_policy_training_builds_model_card() -> None:
+    """Verify static training summaries produce review metadata."""
+
+    summary = train_static_policy(
+        run=create_run(),
+        candles=create_candles(),
+        candidate_action_ids=[0, 1, 2, 3],
+    )
+
+    model_card = build_static_policy_model_card(summary)
+
+    assert model_card.algorithm == "static_discrete_policy_search"
+    assert model_card.policy_type == "static_discrete_action_policy"
+    assert model_card.action_space[3] == "0.50"
+    assert model_card.best_action_id == 3
+    assert model_card.best_target_weight == Decimal("0.50")
+    assert model_card.episode_count == 4
+    assert model_card.reward_components == [
+        "portfolio_return",
+        "fee_cost",
+        "slippage_cost",
+        "funding_cost",
+        "drawdown_penalty",
+        "leverage_penalty",
+        "turnover_penalty",
+        "invalid_action_penalty",
+    ]
+    assert model_card.metrics["best_total_reward"] == str(summary.best_total_reward)
+    assert model_card.eligibility_status == "pending_review"
 
 
 def test_static_policy_training_penalizes_invalid_action_candidates() -> None:

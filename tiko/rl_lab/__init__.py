@@ -6,10 +6,11 @@ from tiko.rl_lab.environment import (
     calculate_reward,
     map_discrete_action,
 )
-from tiko.rl_lab.training import train_static_policy
+from tiko.rl_lab.training import build_static_policy_model_card, train_static_policy
 
 __all__ = [
     "TradingEnvironment",
+    "build_static_policy_model_card",
     "build_reward_components",
     "calculate_reward",
     "map_discrete_action",

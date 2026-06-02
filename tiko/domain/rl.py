@@ -1,6 +1,7 @@
 """Reinforcement learning research schemas."""
 
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import Field
 
@@ -54,3 +55,19 @@ class RlTrainingSummary(DomainModel):
     best_total_reward: Decimal
     action_rewards: dict[int, Decimal]
     metrics: dict[str, object]
+
+
+class RlModelCard(DomainModel):
+    """Represent review metadata for an advisory RL policy artifact."""
+
+    algorithm: str = Field(min_length=1)
+    policy_type: str = Field(min_length=1)
+    action_space: dict[int, str]
+    best_action_id: int
+    best_target_weight: Decimal = Field(ge=Decimal("-1"), le=Decimal("1"))
+    episode_count: int = Field(ge=1)
+    reward_components: list[str] = Field(min_length=1)
+    intended_use: str = Field(min_length=1)
+    limitations: list[str] = Field(min_length=1)
+    metrics: dict[str, object]
+    eligibility_status: Literal["pending_review", "research_only"]
