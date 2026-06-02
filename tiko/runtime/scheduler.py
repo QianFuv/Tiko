@@ -2,16 +2,24 @@
 
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
+from typing import Literal
+from uuid import UUID
 
 from tiko.api.dependencies import get_runtime_service, get_simulation_service
 from tiko.core.config import get_settings
-from tiko.domain.reporting import Alert
+from tiko.domain.reporting import Alert, ReportArtifact
 from tiko.domain.runtime import WatchdogReport
 from tiko.services.runtime import RuntimeService
 from tiko.services.simulation import SimulationService
 from tiko.simulation.state import SimulationStepResult
+
+ScheduledReportInterval = Literal["daily", "weekly"]
+DEFAULT_SCHEDULED_REPORT_INTERVALS: tuple[ScheduledReportInterval, ...] = (
+    "daily",
+    "weekly",
+)
 
 
 class RuntimeScheduler:
@@ -81,6 +89,98 @@ class RuntimeScheduler:
         if self._simulation_service is None:
             return ()
         return tuple(self._simulation_service.advance_running_runs(now=now))
+
+    def tick_scheduled_reports(
+        self,
+        intervals: Sequence[
+            ScheduledReportInterval
+        ] = DEFAULT_SCHEDULED_REPORT_INTERVALS,
+    ) -> tuple[ReportArtifact, ...]:
+        """Create due scheduler-managed simulation reports.
+
+        Args:
+            intervals: Scheduled report intervals to evaluate.
+
+        Returns:
+            Reports created by this scheduler tick.
+        """
+
+        if self._simulation_service is None:
+            return ()
+        created_reports: list[ReportArtifact] = []
+        for run in self._simulation_service.list_runs():
+            if run.status != "running":
+                continue
+            for interval in intervals:
+                period_key = self._scheduled_report_period_key(
+                    run.current_sim_time,
+                    interval,
+                )
+                if self._has_scheduled_report(run.run_id, interval, period_key):
+                    continue
+                created_reports.append(
+                    self._simulation_service.create_simulation_report(
+                        run.run_id,
+                        automation_metadata={
+                            "source": "scheduler",
+                            "interval": interval,
+                            "period_key": period_key,
+                            "simulated_time": run.current_sim_time.isoformat(),
+                        },
+                    )
+                )
+        return tuple(created_reports)
+
+    def _has_scheduled_report(
+        self,
+        run_id: UUID,
+        interval: ScheduledReportInterval,
+        period_key: str,
+    ) -> bool:
+        """Return whether a scheduled report already exists.
+
+        Args:
+            run_id: Simulation run identifier.
+            interval: Scheduled report interval.
+            period_key: Simulated period key.
+
+        Returns:
+            `True` when the report already exists.
+        """
+
+        if self._simulation_service is None:
+            return False
+        for report in self._simulation_service.list_reports(run_id):
+            automation_section = report.sections.get("automation")
+            if not isinstance(automation_section, dict):
+                continue
+            if (
+                automation_section.get("source") == "scheduler"
+                and automation_section.get("interval") == interval
+                and automation_section.get("period_key") == period_key
+            ):
+                return True
+        return False
+
+    def _scheduled_report_period_key(
+        self,
+        simulated_time: datetime,
+        interval: ScheduledReportInterval,
+    ) -> str:
+        """Build a deterministic simulated period key.
+
+        Args:
+            simulated_time: Current simulated time.
+            interval: Scheduled report interval.
+
+        Returns:
+            Period key for de-duplication.
+        """
+
+        if interval == "daily":
+            return simulated_time.date().isoformat()
+        iso_calendar = simulated_time.isocalendar()
+        return f"{iso_calendar.year}-W{iso_calendar.week:02d}"
 
 
 def run_scheduler_once(service: RuntimeService | None = None) -> WatchdogReport:
@@ -152,6 +252,7 @@ def run_scheduler_loop(
     iteration = 0
     while max_iterations is None or iteration < max_iterations:
         scheduler.tick_simulation_clock()
+        scheduler.tick_scheduled_reports()
         report = scheduler.tick()
         if on_report is not None:
             on_report(report)

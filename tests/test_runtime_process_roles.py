@@ -231,6 +231,47 @@ def test_simulation_clock_scheduler_advances_due_running_runs() -> None:
     assert disabled_scheduler_tick == ()
 
 
+def test_scheduler_creates_daily_and_weekly_reports_once() -> None:
+    """Verify scheduler creates de-duplicated periodic simulation reports."""
+
+    simulation_service = SimulationService(Settings())
+    run = simulation_service.create_run(
+        name="scheduled-reports",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+    simulation_service.update_run_status(run.run_id, "running")
+    scheduler = RuntimeScheduler(
+        service=RuntimeService(),
+        simulation_service=simulation_service,
+    )
+
+    first_reports = scheduler.tick_scheduled_reports()
+    duplicate_reports = scheduler.tick_scheduled_reports()
+    simulation_service.update_run_status(run.run_id, "paused")
+    paused_reports = scheduler.tick_scheduled_reports()
+
+    automation_sections: list[dict[object, object]] = []
+    for report in first_reports:
+        automation_section = report.sections["automation"]
+        assert isinstance(automation_section, dict)
+        automation_sections.append(automation_section)
+    assert len(first_reports) == 2
+    assert {
+        automation_section["interval"] for automation_section in automation_sections
+    } == {"daily", "weekly"}
+    assert {
+        automation_section["period_key"] for automation_section in automation_sections
+    } == {"2026-01-02", "2026-W01"}
+    assert all(
+        automation_section["source"] == "scheduler"
+        for automation_section in automation_sections
+    )
+    assert duplicate_reports == ()
+    assert paused_reports == ()
+    assert simulation_service.list_reports(run.run_id) == list(first_reports)
+
+
 def test_scheduler_loop_runs_repeated_ticks_without_real_sleep() -> None:
     """Verify scheduler daemon loops can be bounded for tests."""
 

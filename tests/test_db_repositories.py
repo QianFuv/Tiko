@@ -1026,6 +1026,35 @@ def test_repository_persists_reports_and_alerts(
     assert repository.list_alerts(run.run_id) == [alert]
 
 
+def test_repository_backed_report_listing_merges_external_reports(
+    repository: SimulationRepository,
+) -> None:
+    """Verify repository-backed report listing sees externally persisted reports."""
+
+    service = SimulationService(Settings(), repository=repository)
+    run = service.create_run(
+        name="external-report",
+        symbols=["BTCUSDT"],
+        start_sim_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    report = ReportArtifact(
+        report_id=uuid4(),
+        run_id=run.run_id,
+        report_type="simulation",
+        title="External report",
+        summary="Report persisted by another service instance.",
+        sections={"automation": {"source": "scheduler"}},
+        created_at_sim_time=run.current_sim_time,
+        created_at=run.created_at,
+    )
+
+    assert service.list_reports(run.run_id) == []
+
+    repository.save_report(report)
+
+    assert service.list_reports(run.run_id) == [report]
+
+
 def test_repository_persists_rejected_step_without_order_or_fill(
     repository: SimulationRepository,
 ) -> None:

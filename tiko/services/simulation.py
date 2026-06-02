@@ -2533,11 +2533,16 @@ class SimulationService:
             seen_tokens.add(token)
         return unique_tokens
 
-    def create_simulation_report(self, run_id: UUID) -> ReportArtifact:
+    def create_simulation_report(
+        self,
+        run_id: UUID,
+        automation_metadata: dict[str, object] | None = None,
+    ) -> ReportArtifact:
         """Create a structured simulation report from current run state.
 
         Args:
             run_id: Simulation run identifier.
+            automation_metadata: Optional scheduler automation metadata.
 
         Returns:
             Created report artifact.
@@ -2548,6 +2553,36 @@ class SimulationService:
 
         state = self._get_state(run_id)
         run = state.run
+        sections: dict[str, object] = {
+            "configuration": run.config,
+            "dataset": self._build_report_dataset_section(state),
+            "timeline": self._build_report_timeline_section(state),
+            "symbols": run.symbols,
+            "account": {
+                "cash_balance": str(run.account.cash_balance),
+                "total_equity": str(run.account.total_equity),
+                "realized_pnl": str(run.account.realized_pnl),
+                "unrealized_pnl": str(run.account.unrealized_pnl),
+                "max_drawdown": str(run.account.max_drawdown),
+            },
+            "activity": {
+                "decision_count": len(state.decisions),
+                "risk_review_count": len(state.risk_reviews),
+                "order_count": len(state.orders),
+                "fill_count": len(state.fills),
+                "memory_count": len(state.memory_entries),
+            },
+            "equity_curve": self._build_report_equity_curve(state),
+            "drawdown_curve": self._build_report_drawdown_curve(state),
+            "position_curve": self._build_report_position_curve(state),
+            "trades": self._build_report_trade_list(state),
+            "key_metrics": self._build_report_key_metrics(state),
+            "risk_events": self._build_report_risk_events(state),
+            "agent_performance": self._build_report_agent_performance(state),
+            "error_attribution": self._build_report_error_attribution(state),
+        }
+        if automation_metadata is not None:
+            sections["automation"] = dict(automation_metadata)
         report = ReportArtifact(
             report_id=uuid4(),
             run_id=run_id,
@@ -2557,34 +2592,7 @@ class SimulationService:
                 f"{len(state.decisions)} decisions, {len(state.orders)} orders, "
                 f"{len(state.fills)} fills, status {run.status}."
             ),
-            sections={
-                "configuration": run.config,
-                "dataset": self._build_report_dataset_section(state),
-                "timeline": self._build_report_timeline_section(state),
-                "symbols": run.symbols,
-                "account": {
-                    "cash_balance": str(run.account.cash_balance),
-                    "total_equity": str(run.account.total_equity),
-                    "realized_pnl": str(run.account.realized_pnl),
-                    "unrealized_pnl": str(run.account.unrealized_pnl),
-                    "max_drawdown": str(run.account.max_drawdown),
-                },
-                "activity": {
-                    "decision_count": len(state.decisions),
-                    "risk_review_count": len(state.risk_reviews),
-                    "order_count": len(state.orders),
-                    "fill_count": len(state.fills),
-                    "memory_count": len(state.memory_entries),
-                },
-                "equity_curve": self._build_report_equity_curve(state),
-                "drawdown_curve": self._build_report_drawdown_curve(state),
-                "position_curve": self._build_report_position_curve(state),
-                "trades": self._build_report_trade_list(state),
-                "key_metrics": self._build_report_key_metrics(state),
-                "risk_events": self._build_report_risk_events(state),
-                "agent_performance": self._build_report_agent_performance(state),
-                "error_attribution": self._build_report_error_attribution(state),
-            },
+            sections=sections,
             created_at_sim_time=run.current_sim_time,
             created_at=datetime.now(UTC),
         )
@@ -3124,7 +3132,15 @@ class SimulationService:
             KeyError: If no run exists for the ID.
         """
 
-        return list(self._get_state(run_id).reports)
+        state = self._get_state(run_id)
+        if self._repository is not None:
+            known_report_ids = {report.report_id for report in state.reports}
+            for report in self._repository.list_reports(run_id):
+                if report.report_id in known_report_ids:
+                    continue
+                state.reports.append(report)
+                known_report_ids.add(report.report_id)
+        return sorted(state.reports, key=lambda report: report.created_at)
 
     def list_decision_reports(self, decision_id: UUID) -> list[ReportArtifact]:
         """List decision reports for one decision.
