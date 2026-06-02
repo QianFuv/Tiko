@@ -106,6 +106,33 @@ def test_trading_environment_reset_and_step_are_advisory() -> None:
     assert "fill" not in step.info
 
 
+def test_trading_environment_exposes_gymnasium_style_adapter() -> None:
+    """Verify Gymnasium-style reset and step signatures are available."""
+
+    environment = TradingEnvironment(create_run(), create_candles())
+
+    observation, reset_info = environment.reset_gymnasium(
+        seed=11,
+        options={"episode": "smoke"},
+    )
+    next_observation, reward, terminated, truncated, step_info = (
+        environment.step_gymnasium(2)
+    )
+
+    assert observation.symbol == "BTCUSDT"
+    assert reset_info["index"] == 0
+    assert reset_info["candle_count"] == 2
+    assert reset_info["options"] == {"episode": "smoke"}
+    assert next_observation.as_of == datetime(2026, 1, 1, 2, tzinfo=UTC)
+    assert reward > 0
+    assert terminated is True
+    assert truncated is False
+    assert step_info["target_weight"] == "0.25"
+    assert step_info["invalid_action"] is False
+    assert step_info["terminated"] is True
+    assert step_info["truncated"] is False
+
+
 def test_invalid_action_is_penalized_and_flattened() -> None:
     """Verify invalid advisory actions cannot create target exposure."""
 

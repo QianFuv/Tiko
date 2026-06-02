@@ -65,6 +65,30 @@ class TradingEnvironment:
         self._previous_target_weight = Decimal("0")
         return self._build_observation()
 
+    def reset_gymnasium(
+        self,
+        seed: int | None = None,
+        options: dict[str, object] | None = None,
+    ) -> tuple[Observation, dict[str, object]]:
+        """Reset using the Gymnasium-compatible return signature.
+
+        Args:
+            seed: Optional deterministic seed reserved for future scenarios.
+            options: Optional environment-specific reset options.
+
+        Returns:
+            Initial observation and diagnostic info.
+        """
+
+        observation = self.reset(seed=seed)
+        info: dict[str, object] = {
+            "index": self._index,
+            "candle_count": len(self._candles),
+        }
+        if options is not None:
+            info["options"] = dict(options)
+        return observation, info
+
     def step(self, action: RlAction) -> EnvironmentStep:
         """Advance the environment by one candle using an advisory action.
 
@@ -101,6 +125,28 @@ class TradingEnvironment:
                 "invalid_action": is_invalid_action,
             },
         )
+
+    def step_gymnasium(
+        self, action: int | RlAction
+    ) -> tuple[Observation, float, bool, bool, dict[str, object]]:
+        """Advance using the Gymnasium-compatible step signature.
+
+        Args:
+            action: Integer action id or advisory RL action.
+
+        Returns:
+            Observation, reward, terminated flag, truncated flag, and info.
+        """
+
+        rl_action = (
+            action if isinstance(action, RlAction) else RlAction(action_id=action)
+        )
+        step = self.step(rl_action)
+        info = dict(step.info)
+        info["index"] = self._index
+        info["terminated"] = step.done
+        info["truncated"] = False
+        return step.observation, float(step.reward), step.done, False, info
 
     def _build_observation(self) -> Observation:
         """Build the current point-in-time observation.
