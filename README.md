@@ -143,6 +143,9 @@ Run a Docker Compose startup smoke test only when Docker daemon is available:
 uv run python scripts/check_compose_smoke.py --start
 ```
 
+GitHub Actions runs the local quality gate and Docker Compose startup smoke on
+push, pull request, and manual dispatch.
+
 ## Common Workflows
 
 - Upload or import market datasets.
